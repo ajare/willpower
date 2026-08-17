@@ -1,6 +1,7 @@
 #pragma once
 
-#include <set>
+#include <memory>
+#include <vector>
 
 #include "willpower/common/Vector2.h"
 #include "willpower/common/AccelerationGrid.h"
@@ -17,7 +18,7 @@ namespace WP_NAMESPACE {
 namespace collide {
 
 class WP_COLLIDE_API Simulation {
-  std::set<Collider*> mColliders;
+  std::vector<Collider*> mColliders;
 
   int32_t mNextIndex;
 
@@ -44,16 +45,25 @@ private:
 
   void sweepCollider(Collider* collider, Vector2 const& desiredMovement, uint32_t sweepCount = 0);
 
-  virtual std::set<uint32_t> getLineIndices(wp::BoundingBox const& bounds) const;
+  virtual void getLineIndices(
+      wp::BoundingBox const& bounds,
+      std::vector<uint32_t>& indices) const;
+
+protected:
+  explicit Simulation(void* userObj);
 
 public:
   Simulation(ExtentsCalculator const& extents, uint32_t cellsX, uint32_t cellsY, void* userObj = nullptr);
+
+  Simulation(Simulation const&) = delete;
+
+  Simulation& operator=(Simulation const&) = delete;
 
   virtual ~Simulation();
 
   void getExtents(Vector2& minExtent, Vector2& maxExtent);
 
-  int32_t addCollider(Collider* collider);
+  int32_t addCollider(std::unique_ptr<Collider> collider);
 
   void removeCollider(Collider* collider);
 

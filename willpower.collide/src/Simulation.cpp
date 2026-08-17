@@ -14,8 +14,12 @@ namespace collide {
 
 using namespace utils;
 
+Simulation::Simulation(void* userObj)
+    : mNextIndex(0), mCollidersGrid(nullptr), mStaticLinesGrid(nullptr), mwUserObject(userObj), mMinExtent(1e10, 1e10), mMaxExtent(-1e10, -1e10), mNumSweepChecks(0) {
+}
+
 Simulation::Simulation(ExtentsCalculator const& extents, uint32_t cellsX, uint32_t cellsY, void* userObj)
-    : mNextIndex(0), mCollidersGrid(nullptr), mStaticLinesGrid(nullptr), mwUserObject(userObj), mMinExtent(1e10, 1e10), mMaxExtent(-1e10, -1e10) {
+    : Simulation(userObj) {
   auto cellSize = extents.getCellSize(cellsX, cellsY);
   createGrids(extents.getMinExtent(), extents.getMaxExtent(), cellSize.x, cellSize.y);
 }
@@ -65,23 +69,36 @@ void Simulation::destroyGrids() {
   mStaticLinesGrid = nullptr;
 }
 
-int32_t Simulation::addCollider(Collider* collider) {
+int32_t Simulation::addCollider(unique_ptr<Collider> collider) {
   uint32_t colliderIndex = mNextIndex++;
-  collider->_setIndex(colliderIndex);
+  auto colliderObserver = collider.get();
+  colliderObserver->_setIndex(colliderIndex);
 
-  mColliders.insert(collider);
+  mColliders.push_back(colliderObserver);
 
-  // Add to grid
-  mCollidersGrid->addItem((uint32_t)colliderIndex, collider->getBounds());
+  // Add to grid when this simulation uses spatial indexing.
+  if (mCollidersGrid) {
+    try {
+      mCollidersGrid->addItem((uint32_t)colliderIndex, colliderObserver->getBounds());
+    } catch (...) {
+      mColliders.pop_back();
+      throw;
+    }
+  }
 
+  collider.release();
   return colliderIndex;
 }
 
 void Simulation::removeCollider(Collider* collider) {
-  mColliders.erase(collider);
+  auto colliderIt = find(mColliders.begin(), mColliders.end(), collider);
+  assert(colliderIt != mColliders.end());
+  mColliders.erase(colliderIt);
 
-  // Remove from grid
-  mCollidersGrid->removeItem((uint32_t)collider->getIndex());
+  // Remove from grid when this simulation uses spatial indexing.
+  if (mCollidersGrid) {
+    mCollidersGrid->removeItem((uint32_t)collider->getIndex());
+  }
 
   delete collider;
 }
@@ -289,7 +306,8 @@ void Simulation::update(float frameTime) {
 }
 
 bool Simulation::colliderIntersects(Collider const* collider) const {
-  auto lineIndices = getLineIndices(collider->getBounds());
+  vector<uint32_t> lineIndices;
+  getLineIndices(collider->getBounds(), lineIndices);
 
   for (auto const& lineIndex : lineIndices) {
     Vector2 v0, v1;
@@ -316,8 +334,10 @@ bool Simulation::colliderIntersects(Collider const* collider) const {
   return false;
 }
 
-set<uint32_t> Simulation::getLineIndices(wp::BoundingBox const& bounds) const {
-  return mStaticLinesGrid->getCandidateItemsInBoundingArea(bounds);
+void Simulation::getLineIndices(
+    wp::BoundingBox const& bounds,
+    vector<uint32_t>& indices) const {
+  mStaticLinesGrid->getCandidateItemsInBoundingArea(bounds, indices);
 }
 
 bool Simulation::projectCollider(Collider const* collider, Vector2 const& desiredMovement, SweepResult* result) {
@@ -328,7 +348,8 @@ bool Simulation::projectCollider(Collider const* collider, Vector2 const& desire
   // Check acceleration grid
   auto const& colliderBounds = collider->getBounds();
   auto movementBounds = colliderBounds.unionWith(BoundingBox(desiredPosition, colliderBounds.getSize()));
-  auto lineIndices = getLineIndices(movementBounds);
+  vector<uint32_t> lineIndices;
+  getLineIndices(movementBounds, lineIndices);
 
   // Get all the lines we cross and order them by distance.  Then
   // check each one until we find one which blocks us.
@@ -397,10 +418,11 @@ bool Simulation::projectLine(Vector2 const& v0, Vector2 const& v1, SweepResult* 
 
   // Check acceleration grid
   BoundingBox lineBounds;
-  lineBounds.setPosition(v0);
-  lineBounds.setSize(v1 - v0);
+  lineBounds.setPosition({std::min(v0.x, v1.x), std::min(v0.y, v1.y)});
+  lineBounds.setSize({std::abs(v1.x - v0.x), std::abs(v1.y - v0.y)});
 
-  auto lineIndices = getLineIndices(lineBounds);
+  vector<uint32_t> lineIndices;
+  getLineIndices(lineBounds, lineIndices);
 
   bool hitLine = false;
   for (uint32_t lineIndex : lineIndices) {

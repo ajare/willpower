@@ -65,6 +65,15 @@ if(BUILD_TESTING)
     add_test(NAME willpower_acceleration_grid_set_operations
              COMMAND willpower_acceleration_grid_set_operations_tests)
 
+    # Manual Release-mode evidence for PERF-3; deliberately not a pass/fail test.
+    add_executable(willpower_acceleration_grid_benchmark
+        tests/acceleration_grid_benchmark.cpp)
+    target_link_libraries(willpower_acceleration_grid_benchmark PRIVATE Willpower.Common)
+    target_compile_features(willpower_acceleration_grid_benchmark PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_acceleration_grid_benchmark)
+    willpower_output_dirs(willpower_acceleration_grid_benchmark)
+    willpower_deploy_runtime_dlls(willpower_acceleration_grid_benchmark)
+
     add_executable(willpower_legacy_geometry_helper_removal_tests
         tests/legacy_geometry_helper_removal_tests.cpp)
     target_link_libraries(willpower_legacy_geometry_helper_removal_tests PRIVATE Willpower.Common)
@@ -74,4 +83,24 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_legacy_geometry_helper_removal_tests)
     add_test(NAME willpower_legacy_geometry_helper_removal
              COMMAND willpower_legacy_geometry_helper_removal_tests)
+
+    add_executable(willpower_vector2_assignment_semantics_tests
+        tests/vector2_assignment_semantics_tests.cpp)
+    target_link_libraries(willpower_vector2_assignment_semantics_tests PRIVATE Willpower.Common)
+    target_compile_features(willpower_vector2_assignment_semantics_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_vector2_assignment_semantics_tests)
+    willpower_output_dirs(willpower_vector2_assignment_semantics_tests)
+    willpower_deploy_runtime_dlls(willpower_vector2_assignment_semantics_tests)
+    add_test(NAME willpower_vector2_assignment_semantics
+             COMMAND willpower_vector2_assignment_semantics_tests)
+
+    add_executable(willpower_geometric_epsilon_tests
+        tests/geometric_epsilon_tests.cpp)
+    target_link_libraries(willpower_geometric_epsilon_tests PRIVATE Willpower.Common)
+    target_compile_features(willpower_geometric_epsilon_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_geometric_epsilon_tests)
+    willpower_output_dirs(willpower_geometric_epsilon_tests)
+    willpower_deploy_runtime_dlls(willpower_geometric_epsilon_tests)
+    add_test(NAME willpower_geometric_epsilon
+             COMMAND willpower_geometric_epsilon_tests)
 endif()

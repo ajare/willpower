@@ -25,6 +25,16 @@ willpower_output_dirs(Willpower.Collide)
 set_target_properties(Willpower.Collide PROPERTIES FOLDER Willpower)
 
 if(BUILD_TESTING)
+    add_executable(willpower_simulation_ownership_tests
+        tests/simulation_ownership_tests.cpp)
+    target_link_libraries(willpower_simulation_ownership_tests PRIVATE Willpower.Collide)
+    target_compile_features(willpower_simulation_ownership_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_simulation_ownership_tests)
+    willpower_output_dirs(willpower_simulation_ownership_tests)
+    willpower_deploy_runtime_dlls(willpower_simulation_ownership_tests)
+    add_test(NAME willpower_simulation_ownership
+             COMMAND willpower_simulation_ownership_tests)
+
     add_executable(willpower_static_line_clipping_tests
         tests/static_line_clipping_tests.cpp)
     target_link_libraries(willpower_static_line_clipping_tests PRIVATE Willpower.Collide)
@@ -34,4 +44,14 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_static_line_clipping_tests)
     add_test(NAME willpower_static_line_clipping
              COMMAND willpower_static_line_clipping_tests)
+
+    add_executable(willpower_simulation_order_tests
+        tests/simulation_order_tests.cpp)
+    target_link_libraries(willpower_simulation_order_tests PRIVATE Willpower.Collide)
+    target_compile_features(willpower_simulation_order_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_simulation_order_tests)
+    willpower_output_dirs(willpower_simulation_order_tests)
+    willpower_deploy_runtime_dlls(willpower_simulation_order_tests)
+    add_test(NAME willpower_simulation_order
+             COMMAND willpower_simulation_order_tests)
 endif()
