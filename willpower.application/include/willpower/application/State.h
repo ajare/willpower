@@ -58,6 +58,8 @@ private:
 
   virtual void injectMouseMotionInputImpl(float positionX, float positionY) {}
 
+  virtual void resyncMouseInputImpl() {}
+
   virtual void updateImpl(float frameTime) {}
 
   virtual void renderImpl(mpp::RenderSystem* renderSystem, mpp::ResourceManager* resourceMgr) {}
@@ -190,6 +192,15 @@ public:
    *	\param positionY the vertical movement of the mouse since the button was pressed
    */
   void _injectMouseMotionInput(float positionX, float positionY);
+
+  /**	\brief Signals that mouse motion was withheld from the state
+   *
+   *   To be called by external manager, for each motion event it does not pass on.  The
+   *   mouse carries on moving while the state is not being told about it, so the position
+   *   the state last saw is stale: this tells it to start afresh from the next event it
+   *   does receive, rather than reading the whole gap as one burst of motion.
+   */
+  void _resyncMouseInput();
 
   /**	\brief Enters the state.
    *

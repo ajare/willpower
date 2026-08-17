@@ -38,6 +38,8 @@ private:
 
   float mMouseX, mMouseY;
 
+  bool mMousePositionKnown;
+
   float mMouseDeltaX, mMouseDeltaY;
 
   std::map<std::string, StateDefinition> mStates;
@@ -66,6 +68,11 @@ public:
   void injectMouseWheelInput(int y);
 
   void setMousePosition(float x, float y);
+
+  // Breaks the link between the position last seen and the next one reported,
+  // so the gap is not gathered as motion. For when the mouse moves out of
+  // sight - while a GUI holds it, for one - and the position jumps.
+  void resyncMousePosition();
 
   bool stateActive(std::string const& state) const;
 

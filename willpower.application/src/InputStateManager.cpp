@@ -8,7 +8,7 @@ namespace WP_NAMESPACE {
 namespace application {
 
 InputStateManager::InputStateManager()
-    : mKeyModifiers(0), mPrevKeyModifiers(0), mMouseWheelUp(0), mMouseWheelDown(0), mMouseX(0.0f), mMouseY(0.0f), mMouseDeltaX(0.0f), mMouseDeltaY(0.0f) {
+    : mKeyModifiers(0), mPrevKeyModifiers(0), mMouseWheelUp(0), mMouseWheelDown(0), mMouseX(0.0f), mMouseY(0.0f), mMousePositionKnown(false), mMouseDeltaX(0.0f), mMouseDeltaY(0.0f) {
   for (int i = 0; i < (int)Key::NUMKEYS; ++i) {
     mKeyState[i] = 0;
     mPrevKeyState[i] = 0;
@@ -88,10 +88,26 @@ void InputStateManager::injectMouseWheelInput(int y) {
 }
 
 void InputStateManager::setMousePosition(float x, float y) {
-  mMouseDeltaX = x - mMouseX;
-  mMouseDeltaY = y - mMouseY;
+  // Motion is gathered up until process() consumes and clears it. Several
+  // motion events can arrive between two frames, so keeping only the last
+  // one's delta would throw the rest away - a fast sweep of the mouse would
+  // come through stepped and short of where it actually went.
+  if (mMousePositionKnown) {
+    mMouseDeltaX += x - mMouseX;
+    mMouseDeltaY += y - mMouseY;
+  } else {
+    // The first position reported is where the mouse is, not motion.
+    mMousePositionKnown = true;
+  }
+
   mMouseX = x;
   mMouseY = y;
+}
+
+void InputStateManager::resyncMousePosition() {
+  // Motion gathered before the gap is real and stays; it is only the position
+  // to measure the next event against that is no longer good.
+  mMousePositionKnown = false;
 }
 
 bool InputStateManager::stateActive(string const& state) const {

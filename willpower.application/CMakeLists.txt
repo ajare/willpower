@@ -81,6 +81,18 @@ if(BUILD_TESTING)
         COMMAND willpower_application_resource_yaml_tests
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml")
 
+    add_executable(willpower_application_input_state_manager_tests
+        tests/input_state_manager_tests.cpp)
+    target_compile_features(willpower_application_input_state_manager_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_input_state_manager_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_input_state_manager_tests)
+    willpower_output_dirs(willpower_application_input_state_manager_tests)
+    set_target_properties(willpower_application_input_state_manager_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_input_state_manager_tests)
+    willpower_deploy_vendor_dlls(willpower_application_input_state_manager_tests)
+    add_test(NAME willpower_application_input_state_manager
+        COMMAND willpower_application_input_state_manager_tests)
+
     add_executable(willpower_application_resource_dependency_tests
         tests/resource_dependency_tests.cpp)
     target_compile_features(willpower_application_resource_dependency_tests PRIVATE cxx_std_20)

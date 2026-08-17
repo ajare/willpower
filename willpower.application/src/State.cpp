@@ -68,6 +68,10 @@ void State::_injectMouseMotionInput(float positionX, float positionY) {
   injectMouseMotionInputImpl(positionX, positionY);
 }
 
+void State::_resyncMouseInput() {
+  resyncMouseInputImpl();
+}
+
 void State::_enter(resourcesystem::ResourceManager* resourceMgr, wp::application::AudioSystem* audioSystem, mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, void* args) {
   mEventsActive = true;
   mUpdateActive = true;
