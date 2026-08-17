@@ -59,6 +59,8 @@ private:
 private:
   void addResourceRecord(ResourceRecord const& record);
 
+  void validateResourceDependencies() const;
+
   void instantiateAllResources(bool create, bool load, ResourceCallback callback = nullptr, bool rootResource = true);
 
   ResourcePtr instantiateResource(ResourceRecord const& record, bool create = false, bool load = false, ResourceCallback callback = nullptr, bool rootResource = true);

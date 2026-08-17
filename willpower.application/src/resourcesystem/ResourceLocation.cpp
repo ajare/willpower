@@ -243,7 +243,6 @@ ResourceRecord const& ResourceLocation::getResourceRecord(string const& resource
 
 void ResourceLocation::validateResourceDefinitions() {
   vector<ResourceRecord> missingFiles;
-  vector<DependentResourceRecord> missingReferences;
   vector<string> miscErrors;
 
   bool errorsFound = false;
@@ -269,34 +268,11 @@ void ResourceLocation::validateResourceDefinitions() {
         miscErrors.push_back(errMsg);
       }
 
-      // Check resource exists
-      if (record.isComposite) {
-        for (auto const& depResource : record.dependentResources) {
-          // Get namespace for sub resource
-          string depNamesp, depResName;
-          Resource::splitName(depResource.ref, record.namesp, &depNamesp, &depResName);
-
-          auto depNamespRecord = mNamespaces.find(depNamesp)->second;
-
-          // Get location for the referenced resource
-          auto it = find_if(
-              depNamespRecord.resourceRecords.begin(),
-              depNamespRecord.resourceRecords.end(),
-              [depResName](ResourceRecordEntry const& rre) {
-                return depResName == rre.first;
-              });
-
-          if (it == depNamespRecord.resourceRecords.end()) {
-            missingReferences.push_back(depResource);
-            errorsFound = true;
-          }
-        }
-      } else {
-        // Check that the 'hard' resource (ie the file the resource uses) exists.
-        if (record.baseData.locationFound && !hardResourceExists(record.baseData.location)) {
-          missingFiles.push_back(record);
-          errorsFound = true;
-        }
+      // Dependency references are validated by ResourceManager after records
+      // from every configured location have been merged.
+      if (!record.isComposite && record.baseData.locationFound && !hardResourceExists(record.baseData.location)) {
+        missingFiles.push_back(record);
+        errorsFound = true;
       }
 
       // Check definitions
@@ -339,20 +315,6 @@ void ResourceLocation::validateResourceDefinitions() {
       } else {
         errMsg = "Resource '" + record.baseData.name + "' in namespace '" + record.namesp + "' was declared in location '" +
                  mName + "' but file '" + record.baseData.location + "' was not found.";
-      }
-
-      mwLogger->error(errMsg);
-    }
-
-    for (auto const& subRecord : missingReferences) {
-      string errMsg;
-
-      if (namespEntry.first == "") {
-        errMsg = "Resource '" + subRecord.ref + "' was referenced by composite resource '" +
-                 subRecord.owner + "' but has not been declared in '" + mName + "'.";
-      } else {
-        errMsg = "Resource '" + subRecord.ref + "' was referenced by composite resource '" +
-                 subRecord.owner + "' but has not been declared in '" + mName + " namespace '" + namespEntry.first + "'.";
       }
 
       mwLogger->error(errMsg);

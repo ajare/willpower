@@ -80,4 +80,18 @@ if(BUILD_TESTING)
     add_test(NAME willpower_application_resource_yaml
         COMMAND willpower_application_resource_yaml_tests
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml")
+
+    add_executable(willpower_application_resource_dependency_tests
+        tests/resource_dependency_tests.cpp)
+    target_compile_features(willpower_application_resource_dependency_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_resource_dependency_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_resource_dependency_tests)
+    willpower_output_dirs(willpower_application_resource_dependency_tests)
+    set_target_properties(willpower_application_resource_dependency_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_resource_dependency_tests)
+    willpower_deploy_vendor_dlls(willpower_application_resource_dependency_tests)
+    foreach(scenario cycle missing-namespace missing-resource cross-location)
+        add_test(NAME willpower_application_resource_dependency_${scenario}
+            COMMAND willpower_application_resource_dependency_tests ${scenario})
+    endforeach()
 endif()

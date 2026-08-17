@@ -16,6 +16,13 @@ public:
   }
 };
 
+class ResourceDependencyException : public ResourceSystemException {
+public:
+  explicit ResourceDependencyException(std::string const& message)
+      : ResourceSystemException(message) {
+  }
+};
+
 class ResourceException : public ResourceSystemException {
   Resource const* mwResource;
 

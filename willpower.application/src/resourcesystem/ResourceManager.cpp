@@ -138,10 +138,39 @@ vector<string> ResourceManager::sortResourcesByDependency(vector<string> const& 
   }
 
   if (dependencies.size()) {
-    throw ResourceException(nullptr, "Resources have cyclic dependencies.");
+    throw ResourceDependencyException("Resources have cyclic dependencies.");
   }
 
   return sorted;
+}
+
+void ResourceManager::validateResourceDependencies() const {
+  for (auto const& [namesp, records] : mNamespaces) {
+    for (auto const& [name, record] : records) {
+      string ownerQualifiedName = namesp.empty() ? name : namesp + "/" + name;
+
+      for (auto const& dependency : record.dependentResources) {
+        string dependencyNamespace, dependencyName;
+        Resource::splitName(dependency.ref, namesp, &dependencyNamespace, &dependencyName);
+
+        auto namespaceIt = mNamespaces.find(dependencyNamespace);
+        if (namespaceIt == mNamespaces.end()) {
+          throw ResourceDependencyException(format(
+              "Resource '{}' depends on '{}', but namespace '{}' could not be found.",
+              ownerQualifiedName, dependency.ref, dependencyNamespace));
+        }
+
+        if (!namespaceIt->second.contains(dependencyName)) {
+          string dependencyQualifiedName = dependencyNamespace.empty()
+                                               ? dependencyName
+                                               : dependencyNamespace + "/" + dependencyName;
+          throw ResourceDependencyException(format(
+              "Resource '{}' depends on resource '{}', but that resource could not be found.",
+              ownerQualifiedName, dependencyQualifiedName));
+        }
+      }
+    }
+  }
 }
 
 void ResourceManager::addResourceRecord(ResourceRecord const& record) {
@@ -156,6 +185,8 @@ void ResourceManager::addResourceRecord(ResourceRecord const& record) {
 }
 
 void ResourceManager::instantiateAllResources(bool create, bool load, ResourceCallback callback, bool rootResource) {
+  validateResourceDependencies();
+
   // Get all resource names and dependencies
   vector<string> resourceNames;
   map<string, vector<string>> resourceDependencies;
