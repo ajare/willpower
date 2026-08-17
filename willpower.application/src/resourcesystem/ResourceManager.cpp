@@ -362,6 +362,7 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
     }
 
     record.location->scan();
+    record.location->validateResourceDefinitions();
 
     // Add resource records to master list
     auto const& namespaceRecords = record.location->getNamespaceRecords();
@@ -379,12 +380,8 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
     }
   }
 
-  // Verify once all namespaces are scanned
-  for (auto record : mLocations) {
-    mwLogger->info("Verifying resource location: " + record.location->getName());
-    record.location->validateResourceDefinitions();
-  }
-
+  // Dependency references are validated after every location has contributed
+  // its records to the merged namespace registry.
   instantiateAllResources(false, false);
 }
 

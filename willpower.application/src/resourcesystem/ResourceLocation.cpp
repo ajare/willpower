@@ -246,10 +246,10 @@ void ResourceLocation::validateResourceDefinitions() {
   vector<string> miscErrors;
 
   bool errorsFound = false;
-  for (auto namespEntry : mNamespaces) {
-    auto const& namesp = namespEntry.second;
+  for (auto& namespEntry : mNamespaces) {
+    auto& namesp = namespEntry.second;
 
-    for (auto recordEntry : namesp.resourceRecords) {
+    for (auto& recordEntry : namesp.resourceRecords) {
       auto& record = recordEntry.second;
 
       // Resources cannot have '/' in their name.
