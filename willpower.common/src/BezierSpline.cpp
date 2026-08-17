@@ -27,6 +27,7 @@ BezierSpline& BezierSpline::operator=(BezierSpline const& other) {
 }
 
 void BezierSpline::copyFrom(BezierSpline const& other) {
+  SplinePath::operator=(other);
   mRecursionLimit = other.mRecursionLimit;
   mScale = other.mScale;
   mPathEpsilon = other.mPathEpsilon;
