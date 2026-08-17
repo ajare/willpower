@@ -1,0 +1,10 @@
+[submodule "ext/massive-poly-pusher"]
+	path = ext/massive-poly-pusher
+	url = https://github.com/ajare/massive-poly-pusher.git
+	ignore = dirty
+[submodule "ext/earcut.hpp"]
+	path = ext/earcut.hpp
+	url = https://github.com/mapbox/earcut.hpp.git
+[submodule "ext/SplineLibrary"]
+	path = ext/SplineLibrary
+	url = https://github.com/ejmahler/SplineLibrary.git

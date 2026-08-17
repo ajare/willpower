@@ -1,0 +1,65 @@
+# CMake build trees and generated files
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+_deps/
+
+# Visual Studio and MSBuild
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.vcxproj.filters
+*.vcxproj.user
+x64/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# Compiled artifacts
+*.obj
+*.o
+*.lo
+*.pdb
+*.idb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.app
+*.so
+*.dylib
+*.a
+
+# Test and coverage output
+*.log
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+coverage/
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment files
+.env
+.env.*
+!.env.example

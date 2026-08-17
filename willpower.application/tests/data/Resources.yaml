@@ -1,0 +1,43 @@
+Resources:
+  Resource:
+    - type: "Image"
+      name: "EntityImage"
+      location: "images/entities.png"
+      Option:
+        - name: "filtering"
+          value: "none"
+        - name: "uv-style"
+          value: "atlas"
+    - type: "ImageSet"
+      name: "EntityImageSet"
+      DependentResources:
+        DependentResource:
+          id: "Image"
+          ref: "EntityImage"
+      Definitions:
+        Definition:
+          Images:
+            ImageSet:
+              - name: "Mage"
+                x: "0"
+                y: "0"
+                width: "48"
+                height: "48"
+              - name: "Skeleton"
+                x: "0"
+                y: "48"
+                width: "48"
+                height: "48"
+  Namespace:
+    name: "World"
+    Resource:
+      type: "Map"
+      name: "World"
+      DependentResources:
+        DependentResource:
+          id: "Yaml"
+          ref: "WorldFile"
+      Definitions:
+        Definition:
+          factory: "Test"
+          Resource: "Yaml"
