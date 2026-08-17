@@ -76,6 +76,10 @@ public:
 
   void scan();
 
+  // Replaces this location's cached records. This is not a ResourceManager
+  // reload mechanism: once the location has been added to a ResourceManager,
+  // direct rescans are unsupported because its merged and instantiated
+  // resources are not replaced.
   void rescan();
 
   void validateResourceDefinitions();

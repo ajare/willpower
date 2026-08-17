@@ -90,7 +90,7 @@ if(BUILD_TESTING)
     set_target_properties(willpower_application_resource_definition_tests PROPERTIES FOLDER Willpower)
     willpower_deploy_runtime_dlls(willpower_application_resource_definition_tests)
     willpower_deploy_vendor_dlls(willpower_application_resource_definition_tests)
-    foreach(scenario specialized-before-default duplicate-default)
+    foreach(scenario specialized-before-default idempotent-scan duplicate-default)
         add_test(NAME willpower_application_resource_definition_${scenario}
             COMMAND willpower_application_resource_definition_tests ${scenario})
     endforeach()

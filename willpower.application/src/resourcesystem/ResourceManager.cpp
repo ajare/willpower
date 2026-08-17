@@ -57,26 +57,26 @@ ResourceManager::ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceM
 
 ResourceManager::~ResourceManager() {
   // Destroy resource locations
-  for (auto record : mLocations) {
+  for (auto const& record : mLocations) {
     delete record.location;
   }
 
   // Destroy all resources
-  for (auto nmspIt : mResources) {
-    for (auto it : nmspIt.second) {
-      auto res = it.second;
-
-      if (res->mLoaded) {
-        _unloadResource(res);
+  for (auto const& namespaceEntry : mResources) {
+    auto const& resources = namespaceEntry.second;
+    for (auto const& resourceEntry : resources) {
+      auto const& resource = resourceEntry.second;
+      if (resource->mLoaded) {
+        _unloadResource(resource);
       }
 
-      _destroyResource(it.second);
+      _destroyResource(resource);
     }
   }
 
   // Destroy all resource factories
-  for (auto fac : mResourceFactories) {
-    delete fac.second;
+  for (auto const& factoryEntry : mResourceFactories) {
+    delete factoryEntry.second;
   }
 
   for (auto const& fItem : Resource::msResourceDefinitionFactories) {
@@ -190,21 +190,16 @@ void ResourceManager::instantiateAllResources(bool create, bool load, ResourceCa
   // Get all resource names and dependencies
   vector<string> resourceNames;
   map<string, vector<string>> resourceDependencies;
-  map<string, ResourceRecord> recordMap;
-
-  for (auto nItem : mNamespaces) {
-    auto const& [namesp, recordList] = nItem;
-
-    for (auto rItem : recordList) {
-      auto const& [name, record] = rItem;
-
+  map<string, ResourceRecord const*> recordMap;
+  for (auto const& [namesp, recordList] : mNamespaces) {
+    for (auto const& [name, record] : recordList) {
       string qualifiedName = record.namesp == ""
                                  ? record.baseData.name
                                  : record.namesp + "/" + record.baseData.name;
 
       resourceNames.push_back(qualifiedName);
 
-      for (auto drr : record.dependentResources) {
+      for (auto const& drr : record.dependentResources) {
         // Parse ref to work out namespace and name
         string depNamesp, depName;
         Resource::splitName(drr.ref, record.namesp, &depNamesp, &depName);
@@ -217,7 +212,7 @@ void ResourceManager::instantiateAllResources(bool create, bool load, ResourceCa
         it.first->second.push_back(qualifiedName);
       }
 
-      recordMap[qualifiedName] = record;
+      recordMap[qualifiedName] = &record;
     }
   }
 
@@ -227,8 +222,7 @@ void ResourceManager::instantiateAllResources(bool create, bool load, ResourceCa
 
   // Instantiate
   for (auto const& resName : sortedResources) {
-    auto const& record = recordMap[resName];
-    instantiateResource(record, create, load, callback, rootResource);
+    instantiateResource(*recordMap.at(resName), create, load, callback, rootResource);
   }
 }
 
@@ -350,7 +344,8 @@ void ResourceManager::addResources(string const& file) {
 }
 
 void ResourceManager::scanLocations(ResourceLocationCallback callback) {
-  for (auto record : mLocations) {
+  bool scannedLocation = false;
+  for (auto& record : mLocations) {
     if (record.scanned) {
       continue;
     }
@@ -366,14 +361,15 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
 
     // Add resource records to master list
     auto const& namespaceRecords = record.location->getNamespaceRecords();
-    for (auto nmspIt : namespaceRecords) {
-      auto const& namesp = nmspIt.second;
-      for (auto const& recordIt : namesp.resourceRecords) {
-        addResourceRecord(recordIt.second);
+    for (auto const& namespaceEntry : namespaceRecords) {
+      auto const& namesp = namespaceEntry.second;
+      for (auto const& resourceEntry : namesp.resourceRecords) {
+        addResourceRecord(resourceEntry.second);
       }
     }
 
     record.scanned = true;
+    scannedLocation = true;
 
     if (callback) {
       callback(record.location->getName(), ResourceLocationState::Scanned);
@@ -381,8 +377,11 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
   }
 
   // Dependency references are validated after every location has contributed
-  // its records to the merged namespace registry.
-  instantiateAllResources(false, false);
+  // its records to the merged namespace registry. An ordinary repeat scan does
+  // not replace already-instantiated resources.
+  if (scannedLocation) {
+    instantiateAllResources(false, false);
+  }
 }
 
 ResourcePtr ResourceManager::getResource(string const& name, string const& namesp) {
@@ -422,10 +421,12 @@ ResourcePtr ResourceManager::getQualifiedResource(std::string const& name) {
 vector<ResourcePtr> ResourceManager::getResourcesByType(string const& type) {
   vector<ResourcePtr> resources;
 
-  for (auto kvp : mResources) {
-    for (auto const& res : kvp.second) {
-      if (res.second->getType() == type) {
-        resources.push_back(res.second);
+  for (auto const& namespaceEntry : mResources) {
+    auto const& namespaceResources = namespaceEntry.second;
+    for (auto const& resourceEntry : namespaceResources) {
+      auto const& resource = resourceEntry.second;
+      if (resource->getType() == type) {
+        resources.push_back(resource);
       }
     }
   }
@@ -442,8 +443,8 @@ vector<ResourcePtr> ResourceManager::getNamespaceResources(string const& namesp)
     throw ResourceSystemException(format("Namespace '{}' could not be found.", namesp));
   }
 
-  for (auto kvp : namespIt->second) {
-    resources.push_back(kvp.second);
+  for (auto const& resourceEntry : namespIt->second) {
+    resources.push_back(resourceEntry.second);
   }
 
   return resources;
@@ -452,9 +453,10 @@ vector<ResourcePtr> ResourceManager::getNamespaceResources(string const& namesp)
 vector<ResourcePtr> ResourceManager::getAllResources() {
   vector<ResourcePtr> resources;
 
-  for (auto kvp : mResources) {
-    for (auto const& res : kvp.second) {
-      resources.push_back(res.second);
+  for (auto const& namespaceEntry : mResources) {
+    auto const& namespaceResources = namespaceEntry.second;
+    for (auto const& resourceEntry : namespaceResources) {
+      resources.push_back(resourceEntry.second);
     }
   }
 

@@ -35,13 +35,20 @@ void writeFile(fs::path const& path, std::string const& contents) {
 }
 
 class TestResourceFactory final : public ResourceFactory {
+  size_t mCreatedResourceCount{0};
+
 public:
   TestResourceFactory() : ResourceFactory("TestResource") {
   }
 
   Resource* createResource(std::string const& name, std::string const& namesp, std::string const& source,
                            std::map<std::string, std::string> const& tags, ResourceLocation* location) override {
+    ++mCreatedResourceCount;
     return new Resource(name, namesp, "TestResource", source, tags, location);
+  }
+
+  size_t getCreatedResourceCount() const {
+    return mCreatedResourceCount;
   }
 };
 
@@ -117,6 +124,43 @@ void testSpecializedDefinitionPrecedesDefault(fs::path const& root, wp::Logger& 
           "The default definition was not used as the fallback while loading.");
 }
 
+void testIdempotentLocationScan(fs::path const& root, wp::Logger& logger) {
+  writeFile(root / "Resources.yaml", R"(Resources:
+  Resource:
+    type: "TestResource"
+    name: "Asset"
+)");
+
+  ResourceManager manager(nullptr, nullptr, nullptr, &logger);
+  configureDirectoryFactory(manager, logger);
+  auto* factory = new TestResourceFactory;
+  manager.addResourceFactory(factory);
+
+  std::vector<wp::application::resourcesystem::ResourceLocationState> callbacks;
+  auto scan = [&manager, &callbacks] {
+    manager.scanLocations([&callbacks](std::string const&,
+                                       wp::application::resourcesystem::ResourceLocationState state) {
+      callbacks.push_back(state);
+    });
+  };
+
+  manager.addResourceLocation("Directory", root.string(), "Resources.yaml");
+  scan();
+  auto resource = manager.getResource("Asset");
+  scan();
+
+  require(manager.getAllResources().size() == 1,
+          "Scanning a location twice produced more than one resource.");
+  require(manager.getResource("Asset") == resource,
+          "Scanning a location twice replaced the existing resource.");
+  require(factory->getCreatedResourceCount() == 1,
+          "Scanning a location twice instantiated the resource more than once.");
+  require(callbacks.size() == 2 &&
+              callbacks[0] == wp::application::resourcesystem::ResourceLocationState::Unscanned &&
+              callbacks[1] == wp::application::resourcesystem::ResourceLocationState::Scanned,
+          "Scanning a location twice invoked location callbacks more than once.");
+}
+
 void testDuplicateDefaultsAreRejected(fs::path const& root, wp::Logger& logger) {
   writeFile(root / "Resources.yaml", R"(Resources:
   Resource:
@@ -141,7 +185,7 @@ void testDuplicateDefaultsAreRejected(fs::path const& root, wp::Logger& logger) 
 
 int main(int argc, char** argv) {
   if (argc != 2) {
-    std::cerr << "Usage: resource_definition_tests <specialized-before-default|duplicate-default>\n";
+    std::cerr << "Usage: resource_definition_tests <specialized-before-default|idempotent-scan|duplicate-default>\n";
     return 2;
   }
 
@@ -155,6 +199,8 @@ int main(int argc, char** argv) {
     std::string scenario = argv[1];
     if (scenario == "specialized-before-default") {
       testSpecializedDefinitionPrecedesDefault(root, logger);
+    } else if (scenario == "idempotent-scan") {
+      testIdempotentLocationScan(root, logger);
     } else if (scenario == "duplicate-default") {
       testDuplicateDefaultsAreRejected(root, logger);
     } else {

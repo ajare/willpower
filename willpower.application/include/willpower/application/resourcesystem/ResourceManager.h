@@ -90,6 +90,9 @@ public:
 
   void addResources(std::string const& file);
 
+  // Scans each configured location at most once. Repeated ordinary scans are
+  // no-ops; ResourceManager deliberately provides no rescan operation because
+  // replacing merged records and instantiated resources is unsupported.
   void scanLocations(ResourceLocationCallback callback = nullptr);
 
   ResourcePtr getResource(std::string const& name, std::string const& namesp = "");
