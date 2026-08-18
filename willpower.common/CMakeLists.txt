@@ -103,4 +103,14 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_geometric_epsilon_tests)
     add_test(NAME willpower_geometric_epsilon
              COMMAND willpower_geometric_epsilon_tests)
+
+    add_executable(willpower_curve_tessellation_tests
+        tests/curve_tessellation_tests.cpp)
+    target_link_libraries(willpower_curve_tessellation_tests PRIVATE Willpower.Common)
+    target_compile_features(willpower_curve_tessellation_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_curve_tessellation_tests)
+    willpower_output_dirs(willpower_curve_tessellation_tests)
+    willpower_deploy_runtime_dlls(willpower_curve_tessellation_tests)
+    add_test(NAME willpower_curve_tessellation
+             COMMAND willpower_curve_tessellation_tests)
 endif()

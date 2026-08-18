@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -7,6 +8,7 @@
 
 #include <willpower/geometry/Edge.h>
 #include <willpower/geometry/Mesh.h>
+#include <willpower/geometry/MeshOperations.h>
 #include <willpower/geometry/Polygon.h>
 #include <willpower/geometry/UserAttributes.h>
 #include <willpower/geometry/Vertex.h>
@@ -18,6 +20,7 @@ using wp::geometry::DirectedEdgeVector;
 using wp::geometry::Edge;
 using wp::geometry::Mesh;
 using wp::geometry::MeshCallbacks;
+using wp::geometry::MeshOperations;
 using wp::geometry::Polygon;
 using wp::geometry::UserAttributes;
 using wp::geometry::UserAttributesBase;
@@ -187,7 +190,7 @@ void populatedMeshAssignmentReleasesAndRebindsOwnedState() {
   require(readInt(destination.getPolygonUserData(sourceFixture.polygonIndex)) == sourceValues[2],
           "assignment must preserve polygon attributes");
   require(readInt(destination.getPolygonVertexUserData(
-                      sourceFixture.polygonIndex, sourceFixture.vertexIndices[0])) == sourceValues[3],
+              sourceFixture.polygonIndex, sourceFixture.vertexIndices[0])) == sourceValues[3],
           "assignment must preserve polygon-vertex attributes");
 
   require(destination._getVertexAccelerationGrid() != source._getVertexAccelerationGrid(),
@@ -210,6 +213,40 @@ void populatedMeshAssignmentReleasesAndRebindsOwnedState() {
   require(callbackCalls == 1, "assignment must preserve mesh callbacks");
   destination.renderCallback(nullptr);
   require(renderedMesh == &destination, "assigned render callback must receive the destination mesh");
+}
+
+void requireFiniteMeshVertices(Mesh const& mesh, std::vector<uint32_t> const& indices,
+                               char const* message) {
+  for (uint32_t index : indices) {
+    auto const& position = mesh.getVertex(index).getPosition();
+    require(std::isfinite(position.x) && std::isfinite(position.y), message);
+  }
+}
+
+void shortCurveOperationsRetainInteriorGeometry() {
+  Mesh chamferMesh;
+  auto const chamferFixture = populateSquare(chamferMesh, 0.0f);
+  wp::geometry::ChamferVertexResult chamferResult;
+  MeshOperations::chamferVertex(&chamferMesh, chamferFixture.vertexIndices[0],
+                                0.01f, MeshOperations::OptimalBezierCurvature,
+                                &chamferResult);
+  require(chamferResult.newVertexIndices.size() >= 3,
+          "short chamfer collapsed its Bezier interior sample");
+  requireFiniteMeshVertices(chamferMesh, chamferResult.newVertexIndices,
+                            "short chamfer produced non-finite geometry");
+
+  Mesh extrusionMesh;
+  auto const extrusionFixture = populateSquare(extrusionMesh, 0.0f);
+  wp::geometry::ExtrudeVertexResult extrusionResult;
+  MeshOperations::extrudeVertex(
+      &extrusionMesh, extrusionFixture.vertexIndices[0], 0.01f,
+      wp::geometry::ExtrudeVertexOptions(wp::geometry::ExtrudeVertexOptions::Type::Round,
+                                         true, 3.0f),
+      &extrusionResult);
+  require(extrusionResult.newVertexIndices.size() >= 3,
+          "small round extrusion collapsed its interior arc sample");
+  requireFiniteMeshVertices(extrusionMesh, extrusionResult.newVertexIndices,
+                            "small round extrusion produced non-finite geometry");
 }
 
 void selfAssignmentPreservesMeshAndPolygonTopology() {
@@ -251,6 +288,7 @@ void selfAssignmentPreservesMeshAndPolygonTopology() {
 int main() {
   try {
     populatedMeshAssignmentReleasesAndRebindsOwnedState();
+    shortCurveOperationsRetainInteriorGeometry();
     selfAssignmentPreservesMeshAndPolygonTopology();
     std::cout << "Geometry mesh assignment tests passed\n";
     return 0;

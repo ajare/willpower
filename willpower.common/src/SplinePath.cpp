@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "willpower/common/SplinePath.h"
 
 using namespace std;
@@ -28,19 +30,16 @@ void SplinePath::setControlPoint(int index, Vector2 const& position) {
   rebuildRenderable();
 }
 
-vector<Vector2> SplinePath::divide(bool adaptive, float scale) const {
-  WP_UNUSED(adaptive);
-
+vector<Vector2> SplinePath::divide(float scale) const {
   vector<Vector2> vertices;
 
-  float length = getLength();
+  float const length = getLength();
+  int const sampleCount = max(MinimumTessellationSampleCount,
+                              static_cast<int>(length * scale));
+  float const dt = 1.0f / static_cast<float>(sampleCount - 1);
 
-  int n = (int)(length * scale);
-  float t = 0.0f, dt = 1.0f / (n - 1);
-
-  for (int i = 0; i < n; ++i) {
-    vertices.push_back(getPosition(t * length));
-    t += dt;
+  for (int i = 0; i < sampleCount; ++i) {
+    vertices.push_back(getPosition(i * dt * length));
   }
 
   return vertices;
@@ -48,7 +47,7 @@ vector<Vector2> SplinePath::divide(bool adaptive, float scale) const {
 
 BoundingBox SplinePath::getBounds() const {
   // Piecemeal approximate.
-  BoundingBox bounds(divide(false));
+  BoundingBox bounds(divide());
 
   // Expand a little to allow for inaccuracies in the curve approximation
   bounds.expand(0.01f, 0.01f);

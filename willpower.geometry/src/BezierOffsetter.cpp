@@ -11,7 +11,7 @@ BezierOffsetter::BezierOffsetter(vector<wp::Vector2> const& points, float maxMit
 }
 
 void BezierOffsetter::offset(float amount1, float amount2, CornerType cornerType, WidthModificationFunction widthModifier, int startVertex, int endVertex) {
-  mVertices = mCurve.divide(true, mScale);
+  mVertices = mCurve.divide(mScale);
 
   if (startVertex == endVertex) {
     endVertex = (int)mVertices.size() - 1;

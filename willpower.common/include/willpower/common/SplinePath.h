@@ -18,7 +18,12 @@ public:
 
   explicit SplinePath(std::vector<Vector2> const& points);
 
-  virtual std::vector<Vector2> divide(bool adaptive, float scale = 1.0f) const;
+  // Tessellation always returns both endpoints and at least one interior sample.
+  static constexpr int MinimumTessellationSampleCount = 3;
+  static constexpr int MinimumTessellationInteriorSampleCount =
+      MinimumTessellationSampleCount - 2;
+
+  virtual std::vector<Vector2> divide(float scale = 1.0f) const;
 
   int getNumControlPoints() const;
 

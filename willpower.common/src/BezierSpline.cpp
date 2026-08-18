@@ -29,7 +29,6 @@ BezierSpline& BezierSpline::operator=(BezierSpline const& other) {
 void BezierSpline::copyFrom(BezierSpline const& other) {
   SplinePath::operator=(other);
   mRecursionLimit = other.mRecursionLimit;
-  mScale = other.mScale;
   mPathEpsilon = other.mPathEpsilon;
   mAngleToleranceEpsilon = other.mAngleToleranceEpsilon;
   mAngleTolerance = other.mAngleTolerance;
@@ -103,7 +102,7 @@ BezierSpline::Segment const& BezierSpline::getSegment(int index) const {
   return mSegments[index];
 }
 
-vector<Vector2> BezierSpline::divide(bool adaptive, float scale) const {
+vector<Vector2> BezierSpline::divide(float scale) const {
   if (mSegments.empty()) {
     createSegments();
   }
@@ -116,11 +115,8 @@ vector<Vector2> BezierSpline::divide(bool adaptive, float scale) const {
   vertices.push_back(mPoints.front());
 
   for (int i = 0; i < (int)mPoints.size() - 3; i += 3) {
-    if (adaptive) {
-      divideAdaptive(vertices, mPoints[i], mPoints[i + 1], mPoints[i + 2], mPoints[i + 3], tolerance, 0);
-    } else {
-      divideEqual(vertices, i);
-    }
+    divideAdaptive(vertices, mPoints[i], mPoints[i + 1], mPoints[i + 2],
+                   mPoints[i + 3], tolerance, 0);
   }
 
   vertices.push_back(mPoints.back());
@@ -128,7 +124,8 @@ vector<Vector2> BezierSpline::divide(bool adaptive, float scale) const {
 }
 
 void BezierSpline::divideAdaptive(vector<Vector2>& vertices, Vector2 const& v1, Vector2 const& v2, Vector2 const& v3, Vector2 const& v4, float tolerance, int depth) const {
-  if (depth > mRecursionLimit) {
+  if (depth >= mRecursionLimit) {
+    vertices.push_back((v1 + v2 * 3.0f + v3 * 3.0f + v4) / 8.0f);
     return;
   }
 
@@ -241,18 +238,6 @@ void BezierSpline::divideAdaptive(vector<Vector2>& vertices, Vector2 const& v1, 
 
   divideAdaptive(vertices, v1, v12, v123, v1234, tolerance, depth + 1);
   divideAdaptive(vertices, v1234, v234, v34, v4, tolerance, depth + 1);
-}
-
-void BezierSpline::divideEqual(vector<Vector2>& vertices, int segment) const {
-  float dt = mScale / getSegment(segment / 3).length;
-
-  float t = dt;
-  while (t < 1.0f) {
-    Vector2 pos = getPosition(segment, t);
-    vertices.push_back(pos);
-
-    t += dt;
-  }
 }
 
 Vector2 BezierSpline::getPositionAtT(float t) const {

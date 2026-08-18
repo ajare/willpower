@@ -16,7 +16,7 @@ class WP_COMMON_API BezierSpline : public SplinePath {
 private:
   int mRecursionLimit;
 
-  float mScale, mPathEpsilon, mAngleToleranceEpsilon, mAngleTolerance, mCuspLimit;
+  float mPathEpsilon, mAngleToleranceEpsilon, mAngleTolerance, mCuspLimit;
 
   mutable std::vector<Segment> mSegments;
 
@@ -26,8 +26,6 @@ private:
   void createSegments() const;
 
   void divideAdaptive(std::vector<Vector2>& vertices, Vector2 const& v1, Vector2 const& v2, Vector2 const& v3, Vector2 const& v4, float tolerance, int depth) const;
-
-  void divideEqual(std::vector<Vector2>& vertices, int segment) const;
 
   int getSegmentIndex(float distance) const;
 
@@ -57,7 +55,7 @@ public:
 
   void setControlPoint(int index, Vector2 const& position);
 
-  std::vector<Vector2> divide(bool adaptive, float scale = 1.0f) const;
+  std::vector<Vector2> divide(float scale = 1.0f) const override;
 
   Vector2 getPositionAtT(float t) const;
 

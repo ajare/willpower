@@ -139,14 +139,16 @@ void MeshOperations::extrudeVertexExternal(Mesh* mesh, uint32_t vertexIndex, flo
 
     if (options.outwards) {
       float angle = arcDir0.anticlockwiseAngleTo(arcDir1);
-      int numPoints = (int)(scale * 1.5f * angle / 360.0f);
+      int const numPoints = max(SplinePath::MinimumTessellationSampleCount,
+                                (int)(scale * 1.5f * angle / 360.0f));
       for (int i = 0; i < numPoints; ++i) {
         Vector2 rotated = arcDir0.rotatedAnticlockwiseCopy(angle * i / (numPoints - 1));
         newVertexPositions.push_back(cornerPos + rotated);
       }
     } else {
       float angle = arcDir0.clockwiseAngleTo(arcDir1);
-      int numPoints = (int)(scale * 1.5f * angle / 360.0f);
+      int const numPoints = max(SplinePath::MinimumTessellationSampleCount,
+                                (int)(scale * 1.5f * angle / 360.0f));
       for (int i = 0; i < numPoints; ++i) {
         Vector2 rotated = arcDir0.rotatedClockwiseCopy(angle * i / (numPoints - 1));
         newVertexPositions.push_back(cornerPos + rotated);
@@ -265,7 +267,7 @@ void MeshOperations::chamferVertex(Mesh* mesh, uint32_t vertexIndex, float dista
 
   // Create bezier
   BezierSpline curve({startPos, ctrlPos0, ctrlPos1, endPos});
-  auto curvePoints = curve.divide(true, 1.0f);
+  auto curvePoints = curve.divide(1.0f);
 
   // Split into sub edges
   SplitEdgeResult splitResult;
