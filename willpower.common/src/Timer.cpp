@@ -1,21 +1,22 @@
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
+#include <utility>
 
 #include "willpower/common/Timer.h"
 
 namespace WP_NAMESPACE {
 using namespace std;
 
-Timer::Timer()
-    : mPaused(false) {
-  mTimeStarted = chrono::high_resolution_clock::now();
-}
+Timer::Timer(NowFunction now)
+    : mNow(move(now)),
+      mTimeStarted(mNow()),
+      mPaused(false) {}
 
-void Timer::Timer::restart() {
+void Timer::restart() {
   mPaused = false;
   mDuration = {};
-  mTimeStarted = chrono::high_resolution_clock::now();
+  mTimeStarted = mNow();
 }
 
 void Timer::resume() {
@@ -24,7 +25,7 @@ void Timer::resume() {
   }
 
   mPaused = false;
-  mTimeStarted = chrono::high_resolution_clock::now();
+  mTimeStarted = mNow();
 }
 
 void Timer::pause() {
@@ -32,25 +33,24 @@ void Timer::pause() {
     return;
   }
 
-  chrono::high_resolution_clock::time_point now =
-      chrono::high_resolution_clock::now();
-
-  mDuration += (now - mTimeStarted);
+  mDuration += mNow() - mTimeStarted;
   mPaused = true;
 }
 
 int64_t Timer::elapsedNanoseconds() {
+  auto duration = mDuration;
   if (!mPaused) {
-    chrono::high_resolution_clock::time_point now =
-        chrono::high_resolution_clock::now();
-
-    mDuration += (now - mTimeStarted);
+    duration += mNow() - mTimeStarted;
   }
 
-  return chrono::duration_cast<chrono::nanoseconds>(mDuration).count();
+  return chrono::duration_cast<chrono::nanoseconds>(duration).count();
 }
 
 string Timer::nsToString(int64_t ns) {
+  if (ns <= 0) {
+    return "0 ns";
+  }
+
   int nsecs_log10 = static_cast<int>(log10(ns));
 
   ostringstream os{};

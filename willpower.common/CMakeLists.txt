@@ -113,4 +113,12 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_curve_tessellation_tests)
     add_test(NAME willpower_curve_tessellation
              COMMAND willpower_curve_tessellation_tests)
+
+    add_executable(willpower_timer_tests tests/timer_tests.cpp)
+    target_link_libraries(willpower_timer_tests PRIVATE Willpower.Common)
+    target_compile_features(willpower_timer_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_timer_tests)
+    willpower_output_dirs(willpower_timer_tests)
+    willpower_deploy_runtime_dlls(willpower_timer_tests)
+    add_test(NAME willpower_timer COMMAND willpower_timer_tests)
 endif()
