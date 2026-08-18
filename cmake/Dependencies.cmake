@@ -45,11 +45,16 @@ function(willpower_import_mpp target stem)
     cmake_parse_arguments(ARG "" "" "INCLUDE" ${ARGN})
     add_library(${target} SHARED IMPORTED GLOBAL)
     set_target_properties(${target} PROPERTIES
-        IMPORTED_CONFIGURATIONS "Debug;Release"
+        IMPORTED_CONFIGURATIONS "Debug;Release;MemCheck"
         IMPORTED_IMPLIB_RELEASE "${_mpp_lib}/Release/${stem}.lib"
         IMPORTED_IMPLIB_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
+        # MemCheck is a Debug variant, but DEBUG_POSTFIX only applies to a
+        # config literally named "Debug" (see massive-poly-pusher and utils
+        # CMakeLists.txt), so its artifacts keep the bare stem name.
+        IMPORTED_IMPLIB_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
         IMPORTED_LOCATION_RELEASE "${_mpp_bin}/Release/${stem}.dll"
         IMPORTED_LOCATION_DEBUG "${_mpp_bin}/Debug/${stem}d.dll"
+        IMPORTED_LOCATION_MEMCHECK "${_mpp_bin}/MemCheck/${stem}.dll"
         INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     add_dependencies(${target} willpower_mpp_external)
 endfunction()

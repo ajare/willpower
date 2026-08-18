@@ -22,11 +22,16 @@ endfunction()
 function(willpower_target_defaults target)
     set_target_properties(${target} PROPERTIES
         DEBUG_POSTFIX "d"
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-    target_compile_options(${target} PRIVATE /MP)
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:Debug>DLL"
+        # CMake's default DebugInformationFormat only recognises the literal
+        # "Debug" config (among the ones Willpower uses); MemCheck needs it
+        # set explicitly too or ASan builds emit no PDB (MSVC warning C5072)
+        # and lose symbolised reports.
+        MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,MemCheck>:ProgramDatabase>")
+    target_compile_options(${target} PRIVATE /MP $<$<CONFIG:MemCheck>:/fsanitize=address>)
     target_compile_definitions(${target} PRIVATE
-        $<$<CONFIG:Debug>:_DEBUG>
-        $<$<NOT:$<CONFIG:Debug>>:NDEBUG>)
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:_DEBUG>
+        $<$<NOT:$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>>:NDEBUG>)
 endfunction()
 
 function(willpower_output_dirs target)
@@ -51,6 +56,22 @@ function(willpower_deploy_runtime_dlls target)
                 "$<TARGET_RUNTIME_DLLS:${target}>" "$<TARGET_FILE_DIR:${target}>"
         COMMAND_EXPAND_LISTS VERBATIM
         COMMENT "Staging runtime DLLs for ${target}")
+    willpower_copy_asan_runtime(${target})
+endfunction()
+
+# Copies the MSVC ASan runtime DLL/PDB next to a MemCheck config target so it
+# can run standalone outside a Visual Studio developer command prompt. A
+# no-op for every other configuration and generator; WILLPOWER_ASAN_DLL is
+# only defined for MSVC multi-config generators (see the MemCheck setup near
+# the top of the top-level CMakeLists.txt).
+function(willpower_copy_asan_runtime target)
+    if(NOT DEFINED WILLPOWER_ASAN_DLL)
+        return()
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "$<$<CONFIG:MemCheck>:${CMAKE_COMMAND};-E;copy_if_different;${WILLPOWER_ASAN_DLL};${WILLPOWER_ASAN_PDB};$<TARGET_FILE_DIR:${target}>>"
+        COMMAND_EXPAND_LISTS
+        VERBATIM)
 endfunction()
 
 function(willpower_deploy_vendor_dlls target)
