@@ -37,3 +37,24 @@ target_compile_options(Willpower.Geometry PRIVATE /W4)
 willpower_target_defaults(Willpower.Geometry)
 willpower_output_dirs(Willpower.Geometry)
 set_target_properties(Willpower.Geometry PROPERTIES FOLDER Willpower)
+
+if(BUILD_TESTING)
+    add_executable(willpower_geometry_mesh_assignment_tests
+        tests/mesh_assignment_tests.cpp)
+    target_link_libraries(willpower_geometry_mesh_assignment_tests PRIVATE Willpower.Geometry)
+    target_compile_features(willpower_geometry_mesh_assignment_tests PRIVATE cxx_std_20)
+    target_compile_options(willpower_geometry_mesh_assignment_tests PRIVATE
+        /fsanitize=address /Zi)
+    target_link_options(willpower_geometry_mesh_assignment_tests PRIVATE
+        /INFERASANLIBS /DEBUG)
+    willpower_target_defaults(willpower_geometry_mesh_assignment_tests)
+    willpower_output_dirs(willpower_geometry_mesh_assignment_tests)
+    willpower_deploy_runtime_dlls(willpower_geometry_mesh_assignment_tests)
+    get_filename_component(msvc_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    add_custom_command(TARGET willpower_geometry_mesh_assignment_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${msvc_bin_dir}/clang_rt.asan_dynamic-x86_64.dll"
+                "$<TARGET_FILE_DIR:willpower_geometry_mesh_assignment_tests>")
+    add_test(NAME willpower_geometry_mesh_assignment
+             COMMAND willpower_geometry_mesh_assignment_tests)
+endif()

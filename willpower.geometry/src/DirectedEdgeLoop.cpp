@@ -36,7 +36,9 @@ DirectedEdgeLoop::DirectedEdgeLoop(DirectedEdgeLoop const& other) {
 }
 
 DirectedEdgeLoop& DirectedEdgeLoop::operator=(DirectedEdgeLoop const& other) {
-  copyFrom(other);
+  if (this != &other) {
+    copyFrom(other);
+  }
   return *this;
 }
 

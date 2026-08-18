@@ -197,8 +197,10 @@ Polygon::Polygon(Polygon const& other)
 }
 
 Polygon& Polygon::operator=(Polygon const& other) {
-  DirectedEdgeLoop::operator=(other);
-  copyFrom(other);
+  if (this != &other) {
+    DirectedEdgeLoop::operator=(other);
+    copyFrom(other);
+  }
   return *this;
 }
 

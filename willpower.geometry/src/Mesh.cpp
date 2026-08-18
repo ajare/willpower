@@ -60,7 +60,8 @@ Mesh::Mesh(
   mCheckIntegrity.push(true);
 }
 
-Mesh::Mesh(Mesh const& other) {
+Mesh::Mesh(Mesh const& other)
+    : Mesh() {
   copyFrom(other);
 }
 
@@ -76,11 +77,69 @@ Mesh::~Mesh() {
 }
 
 Mesh& Mesh::operator=(Mesh const& other) {
-  copyFrom(other);
+  if (this != &other) {
+    Mesh copy(other);
+    swap(copy);
+    rebindSubObjects();
+  }
   return *this;
 }
 
+void Mesh::swap(Mesh& other) {
+  using std::swap;
+
+  swap(mLogger, other.mLogger);
+  swap(mRenderCallback, other.mRenderCallback);
+  swap(mVertexAttributeFactory, other.mVertexAttributeFactory);
+  swap(mEdgeAttributeFactory, other.mEdgeAttributeFactory);
+  swap(mPolygonAttributeFactory, other.mPolygonAttributeFactory);
+  swap(mPolygonVertexAttributeFactory, other.mPolygonVertexAttributeFactory);
+  swap(mVertexAttributes, other.mVertexAttributes);
+  swap(mEdgeAttributes, other.mEdgeAttributes);
+  swap(mPolygonAttributes, other.mPolygonAttributes);
+  swap(mPolygonVertexAttributes, other.mPolygonVertexAttributes);
+  swap(mVertices, other.mVertices);
+  swap(mDeadVertices, other.mDeadVertices);
+  swap(mEdges, other.mEdges);
+  swap(mDeadEdges, other.mDeadEdges);
+  swap(mPolygons, other.mPolygons);
+  swap(mDeadPolygons, other.mDeadPolygons);
+  swap(mVerticesToEdges, other.mVerticesToEdges);
+  swap(mCallbacks, other.mCallbacks);
+  swap(mVertexAccelerationGrid, other.mVertexAccelerationGrid);
+  swap(mEdgeAccelerationGrid, other.mEdgeAccelerationGrid);
+  swap(mPolygonAccelerationGrid, other.mPolygonAccelerationGrid);
+  swap(mMinExtent, other.mMinExtent);
+  swap(mMaxExtent, other.mMaxExtent);
+  swap(mRecalculateExtents, other.mRecalculateExtents);
+  swap(mVertexIdGenerator, other.mVertexIdGenerator);
+  swap(mEdgeIdGenerator, other.mEdgeIdGenerator);
+  swap(mPolygonIdGenerator, other.mPolygonIdGenerator);
+  swap(mCheckIntegrity, other.mCheckIntegrity);
+}
+
+void Mesh::rebindSubObjects() {
+  for (uint32_t i = 0; i < mVertices.size(); ++i) {
+    mVertices[i].setMesh(this, i);
+    mVertices[i].setDeleteFunction(&Mesh::_killVertex);
+    mVertices[i].setUpdateEdgeFunction(&Mesh::_updateVertexEdgeReference);
+  }
+
+  for (uint32_t i = 0; i < mEdges.size(); ++i) {
+    mEdges[i].setMesh(this, i);
+    mEdges[i].setDeleteFunction(&Mesh::_killEdge);
+    mEdges[i].setUpdateRefFunction(&Mesh::_updateVertexEdgeReferences);
+  }
+
+  for (uint32_t i = 0; i < mPolygons.size(); ++i) {
+    mPolygons[i].setMesh(this, i);
+    mPolygons[i].setDeleteFunction(&Mesh::_killPolygon);
+    mPolygons[i].setUpdateRefFunction(&Mesh::_updateEdgePolygonReferences);
+  }
+}
+
 void Mesh::copyFrom(Mesh const& other) {
+  mLogger = other.mLogger;
   mRenderCallback = other.mRenderCallback;
 
   // Copy all data
@@ -98,6 +157,7 @@ void Mesh::copyFrom(Mesh const& other) {
   mVertexIdGenerator = other.mVertexIdGenerator;
   mEdgeIdGenerator = other.mEdgeIdGenerator;
   mPolygonIdGenerator = other.mPolygonIdGenerator;
+  mCheckIntegrity = other.mCheckIntegrity;
 
   // Copy user vertex attributes
   mVertexAttributeFactory = other.mVertexAttributeFactory;
@@ -150,24 +210,7 @@ void Mesh::copyFrom(Mesh const& other) {
     mPolygonAccelerationGrid = nullptr;
   }
 
-  // Fix up callbacks
-  for (uint32_t i = 0; i < mVertices.size(); ++i) {
-    mVertices[i].setMesh(this, i);
-    mVertices[i].setDeleteFunction(&Mesh::_killVertex);
-    mVertices[i].setUpdateEdgeFunction(&Mesh::_updateVertexEdgeReference);
-  }
-
-  for (uint32_t i = 0; i < mEdges.size(); ++i) {
-    mEdges[i].setMesh(this, i);
-    mEdges[i].setDeleteFunction(&Mesh::_killEdge);
-    mEdges[i].setUpdateRefFunction(&Mesh::_updateVertexEdgeReferences);
-  }
-
-  for (uint32_t i = 0; i < mPolygons.size(); ++i) {
-    mPolygons[i].setMesh(this, i);
-    mPolygons[i].setDeleteFunction(&Mesh::_killPolygon);
-    mPolygons[i].setUpdateRefFunction(&Mesh::_updateEdgePolygonReferences);
-  }
+  rebindSubObjects();
 }
 
 void Mesh::recalculateExtents() const {

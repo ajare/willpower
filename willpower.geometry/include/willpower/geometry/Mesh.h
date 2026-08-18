@@ -97,6 +97,10 @@ private:
 private:
   void copyFrom(Mesh const& other);
 
+  void swap(Mesh& other);
+
+  void rebindSubObjects();
+
   void recalculateExtents() const;
 
   //
