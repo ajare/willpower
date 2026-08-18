@@ -85,12 +85,16 @@ Vector2 const& BoundingConvexPolygon::getMaxExtent() const {
 
 // Intersection tests
 bool BoundingConvexPolygon::intersectsTriMesh(Triangulation const& triangles) const {
+  if (mVertices.size() < 3) {
+    return false;
+  }
+
   auto numTriangles = triangles.getNumTriangles();
   for (uint32_t i = 0; i < numTriangles; ++i) {
     Vector2 tv0, tv1, tv2;
     triangles.getTriangle(i, tv0, tv1, tv2);
 
-    for (uint32_t j = 1; j < (uint32_t)mVertices.size() - 1; ++j) {
+    for (uint32_t j = 1; j + 1 < mVertices.size(); ++j) {
       Vector2 pv0 = mPosition + mVertices[0];
       Vector2 pv1 = mPosition + mVertices[j];
       Vector2 pv2 = mPosition + mVertices[j + 1];

@@ -65,6 +65,16 @@ if(BUILD_TESTING)
     add_test(NAME willpower_acceleration_grid_set_operations
              COMMAND willpower_acceleration_grid_set_operations_tests)
 
+    add_executable(willpower_bounding_convex_polygon_intersection_tests
+        tests/bounding_convex_polygon_intersection_tests.cpp)
+    target_link_libraries(willpower_bounding_convex_polygon_intersection_tests PRIVATE Willpower.Common)
+    target_compile_features(willpower_bounding_convex_polygon_intersection_tests PRIVATE cxx_std_20)
+    willpower_target_defaults(willpower_bounding_convex_polygon_intersection_tests)
+    willpower_output_dirs(willpower_bounding_convex_polygon_intersection_tests)
+    willpower_deploy_runtime_dlls(willpower_bounding_convex_polygon_intersection_tests)
+    add_test(NAME willpower_bounding_convex_polygon_intersection
+             COMMAND willpower_bounding_convex_polygon_intersection_tests)
+
     # Manual Release-mode evidence for PERF-3; deliberately not a pass/fail test.
     add_executable(willpower_acceleration_grid_benchmark
         tests/acceleration_grid_benchmark.cpp)
