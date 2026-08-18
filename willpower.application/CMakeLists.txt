@@ -120,4 +120,16 @@ if(BUILD_TESTING)
         add_test(NAME willpower_application_resource_dependency_${scenario}
             COMMAND willpower_application_resource_dependency_tests ${scenario})
     endforeach()
+
+    add_executable(willpower_application_resource_release_tests
+        tests/resource_release_tests.cpp)
+    target_compile_features(willpower_application_resource_release_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_resource_release_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_resource_release_tests)
+    willpower_output_dirs(willpower_application_resource_release_tests)
+    set_target_properties(willpower_application_resource_release_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_resource_release_tests)
+    willpower_deploy_vendor_dlls(willpower_application_resource_release_tests)
+    add_test(NAME willpower_application_resource_release
+        COMMAND willpower_application_resource_release_tests)
 endif()

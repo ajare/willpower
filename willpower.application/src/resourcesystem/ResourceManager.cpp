@@ -484,9 +484,6 @@ void ResourceManager::releaseResource(ResourcePtr resource, ResourceCallback cal
       } else {
         callback(resource, ResourceState::Instantiated, rootResource);
       }
-
-      callback(resource, ResourceState::Released, rootResource);
-      return;
     }
   }
 
