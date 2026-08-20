@@ -2210,14 +2210,25 @@ void Mesh::compact(map<uint32_t, uint32_t>* vertexRemapping, map<uint32_t, uint3
         Edge& compactedEdge = mEdges[newLiveOffset];
         compactedEdge = mEdges[i];
 
-        compactedEdge.setMesh(this, newLiveOffset);
         compactedEdge.setDeleteFunction(&Mesh::_killEdge);
 
-        // Update edge vertices.  Disable the ref-updating here because the old vertex indices
-        // are now invalid.
+        // Update edge vertices to the new numbering, and only then rebind
+        // the edge to this mesh/index: setMesh()'s updateInternals() reads
+        // the edge's vertices, and the vertex compaction above has already
+        // shrunk mVertices to that new numbering, so the edge's still-old
+        // vertex indices are briefly out of range until remapped here.
+        // Both are set together through setVertices(), not one at a time
+        // through setFirstVertex()/setSecondVertex() - each of those also
+        // calls updateInternals() itself, which would read the still-old,
+        // possibly out-of-range second vertex while only the first has been
+        // remapped. Disable the ref-updating here because the old vertex
+        // indices are now invalid.
         compactedEdge.setUpdateRefFunction({});
-        compactedEdge.setFirstVertex(newVertexIndices[compactedEdge.getFirstVertex()]);
-        compactedEdge.setSecondVertex(newVertexIndices[compactedEdge.getSecondVertex()]);
+        compactedEdge.setVertices(
+            newVertexIndices[compactedEdge.getFirstVertex()],
+            newVertexIndices[compactedEdge.getSecondVertex()]);
+
+        compactedEdge.setMesh(this, newLiveOffset);
 
         // Update the edge-vertex lookup
         addEdgeToReverseLookup(compactedEdge, newLiveOffset);
