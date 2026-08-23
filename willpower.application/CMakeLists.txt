@@ -3,6 +3,7 @@ add_library(Willpower.Application SHARED
     src/AudioSystem.cpp
     src/InputHelper.cpp
     src/InputStateManager.cpp
+    src/PlatformTimer.cpp
     src/Scheduler.cpp
     src/SchedulerTask.cpp
     src/ServiceLocator.cpp
