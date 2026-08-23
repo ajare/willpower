@@ -74,5 +74,53 @@ void StackWalkerInstance::deleteInstance() {
 }  // namespace WP_NAMESPACE
 
 #else
-#error "Willpower stack-trace implementation is available only on Windows."
+#include <execinfo.h>
+#include <unistd.h>
+
+#include <willpower/common/WillpowerWalker.h>
+
+namespace WP_NAMESPACE {
+
+// Singleton instantiation
+WillpowerWalker* StackWalkerInstance::mInstance = nullptr;
+
+WillpowerWalker::WillpowerWalker(std::string const& logfile) {
+  (void)logfile;  // Backtraces go straight to stderr; no log file off-Windows.
+}
+
+WillpowerWalker::~WillpowerWalker() {
+}
+
+void WillpowerWalker::logStackTraceFormatted() {
+  void* frames[64];
+  int const count = backtrace(frames, 64);
+
+  // Skip the logStackTraceFormatted() frame itself.
+  if (count > 1) {
+    backtrace_symbols_fd(frames + 1, count - 1, STDERR_FILENO);
+  }
+}
+
+StackWalkerInstance::StackWalkerInstance() {
+}
+
+WillpowerWalker* StackWalkerInstance::getInstance() {
+  if (!mInstance) {
+    mInstance = new WillpowerWalker("DebugStackTracer.html");
+  }
+
+  return mInstance;
+}
+
+bool StackWalkerInstance::hasInstance() {
+  return mInstance != nullptr;
+}
+
+void StackWalkerInstance::deleteInstance() {
+  delete mInstance;
+  mInstance = nullptr;
+}
+
+}  // namespace WP_NAMESPACE
+
 #endif

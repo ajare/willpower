@@ -22,7 +22,8 @@ add_library(Willpower.Common SHARED
     src/MathsUtils.cpp
     src/Renderable.cpp
     src/SplinePath.cpp
-    src/StackWalker.cpp
+    # Win32 DBH/PSAPI walker; excluded from non-Windows builds (see WP-001).
+    $<$<PLATFORM_ID:Windows>:src/StackWalker.cpp>
     src/StringUtils.cpp
     src/StructuredData.cpp
     src/Timer.cpp

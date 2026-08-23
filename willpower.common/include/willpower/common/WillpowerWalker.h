@@ -60,5 +60,37 @@ public:
 }  // namespace WP_NAMESPACE
 
 #else
-#error "Willpower stack-trace support is available only on Windows."
+// Non-Windows fallback: ASSERT_TRACE degrades to a plain assert() and
+// WillpowerWalker dumps a raw backtrace() to stderr. The public API mirrors
+// the Windows version so callers are unchanged.
+
+#define ASSERT_TRACE(expr) assert(expr)
+
+namespace WP_NAMESPACE {
+
+class WP_COMMON_API WillpowerWalker {
+public:
+  WillpowerWalker(std::string const& logfile);
+
+  ~WillpowerWalker();
+
+  void logStackTraceFormatted();
+};
+
+class WP_COMMON_API StackWalkerInstance {
+  static WillpowerWalker* mInstance;
+
+protected:
+  StackWalkerInstance();
+
+public:
+  static WillpowerWalker* getInstance();
+
+  static bool hasInstance();
+
+  static void deleteInstance();
+};
+
+}  // namespace WP_NAMESPACE
+
 #endif
