@@ -20,7 +20,7 @@ All tickets are published as GitHub issues on [`ajare/willpower`](https://github
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [WP-001](WP-001.md) | [#1](https://github.com/ajare/willpower/issues/1) | 1 — Common | P0 | medium | Portable stack walking and unconditional `ASSERT_TRACE` | — | done |
 | [WP-002](WP-002.md) | [#2](https://github.com/ajare/willpower/issues/2) | 1 — Common | P0 | easy | Portable local time in `Logger.cpp` | — | open |
-| [WP-003](WP-003.md) | [#3](https://github.com/ajare/willpower/issues/3) | 1 — Common | P1 | easy | Feature-test guard for `source_location` in `Exceptions.h` | — | open |
+| [WP-003](WP-003.md) | [#3](https://github.com/ajare/willpower/issues/3) | 1 — Common | P1 | easy | Feature-test guard for `source_location` in `Exceptions.h` | — | done |
 | [WP-004](WP-004.md) | [#4](https://github.com/ajare/willpower/issues/4) | 1 — Common | P0 | medium | Platform-aware Common CMake (defines, sources, warnings) | WP-001 | done |
 | [WP-005](WP-005.md) | [#5](https://github.com/ajare/willpower/issues/5) | 2 — Application | P0 | hard | Portable `Scheduler`/`SchedulerTask` timing (QPC → `steady_clock`) | WP-001 | done |
 | [WP-006](WP-006.md) | [#6](https://github.com/ajare/willpower/issues/6) | 2 — Application | P1 | easy | Drop the Windows gate on the FMOD audio backend | — | open |
