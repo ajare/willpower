@@ -21,14 +21,21 @@ endfunction()
 
 function(willpower_target_defaults target)
     set_target_properties(${target} PROPERTIES
-        DEBUG_POSTFIX "d"
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:Debug>DLL"
-        # CMake's default DebugInformationFormat only recognises the literal
-        # "Debug" config (among the ones Willpower uses); MemCheck needs it
-        # set explicitly too or ASan builds emit no PDB (MSVC warning C5072)
-        # and lose symbolised reports.
-        MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,MemCheck>:ProgramDatabase>")
-    target_compile_options(${target} PRIVATE /MP $<$<CONFIG:MemCheck>:/fsanitize=address>)
+        DEBUG_POSTFIX "d")
+    if(MSVC)
+        set_target_properties(${target} PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:Debug>DLL"
+            # CMake's default DebugInformationFormat only recognises the literal
+            # "Debug" config (among the ones Willpower uses); MemCheck needs it
+            # set explicitly too or ASan builds emit no PDB (MSVC warning C5072)
+            # and lose symbolised reports.
+            MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,MemCheck>:ProgramDatabase>")
+        target_compile_options(${target} PRIVATE
+            /MP
+            $<$<CONFIG:MemCheck>:/fsanitize=address>)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+    endif()
     target_compile_definitions(${target} PRIVATE
         $<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:_DEBUG>
         $<$<NOT:$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>>:NDEBUG>)
@@ -40,22 +47,34 @@ function(willpower_output_dirs target)
     set_target_properties(${target} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${runtime}"
         LIBRARY_OUTPUT_DIRECTORY "${runtime}"
-        ARCHIVE_OUTPUT_DIRECTORY "${archive}"
-        PDB_OUTPUT_DIRECTORY "${runtime}")
+        ARCHIVE_OUTPUT_DIRECTORY "${archive}")
+    # PDBs are an MSVC concept; on GCC/Clang debug info lives in the objects.
+    if(MSVC)
+        set_target_properties(${target} PROPERTIES
+            PDB_OUTPUT_DIRECTORY "${runtime}")
+    endif()
 endfunction()
 
 function(willpower_enable_sdl_checks)
+    # /sdl is an MSVC-only flag; no-op elsewhere.
+    if(NOT MSVC)
+        return()
+    endif()
     foreach(target ${ARGN})
         target_compile_options(${target} PRIVATE /sdl)
     endforeach()
 endfunction()
 
 function(willpower_deploy_runtime_dlls target)
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_RUNTIME_DLLS:${target}>" "$<TARGET_FILE_DIR:${target}>"
-        COMMAND_EXPAND_LISTS VERBATIM
-        COMMENT "Staging runtime DLLs for ${target}")
+    # $<TARGET_RUNTIME_DLLS> is MSVC-only; off MSVC the build-tree RPATH
+    # (CMake default) already lets executables find the build-tree .so files.
+    if(MSVC)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_RUNTIME_DLLS:${target}>" "$<TARGET_FILE_DIR:${target}>"
+            COMMAND_EXPAND_LISTS VERBATIM
+            COMMENT "Staging runtime DLLs for ${target}")
+    endif()
     willpower_copy_asan_runtime(${target})
 endfunction()
 
