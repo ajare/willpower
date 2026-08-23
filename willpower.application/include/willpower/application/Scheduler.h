@@ -1,11 +1,8 @@
 #pragma once
 
-#include "willpower/application/Platform.h"
-
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS
-
-#include <windows.h>
 #include <vector>
+
+#include "willpower/application/Platform.h"
 #include "willpower/application/SchedulerTask.h"
 
 namespace WP_NAMESPACE {
@@ -18,8 +15,6 @@ class WP_APPLICATION_API Scheduler {
   };
 
 private:
-  LARGE_INTEGER mFrequency;
-
   int mMicroseconds, mTotalMicrosecondsAllocated;
 
   std::vector<CurrentTask> mTasks;
@@ -40,7 +35,3 @@ public:
 
 }  // namespace application
 }  // namespace WP_NAMESPACE
-
-#else
-#error "Willpower Scheduler is supported only on Windows."
-#endif

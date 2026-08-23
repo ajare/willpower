@@ -1,8 +1,6 @@
-#include "willpower/application/Platform.h"
-
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS
-
 #include "willpower/application/Scheduler.h"
+
+#include "PlatformTimer.h"
 
 #include "willpower/common/Exceptions.h"
 
@@ -13,9 +11,6 @@ namespace application {
 
 Scheduler::Scheduler(int microseconds)
     : mMicroseconds(microseconds), mTotalMicrosecondsAllocated(0), mExecuting(false) {
-  if (::QueryPerformanceFrequency(&mFrequency) == FALSE) {
-    throw Exception("Could not get timer frequency.");
-  }
 }
 
 void Scheduler::setMicrosecondsAllocated(int microseconds) {
@@ -49,19 +44,12 @@ void Scheduler::addTask(SchedulerTask* task, int microseconds) {
 void Scheduler::execute(float frameTime) {
   mExecuting = true;
 
-  // Start timer
-  LARGE_INTEGER startTime, taskStartTime, taskEndTime;
-  if (::QueryPerformanceCounter(&startTime) == FALSE) {
-    throw Exception("Could not get timer time.");
-  }
-
   int microsecondsLeft = mMicroseconds;
   float scaleRemaining = 1.0f;
+  int64_t taskStartTime, taskEndTime;
   for (auto task : mTasks) {
     // Get task start time
-    if (::QueryPerformanceCounter(&taskStartTime) == FALSE) {
-      throw Exception("Could not get timer time.");
-    }
+    taskStartTime = HighResTimer::now();
 
     int taskMicroseconds = task.task->getMicrosecondsAllocated();
     if (taskMicroseconds > 0) {
@@ -71,11 +59,9 @@ void Scheduler::execute(float frameTime) {
     task.task->execute(frameTime);
 
     // Get task end time
-    if (::QueryPerformanceCounter(&taskEndTime) == FALSE) {
-      throw Exception("Could not get timer time.");
-    }
+    taskEndTime = HighResTimer::now();
 
-    double interval = static_cast<double>(taskEndTime.QuadPart - taskStartTime.QuadPart) / mFrequency.QuadPart;
+    double interval = HighResTimer::intervalSeconds(taskStartTime, taskEndTime);
     int microsecondsPassed = (int)(interval * 1000000);
     microsecondsLeft -= microsecondsPassed;
 
@@ -92,7 +78,3 @@ void Scheduler::execute(float frameTime) {
 
 }  // namespace application
 }  // namespace WP_NAMESPACE
-
-#else
-#error "Willpower Scheduler implementation is supported only on Windows."
-#endif
