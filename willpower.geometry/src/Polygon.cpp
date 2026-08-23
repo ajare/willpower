@@ -271,6 +271,7 @@ void Polygon::addHole(Polygon& hole) {
 
   hole.convertToHole();
   mHoleIndices.push_back(hole.getMeshIndex());
+  invalidateTriangleData();
 }
 
 void Polygon::removeHole(uint32_t holeIndex) {
