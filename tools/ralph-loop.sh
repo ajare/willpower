@@ -156,7 +156,9 @@ get_next_ticket() {
     done < <(jq -c '.[]' <<<"$issues")
 
     [[ -n $candidates ]] || return 1
-    sort -n -k1,1 -k2,2 -k3,3 <<<"$candidates" | head -n1 | cut -f4-
+    # printf (not a herestring) so the trailing newline already in $candidates does
+    # not become a spurious empty line that sorts first under -n.
+    printf '%s' "$candidates" | sort -n -k1,1 -k2,2 -k3,3 | head -n1 | cut -f4-
 }
 
 select_adaptive() {
