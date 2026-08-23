@@ -1,7 +1,5 @@
 #include "willpower/common/Platform.h"
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS
-
 #include <iomanip>
 #include <ctime>
 
@@ -65,7 +63,11 @@ void Logger::message(string const& msg, MessageLevel level) {
   struct tm pTime;
   time_t ctTime;
   time(&ctTime);
+#if WP_PLATFORM == WP_PLATFORM_WINDOWS
   localtime_s(&pTime, &ctTime);
+#else
+  localtime_r(&ctTime, &pTime);
+#endif
 
   switch (level) {
     case MessageLevel::Info:
@@ -122,7 +124,3 @@ void Logger::fatal(string const& msg) {
 }
 
 }  // namespace WP_NAMESPACE
-
-#else
-#error "Willpower Logger is supported only on Windows."
-#endif
