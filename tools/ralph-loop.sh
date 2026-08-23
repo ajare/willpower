@@ -94,8 +94,8 @@ fi
 
 get_model_pair() {
     if [[ $1 == pi ]]; then
-        smaller_model="openai-codex/gpt-5.6-terra"
-        larger_model="openai-codex/gpt-5.6-sol"
+        smaller_model="llama-server/qwen-3.8-27b"
+        larger_model="llama-server/qwen-3.8-27b"
     else
         smaller_model="sonnet"
         larger_model="opus"
