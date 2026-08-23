@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include "willpower/common/Vector2.h"
 
 namespace WP_NAMESPACE {

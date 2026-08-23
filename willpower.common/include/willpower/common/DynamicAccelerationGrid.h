@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <map>
 #include <set>
@@ -37,7 +38,7 @@ private:
 
 private:
   static const uint16_t EMPTY_HASH_ENTRY = 0;
-  static const uint64_t EMPTY_HASH_SET = 0;
+  static constexpr uint64_t EMPTY_HASH_SET = 0;
   static const int SET_BITS = 16;
   static const int MAX_SIZE_MASK = (1 << SET_BITS) - 1;
 

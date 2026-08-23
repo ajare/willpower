@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 
 #include "willpower/common/MathsUtils.h"
@@ -11,7 +12,7 @@ BoundingConvexPolygon::BoundingConvexPolygon() {
 }
 
 BoundingConvexPolygon::BoundingConvexPolygon(Vector2 const& position, vector<Vector2> vertices)
-    : mPosition(position), mVertices(vertices) {
+    : mVertices(vertices), mPosition(position) {
   updateExtents();
 }
 

@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include <algorithm>
 
 #include "willpower/common/BezierSpline.h"
@@ -13,11 +14,12 @@ BezierSpline::BezierSpline()
 BezierSpline::BezierSpline(vector<Vector2> const& points)
     : SplinePath(points), mRecursionLimit(8), mPathEpsilon(1.0f), mAngleToleranceEpsilon(0.01f), mAngleTolerance(0.0f), mCuspLimit(0.0f) {
   if ((points.size() - 4) % 3 != 0) {
-    throw exception("BezierSpline: incorrect number of points.");
+    throw std::runtime_error("BezierSpline: incorrect number of points.");
   }
 }
 
-BezierSpline::BezierSpline(BezierSpline const& other) {
+BezierSpline::BezierSpline(BezierSpline const& other)
+    : SplinePath(other) {
   copyFrom(other);
 }
 

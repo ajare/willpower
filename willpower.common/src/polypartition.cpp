@@ -27,10 +27,14 @@
 
 using namespace std;
 
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4458)
+#endif
 #include "willpower/common/polypartition.h"
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 
 #define TPPL_VERTEXTYPE_REGULAR 0
 #define TPPL_VERTEXTYPE_START 1

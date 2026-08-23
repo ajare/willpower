@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include <algorithm>
 
 #include "willpower/common/SplinePath.h"
@@ -13,7 +14,7 @@ SplinePath::SplinePath(vector<Vector2> const& points)
     : mPoints(points) {
   int numPoints = (int)points.size();
   if (numPoints < 4) {
-    throw exception("SplinePath: cubic curves require at least 4 points.");
+    throw std::runtime_error("SplinePath: cubic curves require at least 4 points.");
   }
 }
 

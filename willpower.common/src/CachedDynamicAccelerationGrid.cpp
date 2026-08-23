@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cassert>
 #include <iterator>
 #include <algorithm>
@@ -71,6 +72,7 @@ uint64_t CachedDynamicAccelerationGrid::getHash(int x0, int y0, int x1, int y1) 
 }
 
 void CachedDynamicAccelerationGrid::addItem(uint32_t itemId, Vector2 const& minExtent, Vector2 const& maxExtent, NarrowPhaseFunction narrowFn) {
+  WP_UNUSED(narrowFn);
   addItem(itemId, getHash(minExtent, maxExtent));
 }
 

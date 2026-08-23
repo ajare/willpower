@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "willpower/common/ExtentsCalculator.h"
 
 using namespace std;

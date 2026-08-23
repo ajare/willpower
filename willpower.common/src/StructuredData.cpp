@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include <algorithm>
 
 #include "willpower/common/StructuredData.h"
@@ -44,7 +45,7 @@ StructuredData const& StructuredData::getEntry(string const& key) const {
 
   if (it == mEntries.end()) {
     string errMsg = "Could not find entry '" + key + "'.";
-    throw exception(errMsg.c_str());
+    throw std::runtime_error(errMsg);
   }
 
   return (*it).second;
