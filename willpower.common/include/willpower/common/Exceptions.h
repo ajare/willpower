@@ -4,7 +4,7 @@
 #include <exception>
 #include <format>
 
-#if _MSC_VER >= 1930
+#if __has_include(<source_location>)
 #include <source_location>
 #endif
 
@@ -31,7 +31,7 @@ private:
 
 class NotImplementedException : public Exception {
 public:
-#if _MSC_VER < 1930
+#if !defined(__cpp_lib_source_location)
   NotImplementedException()
       : Exception("Not implemented yet.") {
   }
