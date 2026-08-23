@@ -42,20 +42,37 @@ set(_mpp_glew_include "${WILLPOWER_MPP_BUILD_DIR}/_deps/glew-2.3.1/include")
 file(MAKE_DIRECTORY "${_mpp_glew_include}")
 
 function(willpower_import_mpp target stem)
-    cmake_parse_arguments(ARG "" "" "INCLUDE" ${ARGN})
+    cmake_parse_arguments(ARG "" "LINUX_STEM" "INCLUDE" ${ARGN})
     add_library(${target} SHARED IMPORTED GLOBAL)
-    set_target_properties(${target} PROPERTIES
-        IMPORTED_CONFIGURATIONS "Debug;Release;MemCheck"
-        IMPORTED_IMPLIB_RELEASE "${_mpp_lib}/Release/${stem}.lib"
-        IMPORTED_IMPLIB_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
-        # MemCheck is a Debug variant, but DEBUG_POSTFIX only applies to a
-        # config literally named "Debug" (see massive-poly-pusher and utils
-        # CMakeLists.txt), so its artifacts keep the bare stem name.
-        IMPORTED_IMPLIB_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
-        IMPORTED_LOCATION_RELEASE "${_mpp_bin}/Release/${stem}.dll"
-        IMPORTED_LOCATION_DEBUG "${_mpp_bin}/Debug/${stem}d.dll"
-        IMPORTED_LOCATION_MEMCHECK "${_mpp_bin}/MemCheck/${stem}.dll"
-        INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
+    if(WIN32)
+        set_target_properties(${target} PROPERTIES
+            IMPORTED_CONFIGURATIONS "Debug;Release;MemCheck"
+            IMPORTED_IMPLIB_RELEASE "${_mpp_lib}/Release/${stem}.lib"
+            IMPORTED_IMPLIB_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
+            # MemCheck is a Debug variant, but DEBUG_POSTFIX only applies to a
+            # config literally named "Debug" (see massive-poly-pusher and utils
+            # CMakeLists.txt), so its artifacts keep the bare stem name.
+            IMPORTED_IMPLIB_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
+            IMPORTED_LOCATION_RELEASE "${_mpp_bin}/Release/${stem}.dll"
+            IMPORTED_LOCATION_DEBUG "${_mpp_bin}/Debug/${stem}d.dll"
+            IMPORTED_LOCATION_MEMCHECK "${_mpp_bin}/MemCheck/${stem}.dll"
+            INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
+    else()
+        # Linux is single-config and MPP's CMAKE_LIBRARY_OUTPUT_DIRECTORY puts
+        # every shared library in the flat bin/ directory (verified against a
+        # real MPP build). The external build passes no CMAKE_BUILD_TYPE, so
+        # artifacts carry no debug postfix: bin/<stem>.so.
+        #
+        # LINUX_STEM overrides the artifact stem where it differs from the
+        # Windows one (GLEW builds as libGLEW.so, not libglew32.so).
+        set(_mpp_stem "${stem}")
+        if(ARG_LINUX_STEM)
+            set(_mpp_stem "${ARG_LINUX_STEM}")
+        endif()
+        set_target_properties(${target} PROPERTIES
+            IMPORTED_LOCATION "${_mpp_bin}/${_mpp_stem}.so"
+            INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
+    endif()
     add_dependencies(${target} willpower_mpp_external)
 endfunction()
 
@@ -72,6 +89,7 @@ willpower_import_mpp(ext::mpp-program MppProgram
 willpower_import_mpp(ext::mpp-data MppData
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/mpp-data/include")
 willpower_import_mpp(ext::glew glew32
+    LINUX_STEM GLEW
     INCLUDE "${_mpp_glew_include}")
 
 # Runtime dependencies which cannot be inferred from an imported DLL alone.
@@ -85,6 +103,10 @@ target_include_directories(vendor_headers INTERFACE
     "${WILLPOWER_EXT_DIR}/SplineLibrary")
 
 if(WILLPOWER_ENABLE_FMOD)
+    # FMOD also ships Linux and macOS SDKs; a future per-platform port would
+    # extend the find_* paths below (api/core/lib/linux, api/studio/lib/linux,
+    # ...). Until then the no-op audio default already covers non-Windows,
+    # so keep the explicit error.
     if(NOT WIN32)
         message(FATAL_ERROR "WILLPOWER_ENABLE_FMOD is supported on Windows only.")
     endif()
