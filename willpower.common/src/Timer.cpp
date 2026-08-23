@@ -1,3 +1,5 @@
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
@@ -9,7 +11,7 @@ namespace WP_NAMESPACE {
 using namespace std;
 
 Timer::Timer(NowFunction now)
-    : mNow(move(now)),
+    : mNow(std::move(now)),
       mTimeStarted(mNow()),
       mPaused(false) {}
 

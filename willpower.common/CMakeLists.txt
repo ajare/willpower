@@ -40,7 +40,10 @@ target_include_directories(Willpower.Common PUBLIC include)
 willpower_add_header_filter(Willpower.Common)
 
 target_compile_definitions(Willpower.Common PRIVATE
-    WIN32 _WINDOWS _USRDLL
+    # Platform boilerplate must not leak into non-Windows builds (WP-004).
+    $<$<PLATFORM_ID:Windows>:WIN32>
+    $<$<PLATFORM_ID:Windows>:_WINDOWS>
+    $<$<PLATFORM_ID:Windows>:_USRDLL>
     WP_COMMON_DLL_EXPORT
     WP_USE_ASSERT_TRACE
     TINYXML2_EXPORT
@@ -50,7 +53,11 @@ target_compile_definitions(Willpower.Common PRIVATE
 target_link_libraries(Willpower.Common PUBLIC vendor::headers)
 
 target_compile_features(Willpower.Common PRIVATE cxx_std_20)
-target_compile_options(Willpower.Common PRIVATE /W4)
+if(MSVC)
+    target_compile_options(Willpower.Common PRIVATE /W4)
+else()
+    target_compile_options(Willpower.Common PRIVATE -Wall -Wextra)
+endif()
 willpower_target_defaults(Willpower.Common)
 willpower_output_dirs(Willpower.Common)
 set_target_properties(Willpower.Common PROPERTIES FOLDER Willpower)

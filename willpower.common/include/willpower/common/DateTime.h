@@ -7,8 +7,6 @@
 namespace WP_NAMESPACE {
 
 class WP_COMMON_API TimeSpan {
-  std::chrono::duration<int32_t, std::ratio<1, 1>> mDuration;
-
 public:
   TimeSpan(int seconds);
 

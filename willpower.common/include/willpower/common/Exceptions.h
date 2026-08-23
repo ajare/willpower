@@ -16,8 +16,17 @@ namespace WP_NAMESPACE {
 class Exception : public std::exception {
 public:
   explicit Exception(std::string const& message)
-      : std::exception(message.c_str()) {
+      : mMessage(message) {
   }
+
+  // std::exception(const char*) was removed in C++20, so the message is
+  // stored and returned via what() (same behaviour as before).
+  const char* what() const noexcept override {
+    return mMessage.c_str();
+  }
+
+private:
+  std::string mMessage;
 };
 
 class NotImplementedException : public Exception {

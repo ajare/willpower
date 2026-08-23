@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cassert>
 #include <iterator>
 #include <algorithm>
@@ -14,7 +15,7 @@ CachedStaticAccelerationGrid::NarrowPhaseFunction CachedStaticAccelerationGrid::
 };
 
 CachedStaticAccelerationGrid::CachedStaticAccelerationGrid(Vector2 const& offset, Vector2 const& size, int cellDimX, int cellDimY, int initialCount)
-    : mOffset(offset), mSize(size), mCellDimX(cellDimX), mCellDimY(cellDimY), mCacheEnd(0), mCacheHits(0), mCacheMisses(0) {
+    : mCacheEnd(0), mCacheHits(0), mCacheMisses(0), mOffset(offset), mSize(size), mCellDimX(cellDimX), mCellDimY(cellDimY) {
   WP_UNUSED(initialCount);
 
   // Extend the grid a little to avoid floating point issues

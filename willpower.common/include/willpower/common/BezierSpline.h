@@ -53,25 +53,25 @@ public:
 
   BezierSpline& operator=(BezierSpline const& other);
 
-  void setControlPoint(int index, Vector2 const& position);
+  void setControlPoint(int index, Vector2 const& position) override;
 
   std::vector<Vector2> divide(float scale = 1.0f) const override;
 
   Vector2 getPositionAtT(float t) const;
 
-  Vector2 getPosition(float distance) const;
+  Vector2 getPosition(float distance) const override;
 
   Vector2 getDirectionAtT(float distance) const;
 
-  Vector2 getDirection(float distance) const;
+  Vector2 getDirection(float distance) const override;
 
   Vector2 getAccelerationAtT(float distance) const;
 
-  Vector2 getAcceleration(float distance) const;
+  Vector2 getAcceleration(float distance) const override;
 
-  float getLength() const;
+  float getLength() const override;
 
-  BoundingBox getBounds() const;
+  BoundingBox getBounds() const override;
 };
 
 }  // namespace WP_NAMESPACE

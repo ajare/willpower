@@ -203,7 +203,7 @@ private:
 template <class T, int INIT>
 class DynArray {
 public:
-  DynArray<T, INIT>() {
+  DynArray() {
     _mem = _pool;
     _allocated = INIT;
     _size = 0;

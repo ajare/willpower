@@ -1,12 +1,17 @@
 #pragma once
 #pragma once
 
+#include <algorithm>
 #include <vector>
 
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4244)
+#endif
 #include <spline_library/splines/cubic_hermite_spline.h>
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 
 #include "willpower/common/Platform.h"
 #include "willpower/common/Vector2.h"

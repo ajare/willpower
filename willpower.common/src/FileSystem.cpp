@@ -164,7 +164,9 @@ test_match:
 FileSystem::FileInfo FileSystem::createFile(string const& filepath) {
   ofstream fp;
 
-  fp.open(filepath.operator std::basic_string_view<char, std::char_traits<char>>(), ios_base::trunc);
+  // open(const char*) is the only overload common to MSVC and libstdc++
+  // (the C++17 string_view overload is missing from libstdc++'s fstream).
+  fp.open(filepath.c_str(), ios_base::trunc);
 
   if (!fp.is_open()) {
     throw FileException("Could not create file '" + filepath + "'.");

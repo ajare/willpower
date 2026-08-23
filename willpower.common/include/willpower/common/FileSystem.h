@@ -17,8 +17,17 @@ public:
   class FileException : public std::exception {
   public:
     explicit FileException(std::string const& message)
-        : exception(message.c_str()) {
+        : mMessage(message) {
     }
+
+    // std::exception(const char*) was removed in C++20, so the message is
+    // stored and returned via what() (same behaviour as before).
+    const char* what() const noexcept override {
+      return mMessage.c_str();
+    }
+
+  private:
+    std::string mMessage;
   };
 
   //

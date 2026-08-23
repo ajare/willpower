@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cassert>
 #include <algorithm>
 
@@ -1206,7 +1207,6 @@ bool MathsUtils::sweepCircleAgainstLine(Vector2 const& circleCentre, float circl
     float t2 = hit2.getTime();
 
     // Take the smallest 't' value above zero (ie which has actually hit).
-    Vector2 circleMove = circleTarget - circleCentre;
     *t = (((t1 >= 0 && t2 >= 0) ? min(t1, t2) : max(t1, t2)));
     return true;
   }
