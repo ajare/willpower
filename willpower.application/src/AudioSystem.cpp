@@ -9,7 +9,7 @@ namespace application {
 
 using namespace std;
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
 AudioSystem::AudioSystem(AudioOptions const& options)
     : mSystem(nullptr) {
   FMOD_RESULT res;
