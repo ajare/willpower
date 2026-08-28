@@ -2,7 +2,7 @@
 
 #include "willpower/application/Platform.h"
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
 #include <fmod.hpp>
 #include <fmod_errors.h>
 #include <fmod_studio.hpp>
@@ -18,7 +18,7 @@ class AudioBankResource;
 }
 
 class WP_APPLICATION_API AudioSystem {
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
   FMOD::Studio::System* mSystem;
 #endif
 
@@ -29,7 +29,7 @@ public:
 
   void createAudioBank(resourcesystem::AudioBankResource* audioBank, resourcesystem::DataStreamPtr dataPtr);
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
   FMOD::Studio::EventInstance* startEvent(std::string const& eventName);
 
   void setEventVolume(FMOD::Studio::EventInstance* inst, float volume);

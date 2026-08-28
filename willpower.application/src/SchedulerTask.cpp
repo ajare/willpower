@@ -1,8 +1,6 @@
-#include "willpower/application/Platform.h"
-
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS
-
 #include "willpower/application/SchedulerTask.h"
+
+#include "PlatformTimer.h"
 
 #include "willpower/common/Exceptions.h"
 #include "willpower/common/WillpowerWalker.h"
@@ -14,9 +12,6 @@ namespace application {
 
 SchedulerTask::SchedulerTask()
     : mMicroseconds(-1), mExecuting(false) {
-  if (::QueryPerformanceFrequency(&mFrequency) == FALSE) {
-    throw Exception("Could not get timer frequency.");
-  }
 }
 
 void SchedulerTask::setMicrosecondsAllocated(int nanoseconds) {
@@ -35,12 +30,9 @@ int SchedulerTask::getMicrosecondsSpent() const {
   ASSERT_TRACE(mExecuting && "Cannot get microseconds currently spent when not executing task.");
 
   // Get task end time
-  LARGE_INTEGER curTime;
-  if (::QueryPerformanceCounter(&curTime) == FALSE) {
-    throw Exception("Could not get timer time.");
-  }
+  int64_t curTime = HighResTimer::now();
 
-  double interval = static_cast<double>(curTime.QuadPart - mStartTime.QuadPart) / mFrequency.QuadPart;
+  double interval = HighResTimer::intervalSeconds(mStartTime, curTime);
   return (int)(interval * 1000000);
 }
 
@@ -48,9 +40,7 @@ void SchedulerTask::execute(float frameTime) {
   mExecuting = true;
 
   // Start timer
-  if (::QueryPerformanceCounter(&mStartTime) == FALSE) {
-    throw Exception("Could not get timer time.");
-  }
+  mStartTime = HighResTimer::now();
 
   // Execution implementation
   executeImpl(frameTime);
@@ -60,7 +50,3 @@ void SchedulerTask::execute(float frameTime) {
 
 }  // namespace application
 }  // namespace WP_NAMESPACE
-
-#else
-#error "Willpower SchedulerTask implementation is supported only on Windows."
-#endif

@@ -1,6 +1,6 @@
 #include "willpower/application/Platform.h"
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
 #include <fmod.hpp>
 #include <fmod_errors.h>
 #include <fmod_studio.hpp>
@@ -23,7 +23,7 @@ AudioBankResource::AudioBankResource(string const& name,
                                      application::resourcesystem::ResourceLocation* location,
                                      AudioSystem* audioSystem)
     : application::resourcesystem::Resource(name, namesp, "AudioBank", source, tags, location), mwAudioSystem(audioSystem)
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
       ,
       mBank(nullptr)
 #endif
@@ -43,7 +43,7 @@ void AudioBankResource::create(application::resourcesystem::DataStreamPtr dataPt
 }
 
 void AudioBankResource::destroy() {
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
   if (mwAudioSystem) {
     auto res = mBank->unload();
     mBank = nullptr;
@@ -59,7 +59,7 @@ bool AudioBankResource::load(mpp::RenderSystem* renderSystem, mpp::ResourceManag
   WP_UNUSED(renderSystem);
   WP_UNUSED(resourceMgr);
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
   if (mwAudioSystem) {
     auto res = mBank->loadSampleData();
 
@@ -76,7 +76,7 @@ bool AudioBankResource::unload(mpp::RenderSystem* renderSystem, mpp::ResourceMan
   WP_UNUSED(renderSystem);
   WP_UNUSED(resourceMgr);
 
-#if WP_PLATFORM == WP_PLATFORM_WINDOWS && defined(WP_APPLICATION_USE_FMOD)
+#if defined(WP_APPLICATION_USE_FMOD)
   if (mwAudioSystem) {
     auto res = mBank->unloadSampleData();
 

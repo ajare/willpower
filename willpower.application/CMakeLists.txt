@@ -3,6 +3,7 @@ add_library(Willpower.Application SHARED
     src/AudioSystem.cpp
     src/InputHelper.cpp
     src/InputStateManager.cpp
+    src/PlatformTimer.cpp
     src/Scheduler.cpp
     src/SchedulerTask.cpp
     src/ServiceLocator.cpp
@@ -106,6 +107,18 @@ if(BUILD_TESTING)
     willpower_deploy_vendor_dlls(willpower_application_input_state_manager_tests)
     add_test(NAME willpower_application_input_state_manager
         COMMAND willpower_application_input_state_manager_tests)
+
+    add_executable(willpower_application_scheduler_tests
+        tests/scheduler_tests.cpp)
+    target_compile_features(willpower_application_scheduler_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_scheduler_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_scheduler_tests)
+    willpower_output_dirs(willpower_application_scheduler_tests)
+    set_target_properties(willpower_application_scheduler_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_scheduler_tests)
+    willpower_deploy_vendor_dlls(willpower_application_scheduler_tests)
+    add_test(NAME willpower_application_scheduler
+        COMMAND willpower_application_scheduler_tests)
 
     add_executable(willpower_application_resource_dependency_tests
         tests/resource_dependency_tests.cpp)
