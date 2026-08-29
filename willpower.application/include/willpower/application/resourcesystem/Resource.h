@@ -100,6 +100,9 @@ public:
 
   bool hasDependentResource(std::string const& id) const;
 
+  // True when this resource's manifest dependency graph reaches target.
+  bool dependsOn(Resource const* target) const;
+
   std::shared_ptr<Resource> getDependentResource(std::string const& id);
 
   virtual mpp::ResourcePtr getMppResource() const;
