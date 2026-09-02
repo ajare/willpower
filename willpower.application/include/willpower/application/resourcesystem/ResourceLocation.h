@@ -76,10 +76,10 @@ public:
 
   void scan();
 
-  // Replaces this location's cached records. This is not a ResourceManager
-  // reload mechanism: once the location has been added to a ResourceManager,
-  // direct rescans are unsupported because its merged and instantiated
-  // resources are not replaced.
+  // Replaces this location's cached records. Call through
+  // ResourceManager::rescanLocations once the location belongs to a manager;
+  // the manager can then merge newly declared resources without replacing
+  // existing instantiated ones.
   void rescan();
 
   void validateResourceDefinitions();

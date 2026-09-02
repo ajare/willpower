@@ -220,9 +220,16 @@ void ResourceManager::instantiateAllResources(bool create, bool load, ResourceCa
   // dependent resources are instantiated before they are referenced.
   auto sortedResources = sortResourcesByDependency(resourceNames, resourceDependencies);
 
-  // Instantiate
+  // Instantiate records which do not already have a live Resource. Rescans
+  // are additive: an existing Resource keeps its identity and state.
   for (auto const& resName : sortedResources) {
-    instantiateResource(*recordMap.at(resName), create, load, callback, rootResource);
+    auto const* record = recordMap.at(resName);
+    auto namespaceIt = mResources.find(record->namesp);
+    if (namespaceIt != mResources.end() &&
+        namespaceIt->second.contains(record->baseData.name)) {
+      continue;
+    }
+    instantiateResource(*record, create, load, callback, rootResource);
   }
 }
 
@@ -382,6 +389,66 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
   if (scannedLocation) {
     instantiateAllResources(false, false);
   }
+}
+
+void ResourceManager::rescanLocations(ResourceLocationCallback callback) {
+  bool foundNewResource = false;
+  for (auto& locationRecord : mLocations) {
+    mwLogger->info(
+        "Rescanning resource location: " + locationRecord.location->getName());
+
+    if (callback) {
+      callback(locationRecord.location->getName(), ResourceLocationState::Unscanned);
+    }
+
+    locationRecord.location->rescan();
+    locationRecord.location->validateResourceDefinitions();
+
+    // Merge only declarations which do not already have an instantiated
+    // Resource. Existing records and Resources are deliberately immutable
+    // through this operation.
+    for (auto const& [namespaceName, namespaceRecord] :
+         locationRecord.location->getNamespaceRecords()) {
+      auto resourcesIt = mResources.find(namespaceName);
+      for (auto const& [resourceName, resourceRecord] :
+           namespaceRecord.resourceRecords) {
+        if (resourcesIt != mResources.end() &&
+            resourcesIt->second.contains(resourceName)) {
+          continue;
+        }
+        addResourceRecord(resourceRecord);
+        foundNewResource = true;
+      }
+    }
+
+    locationRecord.scanned = true;
+    if (callback) {
+      callback(locationRecord.location->getName(), ResourceLocationState::Scanned);
+    }
+  }
+
+  if (foundNewResource) {
+    instantiateAllResources(false, false);
+  }
+}
+
+void ResourceManager::addResource(ResourcePtr resource) {
+  if (!resource) {
+    throw ResourceSystemException("Cannot register a null Resource.");
+  }
+  if (resource->getName().empty() || resource->getName().find('/') != string::npos) {
+    throw ResourceSystemException(
+        "Programmatic Resource names must be non-empty and cannot contain '/'.");
+  }
+
+  auto& resources = mResources[resource->getNamespace()];
+  if (resources.contains(resource->getName())) {
+    throw ResourceSystemException(format(
+        "Resource '{}' is already registered.", resource->getQualifiedName()));
+  }
+
+  mwLogger->info("Registered programmatic resource: " + resource->getQualifiedName());
+  resources[resource->getName()] = move(resource);
 }
 
 ResourcePtr ResourceManager::getResource(string const& name, string const& namesp) {

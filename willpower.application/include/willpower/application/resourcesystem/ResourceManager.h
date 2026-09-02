@@ -91,9 +91,18 @@ public:
   void addResources(std::string const& file);
 
   // Scans each configured location at most once. Repeated ordinary scans are
-  // no-ops; ResourceManager deliberately provides no rescan operation because
-  // replacing merged records and instantiated resources is unsupported.
+  // no-ops.
   void scanLocations(ResourceLocationCallback callback = nullptr);
+
+  // Re-reads every configured location and instantiates resources that were
+  // added since the initial scan. Existing instantiated resources are left
+  // untouched; changing or removing their declarations remains unsupported.
+  void rescanLocations(ResourceLocationCallback callback = nullptr);
+
+  // Registers an already-instantiated, programmatic Resource. This is used
+  // for host-owned built-ins which have no ResourceLocation or manifest
+  // record.
+  void addResource(ResourcePtr resource);
 
   ResourcePtr getResource(std::string const& name, std::string const& namesp = "");
 
