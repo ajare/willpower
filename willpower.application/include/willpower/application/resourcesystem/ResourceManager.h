@@ -104,6 +104,9 @@ private:
 public:
   ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, AudioSystem* audioSystem, Logger* logger);
 
+  ResourceManager(ResourceManager const&) = delete;
+  ResourceManager& operator=(ResourceManager const&) = delete;
+
   virtual ~ResourceManager();
 
   void addResourceFactory(ResourceFactory* factory);
