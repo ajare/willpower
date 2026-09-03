@@ -16,7 +16,9 @@ AudioBankDefaultDefinitionFactory::AudioBankDefaultDefinitionFactory()
 }
 
 void AudioBankDefaultDefinitionFactory::create(application::resourcesystem::Resource* resource, application::resourcesystem::ResourceManager* resourceMgr, wp::DataNode* node) {
-  auto bankRes = static_cast<AudioBankResource*>(resource);
+  WP_UNUSED(resource);
+  WP_UNUSED(resourceMgr);
+  WP_UNUSED(node);
 }
 
 }  // namespace resourcesystem

@@ -41,7 +41,12 @@ void InputStateManager::registerState(string const& name,
       mouseWheelUp,
       mouseWheelDown,
       keyModifiers,
-      disableInGui};
+      disableInGui,
+      // Listed explicitly for clarity (a state is inactive until process()
+      // matches its inputs) and to keep the aggregate initialiser
+      // warning-free; the value is the same false the omitted member would
+      // have been value-initialised to anyway.
+      false};
 
   mStates[name] = stateDef;
 }

@@ -32,7 +32,7 @@ namespace resourcesystem {
 using namespace std;
 
 ResourceLocation::ResourceLocation(Logger* logger, string const& name, string const& type, string const& definitionFile)
-    : mwLogger(logger), mName(name), mType(type), mDefinitionFile(definitionFile), mScanDirty(true) {
+    : mwLogger(logger), mName(name), mType(type), mScanDirty(true), mDefinitionFile(definitionFile) {
 }
 
 string const& ResourceLocation::getName() const {

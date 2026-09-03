@@ -14,7 +14,7 @@ using namespace std;
 map<string, map<string, ResourceDefinitionFactory*>> Resource::msResourceDefinitionFactories;
 
 Resource::Resource(string const& name, string const& namesp, string const& type, string const& source, std::map<string, string> const& tags, ResourceLocation* location)
-    : ResourceWrangler(name), mRefCount(0), mName(name), mNamespace(namesp), mType(type), mSource(source), mTags(tags), mwLocation(location), mCreated(false), mLoaded(false) {
+    : ResourceWrangler(name), mRefCount(0), mName(name), mNamespace(namesp), mType(type), mSource(source), mTags(tags), mCreated(false), mLoaded(false), mwLocation(location) {
 }
 
 void Resource::create(DataStreamPtr dataPtr, ResourceManager* resourceMgr) {
@@ -125,6 +125,7 @@ void Resource::parseDefinition(ResourceManager* resourceMgr) {
 }
 
 void Resource::parseData(DataStreamPtr dataPtr) {
+  WP_UNUSED(dataPtr);
 }
 
 void Resource::addDefinition(string const& factory, StructuredData const& definition) {

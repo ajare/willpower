@@ -10,8 +10,10 @@
 #include "willpower/application/MouseButton.h"
 #include "willpower/application/resourcesystem/ResourceManager.h"
 
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4100)  // Unreferenced formal parameter
+#endif
 
 namespace WP_NAMESPACE {
 namespace application {
@@ -36,33 +38,36 @@ class WP_APPLICATION_API State {
   bool mEventsActive, mUpdateActive, mRenderActive;
 
 private:
-  virtual void enterImpl(resourcesystem::ResourceManager* resourceMgr, AudioSystem* audioSystem, mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, void* args = nullptr) {}
+  // Default implementations are no-ops; parameter names are omitted so the
+  // header stays warning-clean under -Wall -Wextra on GCC/Clang (MSVC's
+  // C4100 suppression above covers the same ground).
+  virtual void enterImpl(resourcesystem::ResourceManager*, AudioSystem*, mpp::RenderSystem*, mpp::ResourceManager*, void* = nullptr) {}
 
   virtual void exitImpl() {}
 
-  virtual void suspendImpl(void* args = nullptr) {}
+  virtual void suspendImpl(void* = nullptr) {}
 
-  virtual void resumeImpl(void* args = nullptr) {}
+  virtual void resumeImpl(void* = nullptr) {}
 
-  virtual void injectKeyInputImpl(application::KeyEvent evt, Key key, KeyModifiers modifiers) {}
+  virtual void injectKeyInputImpl(application::KeyEvent, Key, KeyModifiers) {}
 
-  virtual void injectMouseButtonInputImpl(application::MouseButtonEvent evt, MouseButton mouseButton, KeyModifiers modifiers) {}
+  virtual void injectMouseButtonInputImpl(application::MouseButtonEvent, MouseButton, KeyModifiers) {}
 
-  virtual void injectMouseWheelInputImpl(int y) {}
+  virtual void injectMouseWheelInputImpl(int) {}
 
-  virtual void injectMouseButtonDoubleClickedImpl(MouseButton mouseButton) {}
+  virtual void injectMouseButtonDoubleClickedImpl(MouseButton) {}
 
-  virtual void injectMouseDragStartedImpl(MouseButton mouseButton, int startPositionX, int startPositionY, float dragX, float dragY) {}
+  virtual void injectMouseDragStartedImpl(MouseButton, int, int, float, float) {}
 
-  virtual void injectMouseDragFinishedImpl(MouseButton mouseButton, int finishPositionX, int finishPositionY) {}
+  virtual void injectMouseDragFinishedImpl(MouseButton, int, int) {}
 
-  virtual void injectMouseMotionInputImpl(float positionX, float positionY) {}
+  virtual void injectMouseMotionInputImpl(float, float) {}
 
   virtual void resyncMouseInputImpl() {}
 
-  virtual void updateImpl(float frameTime) {}
+  virtual void updateImpl(float) {}
 
-  virtual void renderImpl(mpp::RenderSystem* renderSystem, mpp::ResourceManager* resourceMgr) {}
+  virtual void renderImpl(mpp::RenderSystem*, mpp::ResourceManager*) {}
 
 public:
   /**	\brief Constructor.
@@ -239,4 +244,6 @@ public:
 }  // namespace application
 }  // namespace WP_NAMESPACE
 
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif

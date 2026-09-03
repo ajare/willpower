@@ -36,7 +36,7 @@ struct ResourceRecord {
   ResourceRecord() = default;
 
   ResourceRecord(std::string const& nmsp, ResourceLocation* location, bool composite)
-      : namesp(nmsp), resourceLocation(location), isComposite(composite) {
+      : resourceLocation(location), namesp(nmsp), isComposite(composite) {
   }
 
 public:

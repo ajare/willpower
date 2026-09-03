@@ -1,7 +1,5 @@
 #include "willpower/application/ApplicationSettings.h"
 
-using namespace std;
-
 namespace WP_NAMESPACE {
 namespace application {
 
