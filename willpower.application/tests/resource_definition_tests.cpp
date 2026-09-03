@@ -181,11 +181,83 @@ void testDuplicateDefaultsAreRejected(fs::path const& root, wp::Logger& logger) 
   }
   throw std::runtime_error("Multiple default definitions were accepted.");
 }
+
+void testConstructDestroyReconstruct(fs::path const& root, wp::Logger& logger) {
+  writeFile(root / "Resources.yaml", R"(Resources:
+  Resource:
+    type: "TestResource"
+    name: "Asset"
+    Definitions:
+      Definition:
+        value: "default"
+)");
+
+  // Two full construct-use-destroy cycles in one process. Every cycle's
+  // constructor registers the same default definition factories into the
+  // process-wide static registry, so the second cycle only succeeds if the
+  // previous manager's destructor cleared the registry.
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    ResourceManager manager(nullptr, nullptr, nullptr, &logger);
+    configureDirectoryFactory(manager, logger);
+    manager.addResourceFactory(new TestResourceFactory);
+    auto* defaultFactory = new TrackingDefinitionFactory("");
+    manager.addResourceDefinitionFactory(defaultFactory);
+    manager.addResourceLocation("Directory", root.string(), "Resources.yaml");
+    manager.scanLocations();
+    manager.createResource(manager.getResource("Asset"));
+
+    require(defaultFactory->wasUsedFor("Asset"),
+            "The default definition factory was not used after reconstructing the ResourceManager.");
+
+    // The duplicate-registration guard must still reject a second factory
+    // for the same (resource type, factory type) pair.
+    bool rejected = false;
+    try {
+      manager.addResourceDefinitionFactory(new TrackingDefinitionFactory(""));
+    } catch (ResourceSystemException const&) {
+      rejected = true;
+    }
+    require(rejected, "Registering a duplicate definition factory was not rejected.");
+  }
+}
+
+void testOverlappingConstructionThrows(fs::path const& root, wp::Logger& logger) {
+  writeFile(root / "Resources.yaml", R"(Resources:
+  Resource:
+    type: "TestResource"
+    name: "Asset"
+)");
+
+  ResourceManager first(nullptr, nullptr, nullptr, &logger);
+
+  // Concurrently alive ResourceManager instances are not supported: the
+  // second constructor throws because the default definition factories are
+  // already registered in the process-wide static registry.
+  bool rejected = false;
+  try {
+    ResourceManager second(nullptr, nullptr, nullptr, &logger);
+    (void)second;
+  } catch (ResourceSystemException const&) {
+    rejected = true;
+  }
+  require(rejected, "Constructing a second ResourceManager while one is alive did not throw.");
+
+  // The failed attempt must not have disturbed the first manager's registry:
+  // it still works end to end afterwards.
+  configureDirectoryFactory(first, logger);
+  first.addResourceFactory(new TestResourceFactory);
+  first.addResourceDefinitionFactory(new TrackingDefinitionFactory(""));
+  first.addResourceLocation("Directory", root.string(), "Resources.yaml");
+  first.scanLocations();
+  first.createResource(first.getResource("Asset"));
+  require(first.getAllResources().size() == 1,
+          "The first ResourceManager stopped working after a failed second construction.");
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc != 2) {
-    std::cerr << "Usage: resource_definition_tests <specialized-before-default|idempotent-scan|duplicate-default>\n";
+    std::cerr << "Usage: resource_definition_tests <specialized-before-default|idempotent-scan|duplicate-default|construct-destroy-reconstruct|overlapping-construction>\n";
     return 2;
   }
 
@@ -203,6 +275,10 @@ int main(int argc, char** argv) {
       testIdempotentLocationScan(root, logger);
     } else if (scenario == "duplicate-default") {
       testDuplicateDefaultsAreRejected(root, logger);
+    } else if (scenario == "construct-destroy-reconstruct") {
+      testConstructDestroyReconstruct(root, logger);
+    } else if (scenario == "overlapping-construction") {
+      testOverlappingConstructionThrows(root, logger);
     } else {
       throw std::runtime_error("Unknown scenario: " + scenario);
     }
