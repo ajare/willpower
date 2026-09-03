@@ -31,7 +31,7 @@ namespace resourcesystem {
 using namespace std;
 
 ResourceManager::ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, AudioSystem* audioSystem, Logger* logger)
-    : mwLogger(logger), mwRenderSystem(renderSystem), mwRenderResourceMgr(renderResourceMgr), mwAudioSystem(audioSystem)
+    : mwLogger(logger), mwRenderResourceMgr(renderResourceMgr), mwRenderSystem(renderSystem), mwAudioSystem(audioSystem)
 
 {
   addResourceFactory(new TextFileResourceFactory);
@@ -44,15 +44,41 @@ ResourceManager::ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceM
   addResourceFactory(new MaterialResourceFactory);
   addResourceFactory(new AudioBankResourceFactory(audioSystem));
 
-  addResourceDefinitionFactory(new TextFileDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new XmlFileDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new AnimationSetDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new ImageDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new ImageSetDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new ShaderDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new ProgramDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new MaterialDefaultDefinitionFactory);
-  addResourceDefinitionFactory(new AudioBankDefaultDefinitionFactory);
+  // Exception-safe default definition-factory registration. A failure part
+  // way through (e.g. allocation failure) must not leave this constructor's
+  // earlier registrations in the process-wide registry: with no live manager
+  // to own them they would leak and poison every future construction.
+  //
+  // The registry is empty when no manager is alive (every destructor clears
+  // it), so "was empty at entry" means every entry present on failure was
+  // added by this constructor and must be rolled back. If it was NOT empty,
+  // a live manager owns it and the very first registration below throws as a
+  // duplicate before this constructor registers anything, so rolling back is
+  // both unnecessary and dangerous (it would delete the live manager's
+  // factories) — the flag correctly gates the cleanup in that case too.
+  bool const registryWasEmpty = Resource::msResourceDefinitionFactories.empty();
+
+  try {
+    addResourceDefinitionFactory(new TextFileDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new XmlFileDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new AnimationSetDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new ImageDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new ImageSetDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new ShaderDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new ProgramDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new MaterialDefaultDefinitionFactory);
+    addResourceDefinitionFactory(new AudioBankDefaultDefinitionFactory);
+  } catch (...) {
+    if (registryWasEmpty) {
+      for (auto& fItem : Resource::msResourceDefinitionFactories) {
+        for (auto& mItem : fItem.second) {
+          delete mItem.second;
+        }
+      }
+      Resource::msResourceDefinitionFactories.clear();
+    }
+    throw;
+  }
 }
 
 ResourceManager::~ResourceManager() {
@@ -74,18 +100,23 @@ ResourceManager::~ResourceManager() {
     }
   }
 
-  // Destroy all resource factories
-  for (auto const& factoryEntry : mResourceFactories) {
-    delete factoryEntry.second;
-  }
+  // Destroy all resource factories. Explicit clear() keeps the original
+  // destruction order (resource factories before definition factories);
+  // the unique_ptrs then have nothing left to delete at member destruction.
+  mResourceFactories.clear();
 
+  // Destroy all definition factories, then clear the process-wide static
+  // registry. The registry outlives this manager (Resource instances look
+  // factories up without holding a manager reference), but ownership follows
+  // the manager's lifetime: leaving stale "already registered" entries behind
+  // would make the next ResourceManager constructor throw and leak.
   for (auto const& fItem : Resource::msResourceDefinitionFactories) {
-    auto const& [resType, mapping] = fItem;
-    for (auto const& mItem : mapping) {
-      auto const& [facType, factory] = mItem;
-      delete factory;
+    for (auto const& mItem : fItem.second) {
+      delete mItem.second;
     }
   }
+
+  Resource::msResourceDefinitionFactories.clear();
 }
 
 vector<string> ResourceManager::sortResourcesByDependency(vector<string> const& resourceNames, map<string, vector<string>> dependencies) {
@@ -291,6 +322,10 @@ ResourcePtr ResourceManager::instantiateResource(ResourceRecord const& record, b
 }
 
 void ResourceManager::addResourceFactory(ResourceFactory* factory) {
+  // Take ownership up front so the factory is freed on every exit path,
+  // including the duplicate-registration throw below.
+  unique_ptr<ResourceFactory> ownedFactory(factory);
+
   auto const& type = factory->getType();
   auto it = mResourceFactories.find(type);
 
@@ -298,7 +333,9 @@ void ResourceManager::addResourceFactory(ResourceFactory* factory) {
     throw ResourceSystemException(format("Factory for resource of type '{}' is already registered.", type));
   }
 
-  mResourceFactories[type] = factory;
+  // emplace first: if it throws, ownedFactory still owns the factory.
+  mResourceFactories.emplace(type, factory);
+  ownedFactory.release();
 }
 
 void ResourceManager::addResourceLocationFactory(string const& type, ResourceLocationFactory factory) {
@@ -312,6 +349,10 @@ void ResourceManager::addResourceLocationFactory(string const& type, ResourceLoc
 }
 
 void ResourceManager::addResourceDefinitionFactory(ResourceDefinitionFactory* factory) {
+  // Take ownership up front so the factory is freed on every exit path,
+  // including the duplicate-registration throw below.
+  unique_ptr<ResourceDefinitionFactory> ownedFactory(factory);
+
   auto const& resType = factory->getResourceType();
   auto const& facType = factory->getFactoryType();
 
@@ -327,7 +368,9 @@ void ResourceManager::addResourceDefinitionFactory(ResourceDefinitionFactory* fa
                                          resType, facType));
   }
 
-  innerMap[facType] = factory;
+  // emplace first: if it throws, ownedFactory still owns the factory.
+  innerMap.emplace(facType, factory);
+  ownedFactory.release();
 }
 
 void ResourceManager::addResourceLocation(string const& type, string const& location, string const& definitionFile) {
