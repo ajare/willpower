@@ -326,9 +326,12 @@ void ResourceManager::addResourceFactory(ResourceFactory* factory) {
     throw ResourceSystemException(format("Factory for resource of type '{}' is already registered.", type));
   }
 
-  // emplace first: if it throws, ownedFactory still owns the factory.
-  mResourceFactories.emplace(type, factory);
-  ownedFactory.release();
+  // Transfer ownership into the map through an explicit unique_ptr and
+  // insert() rather than emplace()ing the raw pointer: MSVC's pair
+  // piecewise construction rejects a raw pointer for a unique_ptr value
+  // (C2672 on std::construct_at). If the insert throws, the temporary
+  // unique_ptr still frees the factory.
+  mResourceFactories.insert(make_pair(type, unique_ptr<ResourceFactory>(ownedFactory.release())));
 }
 
 void ResourceManager::addResourceLocationFactory(string const& type, ResourceLocationFactory factory) {
@@ -361,8 +364,8 @@ void ResourceManager::addResourceDefinitionFactory(ResourceDefinitionFactory* fa
                                          resType, facType));
   }
 
-  // emplace first: if it throws, ownedFactory still owns the factory.
-  innerMap.emplace(facType, factory);
+  // insert first: if it throws, ownedFactory still owns the factory.
+  innerMap.insert(make_pair(facType, factory));
   ownedFactory.release();
 }
 
