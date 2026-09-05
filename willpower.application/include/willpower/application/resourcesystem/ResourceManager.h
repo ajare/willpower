@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 #include <map>
 
@@ -21,6 +22,28 @@ namespace WP_NAMESPACE {
 namespace application {
 namespace resourcesystem {
 
+/**
+ * \class ResourceManager
+ *
+ * \brief Owns resource locations, resources and the factories that create them.
+ *
+ * Lifetime contract: a ResourceManager may be constructed, destroyed and
+ * reconstructed any number of times within one process (e.g. per test case,
+ * or for a "reload everything" feature). Because Resource instances look up
+ * definition factories without holding a manager reference, the default
+ * ResourceDefinitionFactory objects are registered in a process-wide static
+ * registry (Resource::msResourceDefinitionFactories). The registry is cleared
+ * by the destructor, so every construct-after-destroy starts from a clean
+ * registry.
+ *
+ * Concurrently alive ResourceManager instances are NOT supported: the second
+ * constructor throws (ResourceSystemException) because the default definition
+ * factories are already registered. Registering two factories for the same
+ * (resource type, factory type) pair is a programming error and throws the
+ * same exception. The manager takes ownership of every factory passed to
+ * addResourceFactory()/addResourceDefinitionFactory() on every code path,
+ * including the throwing ones.
+ */
 class WP_APPLICATION_API ResourceManager {
   struct ResourceLocationRecord {
     ResourceLocation* location;
@@ -50,8 +73,11 @@ private:
   // Resource records
   std::map<std::string, ResourceRecordMap> mNamespaces;
 
-  // Resources
-  std::map<std::string, ResourceFactory*> mResourceFactories;
+  // Resource factories. Held by unique_ptr so a constructor that throws
+  // (e.g. because another ResourceManager is still alive and owns the
+  // process-wide definition factory registry) does not leak the factories
+  // it already registered.
+  std::map<std::string, std::unique_ptr<ResourceFactory>> mResourceFactories;
 
   typedef std::map<std::string, ResourcePtr> ResourceMap;
   std::map<std::string, ResourceMap> mResources;
@@ -78,6 +104,9 @@ private:
 public:
   ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, AudioSystem* audioSystem, Logger* logger);
 
+  ResourceManager(ResourceManager const&) = delete;
+  ResourceManager& operator=(ResourceManager const&) = delete;
+
   virtual ~ResourceManager();
 
   void addResourceFactory(ResourceFactory* factory);
@@ -91,9 +120,18 @@ public:
   void addResources(std::string const& file);
 
   // Scans each configured location at most once. Repeated ordinary scans are
-  // no-ops; ResourceManager deliberately provides no rescan operation because
-  // replacing merged records and instantiated resources is unsupported.
+  // no-ops.
   void scanLocations(ResourceLocationCallback callback = nullptr);
+
+  // Re-reads every configured location and instantiates resources that were
+  // added since the initial scan. Existing instantiated resources are left
+  // untouched; changing or removing their declarations remains unsupported.
+  void rescanLocations(ResourceLocationCallback callback = nullptr);
+
+  // Registers an already-instantiated, programmatic Resource. This is used
+  // for host-owned built-ins which have no ResourceLocation or manifest
+  // record.
+  void addResource(ResourcePtr resource);
 
   ResourcePtr getResource(std::string const& name, std::string const& namesp = "");
 

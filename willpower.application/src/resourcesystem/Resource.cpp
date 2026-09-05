@@ -1,3 +1,6 @@
+#include <functional>
+#include <unordered_set>
+
 #include "willpower/common/Exceptions.h"
 
 #include "willpower/application/resourcesystem/ResourceExceptions.h"
@@ -59,6 +62,18 @@ void Resource::addDependentResource(string const& id, shared_ptr<Resource> resou
 
 bool Resource::hasDependentResource(string const& id) const {
   return mNamedDependentResources.find(id) != mNamedDependentResources.end();
+}
+
+bool Resource::dependsOn(Resource const* target) const {
+  unordered_set<Resource const*> visited;
+  function<bool(Resource const*)> visit = [&](Resource const* resource) {
+    if (!visited.insert(resource).second) return false;
+    for (auto const& dependency : resource->mDependentResourceList) {
+      if (dependency.get() == target || visit(dependency.get())) return true;
+    }
+    return false;
+  };
+  return target && visit(this);
 }
 
 ResourcePtr Resource::getDependentResource(string const& id) {

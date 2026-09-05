@@ -88,6 +88,24 @@ bool ImageResource::load(mpp::RenderSystem* renderSystem, mpp::ResourceManager* 
 
   textureStream->setAtlas(atlas);
   textureStream->setTarget(mpp::TextureTarget::Texture2D);
+
+  if (auto colourSpace = tags.find("colour-space"); colourSpace != tags.end()) {
+    if (colourSpace->second == "linear") {
+      textureStream->setColourSpace(mpp::TextureColourSpace::Linear);
+    } else {
+      throw ResourceException(this, "unsupported colour-space option '" +
+                                        colourSpace->second + "'.");
+    }
+  }
+
+  if (auto wrapping = tags.find("wrapping"); wrapping != tags.end()) {
+    if (wrapping->second == "repeat") {
+      textureStream->setWrapping(mpp::TextureParams::Wrapping::Repeat);
+    } else {
+      throw ResourceException(this, "unsupported wrapping option '" +
+                                        wrapping->second + "'.");
+    }
+  }
   textureStream->setData([this](string const& id) {
     WP_UNUSED(id);
 
@@ -124,11 +142,25 @@ bool ImageResource::load(mpp::RenderSystem* renderSystem, mpp::ResourceManager* 
     }
   }
 
+  bool mipmaps = false;
+  if (auto option = tags.find("mipmaps"); option != tags.end()) {
+    if (option->second == "true") {
+      mipmaps = true;
+    } else if (option->second != "false") {
+      throw ResourceException(this, "unsupported mipmaps option '" +
+                                        option->second + "'.");
+    }
+  }
+
   if (filtered) {
-    textureStream->setFiltering(mpp::TextureParams::MinFilter::Linear, mpp::TextureParams::MagFilter::Linear);
+    textureStream->setFiltering(
+        mipmaps ? mpp::TextureParams::MinFilter::LinearMipmapLinear
+                : mpp::TextureParams::MinFilter::Linear,
+        mpp::TextureParams::MagFilter::Linear);
   } else {
     textureStream->setFiltering(mpp::TextureParams::MinFilter::Nearest, mpp::TextureParams::MagFilter::Nearest);
   }
+  textureStream->enableMipMaps(mipmaps);
 
   mMppResource = resourceMgr->declareResource(getQualifiedName(), mpp::ResourceStreamPtr(textureStream)).first;
   mMppResource->acquire(this);

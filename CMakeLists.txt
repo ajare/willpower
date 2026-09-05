@@ -66,6 +66,7 @@ include(Dependencies)
 # from target_link_libraries.
 add_subdirectory(willpower.common)
 add_subdirectory(willpower.geometry)
+add_subdirectory(willpower.wayfinder)
 add_subdirectory(willpower.collide)
 add_subdirectory(willpower.application)
 add_subdirectory(willpower.viz)
