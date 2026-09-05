@@ -7,6 +7,7 @@ using namespace std;
 
 DynamicTriangleRenderParams::DynamicTriangleRenderParams(shared_ptr<mpp::ModelRenderParams> params)
     : RenderParams() {
+  WP_UNUSED(params);
 }
 
 float DynamicTriangleRenderParams::getGridPadding() const {

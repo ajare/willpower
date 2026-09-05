@@ -29,8 +29,8 @@ namespace WP_NAMESPACE
 		}
 
 		Sector::Sector(vector<Vector2> const& border)
-			: mBorder(border)
-			, mId(-1)
+			: mId(-1)
+			, mBorder(border)
 			, mEdgesGrid(nullptr)
 		{
 			mBounds.setPosition(numeric_limits<float>::max(), numeric_limits<float>::max());
@@ -38,9 +38,9 @@ namespace WP_NAMESPACE
 		}
 
 		Sector::Sector(vector<Vector2> const& border, vector<vector<Vector2>> const& holes)
-			: mBorder(border)
+			: mId(-1)
+			, mBorder(border)
 			, mHoles(holes)
-			, mId(-1)
 			, mEdgesGrid(nullptr)
 		{
 			mBounds.setPosition(numeric_limits<float>::max(), numeric_limits<float>::max());

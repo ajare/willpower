@@ -20,9 +20,14 @@ namespace geometry {
 using namespace std;
 
 DirectedEdgeLoop::DirectedEdgeLoop(Winding winding, IndexVector const& edgeData)
-    : mwMesh(nullptr), mMeshIndex(-1), mWinding(winding), mDeleteFunction({}), mOrderedVertexIndicesCached(false), mOrderedVertexIndicesWinding(Winding::Anticlockwise), mUpdateEdgesFunction({})
+    : mUpdateEdgesFunction({}),
+      mOrderedVertexIndicesCached(false),
+      mOrderedVertexIndicesWinding(Winding::Anticlockwise),
+      mwMesh(nullptr),
+      mMeshIndex(-1),
+      mWinding(winding),
+      mDeleteFunction({}) {
 
-{
   mOrderedVertexIndicesBreakIndices.first = -1;
   mOrderedVertexIndicesBreakIndices.second = -1;
 
@@ -710,7 +715,6 @@ Vector2 DirectedEdgeLoop::getEdgeDirection(DirectedEdgeIterator edgeIt) const {
 }
 
 Vector2 DirectedEdgeLoop::getEdgeNormal(DirectedEdgeIterator edgeIt) const {
-  Vector2 dir = getEdgeDirection(edgeIt);
   return getEdgeDirection(edgeIt).perpendicular();
 }
 

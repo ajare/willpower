@@ -7,6 +7,7 @@ using namespace std;
 
 DynamicLineRenderParams::DynamicLineRenderParams(shared_ptr<mpp::ModelRenderParams> params)
     : RenderParams() {
+  WP_UNUSED(params);
 }
 
 float DynamicLineRenderParams::getGridPadding() const {

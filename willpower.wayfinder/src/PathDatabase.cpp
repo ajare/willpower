@@ -90,7 +90,7 @@ namespace WP_NAMESPACE
 			TargetRoutes routes;
 			routes.nextNeighbour.assign(mNumPolygons, NoRoute);
 			touch(routes);
-			auto result = mRoutesByTarget.emplace(target, move(routes));
+			auto result = mRoutesByTarget.emplace(target, std::move(routes));
 			if (mRoutesByTarget.size() > mMaxCachedTargets)
 			{
 				evictOldestTarget();

@@ -12,17 +12,17 @@
 #define WP_PLATFORM_BITS (sizeof(size_t) << 3)
 
 // Find compiler information
-#if defined( _MSC_VER )
-#   define WP_COMPILER WP_COMPILER_MSVC
-#   define WP_COMP_VER _MSC_VER
-#elif defined( __GNUC__ )
-#   define WP_COMPILER WP_COMPILER_GNUC
-#   define WP_COMP_VER (((__GNUC__)*100) + \
-	(__GNUC_MINOR__ * 10) + \
-	__GNUC_PATCHLEVEL__)
-#elif defined( __BORLANDC__ )
-#   define WP_COMPILER WP_COMPILER_BORL
-#   define WP_COMP_VER __BCPLUSPLUS__
+#if defined(_MSC_VER)
+#define WP_COMPILER WP_COMPILER_MSVC
+#define WP_COMP_VER _MSC_VER
+#elif defined(__GNUC__)
+#define WP_COMPILER WP_COMPILER_GNUC
+#define WP_COMP_VER (((__GNUC__) * 100) +    \
+                     (__GNUC_MINOR__ * 10) + \
+                     __GNUC_PATCHLEVEL__)
+#elif defined(__BORLANDC__)
+#define WP_COMPILER WP_COMPILER_BORL
+#define WP_COMP_VER __BCPLUSPLUS__
 #else
 #   pragma error "Unknown compiler."
 #endif

@@ -496,7 +496,7 @@ void MeshOperations::bridgeEdges(Mesh* mesh, IndexVector const& sourceEdgeIndice
   auto sourcePolygonRefs = MeshUtils::getPolygonReferences(mesh, sourceEdgeIndices);
   auto targetPolygonRefs = MeshUtils::getPolygonReferences(mesh, targetEdgeIndices);
 
-  if (sourcePolygonRefs.size() > 1 || targetPolygonRefs.size() > 1 && options.merge) {
+  if ((sourcePolygonRefs.size() > 1 || targetPolygonRefs.size() > 1) && options.merge) {
     string errMsg = "cannot merge a bridge operation when an edge list spans more than one polygon.";
     throw GeometryOperationException(__FUNCTION__, errMsg, true);
   }
@@ -591,6 +591,8 @@ void MeshOperations::bridgeEdges(Mesh* mesh, IndexVector const& sourceEdgeIndice
 
       // Apply squeeze
       switch (options.squeezeType) {
+        case BridgeEdgesOptions::SqueezeType::None:
+          break;
         case BridgeEdgesOptions::SqueezeType::Straight:
         case BridgeEdgesOptions::SqueezeType::Curved: {
           Vector2 vertex1opposite = start2.lerp(end2, 1.0f - t);
@@ -1707,7 +1709,7 @@ void MeshOperations::mergePolygonsByEdge(Mesh* mesh, uint32_t poly1Index, uint32
   // Add edges to poly1 from edgeList2
   size_t numEdges = addEdges.size();
   for (size_t i = 0; i < numEdges; ++i) {
-    auto addedEdgeIt = polygon1.addEdge(addEdges[i].v0, addEdges[i].v1, addEdges[i].index);
+    polygon1.addEdge(addEdges[i].v0, addEdges[i].v1, addEdges[i].index);
   }
 
   // Add holes

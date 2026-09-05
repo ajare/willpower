@@ -11,14 +11,9 @@ DynamicLineRenderer::DynamicLineRenderer(string const& name, shared_ptr<mpp::hel
 }
 
 void DynamicLineRenderer::build(mpp::RenderSystem* renderSystem, mpp::ResourceManager* resourceMgr) {
-  mpp::helper::LineBatchRendererParams lineParams{
-      true,
-      true,
-      false};
-
   mRenderer = make_shared<mpp::helper::LineBatchRenderer<mpp::mesh::DataTypeFloat, mpp::mesh::DataTypeUnsignedByte>>(
       getName() + "_Renderer",
-      lineParams,
+      mLineParams,
       mDataProvider,
       renderSystem,
       resourceMgr);

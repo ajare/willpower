@@ -100,6 +100,8 @@ public:
 
   DirectedEdgeLoop& operator=(DirectedEdgeLoop const& other);
 
+  virtual ~DirectedEdgeLoop() = default;
+
   Winding getWinding() const;
 
   int getNumEdges() const;

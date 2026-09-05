@@ -97,7 +97,7 @@ namespace WP_NAMESPACE
 			ConvexPolygonisation const* polygons, float startTimer)
 			: mTarget(nullptr)
 			, mPolygons(polygons)
-			, mPathNodes(move(path))
+			, mPathNodes(std::move(path))
 			, mCurrentPathNode(0)
 			, mStartTimer(startTimer)
 			, mTargetLastSeenPolygon(NoIndex)

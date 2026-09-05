@@ -15,12 +15,12 @@ namespace WP_NAMESPACE
 		Agent::Agent(int radius, Vector2 const& position, float maxSpeed)
 			: AgentTarget(position)
 			, mDirection(Vector2::UNIT_Y)
-			, mSwarm(nullptr)
-			, mSector(nullptr)
+			, mRadius(radius)
 			, mMaxSpeed(maxSpeed)
 			, mTurnRate(90.0f)
-			, mRadius(radius)
 			, mTarget(nullptr)
+			, mSwarm(nullptr)
+			, mSector(nullptr)
 		{
 		}
 

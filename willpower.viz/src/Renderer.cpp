@@ -7,7 +7,7 @@ using namespace std;
 using namespace wp;
 
 Renderer::Renderer(string const& name, string const& type, mpp::ResourceManager* renderResourceMgr)
-    : ResourceWrangler(name), mName(name), mType(type), mRenderResourceMgr(renderResourceMgr), mInScene(false) {
+    : ResourceWrangler(name), mName(name), mType(type), mInScene(false), mRenderResourceMgr(renderResourceMgr) {
 }
 
 string const& Renderer::getName() const {

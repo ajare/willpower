@@ -11,7 +11,7 @@ using namespace std;
 using namespace wp;
 
 StaticRenderer::StaticRenderer(string const& name, string const& type, GridOptions const& gridOptions, size_t indexWidth, mpp::ResourceManager* renderResourceMgr)
-    : Renderer(name, type, renderResourceMgr), mGridOptions(gridOptions), mIndexWidth(indexWidth), mUseIncludeMasking(false), mUseExcludeMasking(false) {
+    : Renderer(name, type, renderResourceMgr), mGridOptions(gridOptions), mUseIncludeMasking(false), mUseExcludeMasking(false), mIndexWidth(indexWidth) {
 }
 
 StaticRenderer::~StaticRenderer() {
@@ -118,6 +118,8 @@ void StaticRenderer::addVertexData(mpp::mesh::VertexData* vertexData, Vector2 co
             default:
               break;  // Should never get here
           }
+          break;
+        default:
           break;
       }
     }
@@ -226,6 +228,8 @@ void StaticRenderer::addVertexData(mpp::mesh::VertexData* vertexData, Vector2 co
             default:
               break;  // Should never get here
           }
+          break;
+        default:
           break;
       }
     }

@@ -15,7 +15,7 @@ Edge::Edge()
 }
 
 Edge::Edge(int vertex0, int vertex1)
-    : mwMesh(nullptr), mMeshIndex(-1), mDeleteFunction({}), mUpdateVerticesFunction({}), mLength(0.0f), mPublicId(-1), mAttributeIndex(-1) {
+    : mwMesh(nullptr), mMeshIndex(-1), mPublicId(-1), mAttributeIndex(-1), mDeleteFunction({}), mUpdateVerticesFunction({}), mLength(0.0f) {
   mVertices[0] = vertex0;
   mVertices[1] = vertex1;
 

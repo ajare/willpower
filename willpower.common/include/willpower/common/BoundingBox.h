@@ -27,6 +27,8 @@ public:
 
   BoundingBox(BoundingBox const& other);
 
+  BoundingBox& operator=(BoundingBox const& other);
+
   BoundingBox(Vector2 const& position, Vector2 const& size);
 
   BoundingBox(float x, float y, float width, float height);

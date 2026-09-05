@@ -2,9 +2,6 @@
 
 namespace WP_NAMESPACE {
 namespace viz {
-using namespace std;
-using namespace wp;
-
 RenderParams::RenderParams()
     : mRender(true), mRenderAccelerationGrids(false), mInvalidated(true) {
 }

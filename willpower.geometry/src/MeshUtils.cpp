@@ -424,7 +424,9 @@ Vector2 MeshUtils::calculateEdgeListCentre(Mesh const* mesh, EdgeInfoVector cons
     totalLength += edgeLength;
   }
 
+#ifdef _MSC_VER
 #pragma warning(suppress : 4127)
+#endif
   ASSERT_TRACE(false && "MeshUtils::calculateEdgeListCentre() edge centre not found.");
   return Vector2::ZERO;
 }

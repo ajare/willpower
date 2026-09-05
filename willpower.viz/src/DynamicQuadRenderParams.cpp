@@ -7,6 +7,7 @@ using namespace std;
 
 DynamicQuadRenderParams::DynamicQuadRenderParams(shared_ptr<mpp::ModelRenderParams> params)
     : RenderParams() {
+  WP_UNUSED(params);
 }
 
 float DynamicQuadRenderParams::getGridPadding() const {

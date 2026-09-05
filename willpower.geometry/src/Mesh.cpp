@@ -365,7 +365,9 @@ void Mesh::removeVertex(uint32_t vertexIndex, RemoveVertexResult* result) {
   uint32_t newEdgeIndex = (uint32_t)-1;
   switch (polygonsUsedIndices.size()) {
     case 0:
+#ifdef _MSC_VER
 #pragma warning(suppress : 4127)
+#endif
       ASSERT_TRACE(false && "Mesh::removeVertex(): vertex with no polygons: an orphan?");
       break;
 
@@ -1700,7 +1702,7 @@ uint64_t Mesh::addEdgeToReverseLookup(Edge const& edge, uint32_t edgeIndex) {
 
 uint64_t Mesh::addEdgeToReverseLookup(uint32_t edgeIndex, uint32_t firstVertex, uint32_t secondVertex) {
   uint64_t edgeVertexKey = getVertexEdgeKey(firstVertex, secondVertex);
-  auto res = mVerticesToEdges.insert(make_pair(edgeVertexKey, edgeIndex));
+  [[maybe_unused]] auto res = mVerticesToEdges.insert(make_pair(edgeVertexKey, edgeIndex));
   ASSERT_TRACE(res.second && "Mesh::addEdgeToLookup(): edge already exists in reverse lookup.");
 
   return edgeVertexKey;
@@ -1711,7 +1713,7 @@ void Mesh::removeEdgeFromReverseLookup(Edge const& edge) {
 }
 
 void Mesh::removeEdgeFromReverseLookup(uint32_t firstVertex, uint32_t secondVertex) {
-  uint64_t edgeVertexKey = getVertexEdgeKey(firstVertex, secondVertex);
+  [[maybe_unused]] uint64_t edgeVertexKey = getVertexEdgeKey(firstVertex, secondVertex);
 #ifdef DEBUG
   size_t erased = mVerticesToEdges.erase(edgeVertexKey);
   ASSERT_TRACE(erased == 1 && "Mesh::removeEdgeFromReverseLookup(): edge does not exist in reverse lookup.");
@@ -1873,7 +1875,7 @@ void Mesh::checkIntegrity() {
   // Check that duplicate edges do not exist.
   set<Edge, UndirectedEdgeComparer> uniqueEdges;
 
-  uint32_t totalLiveEdges = 0;
+  [[maybe_unused]] uint32_t totalLiveEdges = 0;
   for (uint32_t i = 0; i < mEdges.size(); ++i) {
     if (isEdgeAlive(i)) {
       auto const& edge = getEdge(i);

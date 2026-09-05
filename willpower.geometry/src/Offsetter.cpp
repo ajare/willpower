@@ -14,7 +14,7 @@ using namespace WP_NAMESPACE;
 using namespace std;
 
 Offsetter::Offsetter(vector<Vector2> const& vertices, float maxMiter)
-    : mVertices(vertices), mMaxMiter(maxMiter) {
+    : mMaxMiter(maxMiter), mVertices(vertices) {
   // Remove duplicate vertices from the end
   int i = (int)mVertices.size() - 2;
   while (i >= 0) {
@@ -282,7 +282,7 @@ std::vector<Vector2> Offsetter::offsetImpl(float amount1, float amount2, CornerT
     return mVertices;
   }
 
-  if (amount1 < 0 && amount2 > 0 || amount1 > 0 && amount2 < 0) {
+  if ((amount1 < 0 && amount2 > 0) || (amount1 > 0 && amount2 < 0)) {
     throw GeometryOperationException(__FUNCTION__, "amounts cannot have opposite signs.", true);
   }
 

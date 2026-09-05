@@ -260,7 +260,8 @@ void selfAssignmentPreservesMeshAndPolygonTopology() {
   auto edgeGrid = mesh._getEdgeAccelerationGrid();
   auto polygonGrid = mesh._getPolygonAccelerationGrid();
 
-  mesh = mesh;
+  Mesh* meshSelf = &mesh;
+  mesh = *meshSelf;
 
   require(mesh.getNumVertices() == 4 && mesh.getNumEdges() == 4 && mesh.getNumPolygons() == 1,
           "mesh self-assignment must preserve populated geometry");
@@ -276,7 +277,8 @@ void selfAssignmentPreservesMeshAndPolygonTopology() {
   Polygon polygon = mesh.getPolygon(fixture.polygonIndex);
   auto polygonEdges = polygon.getEdges();
   auto polygonVertices = polygon.getVertexIndexList();
-  polygon = polygon;
+  Polygon* polygonSelf = &polygon;
+  polygon = *polygonSelf;
   require(polygon.getEdges() == polygonEdges,
           "polygon self-assignment must preserve directed edges");
   require(polygon.getVertexIndexList() == polygonVertices,

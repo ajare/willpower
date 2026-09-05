@@ -14,9 +14,16 @@ BoundingBox::BoundingBox()
 }
 
 BoundingBox::BoundingBox(BoundingBox const& other) {
-  this->mPosition = other.mPosition;
-  this->mSize = other.mSize;
-  updateExtents();
+  *this = other;
+}
+
+BoundingBox& BoundingBox::operator=(BoundingBox const& other) {
+  if (this != &other) {
+    mPosition = other.mPosition;
+    mSize = other.mSize;
+    updateExtents();
+  }
+  return *this;
 }
 
 BoundingBox::BoundingBox(Vector2 const& position, Vector2 const& size)

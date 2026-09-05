@@ -414,7 +414,6 @@ bool Simulation::projectCollider(Collider const* collider, Vector2 const& desire
 
 bool Simulation::projectLine(Vector2 const& v0, Vector2 const& v1, SweepResult* result) {
   float closestTime = 1.0f;
-  int32_t closestLineIndex = -1;
 
   // Check acceleration grid
   BoundingBox lineBounds;
@@ -444,7 +443,6 @@ bool Simulation::projectLine(Vector2 const& v0, Vector2 const& v1, SweepResult* 
 
       if (t < closestTime) {
         closestTime = t;
-        closestLineIndex = lineIndex;
       }
     }
   }
