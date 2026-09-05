@@ -31,7 +31,7 @@ namespace resourcesystem {
 using namespace std;
 
 ResourceManager::ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, AudioSystem* audioSystem, Logger* logger)
-    : mwLogger(logger), mwRenderSystem(renderSystem), mwRenderResourceMgr(renderResourceMgr), mwAudioSystem(audioSystem)
+    : mwLogger(logger), mwRenderResourceMgr(renderResourceMgr), mwRenderSystem(renderSystem), mwAudioSystem(audioSystem)
 
 {
   addResourceFactory(new TextFileResourceFactory);

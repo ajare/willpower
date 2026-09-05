@@ -19,25 +19,36 @@ Common ──> Geometry ──> Collide ──> Viz
 
 ## Requirements
 
-- Windows x64
-- Microsoft Visual C++ with C++20 support
+Willpower supports 64-bit Windows and Linux builds. A 32-bit configuration is rejected.
+
 - CMake 3.25 or newer
 - Git, for obtaining submodules
+- A C++20 compiler:
+  - Windows: Microsoft Visual C++
+  - Linux: GCC 12 or newer, or Clang 15 or newer
+- Linux OpenGL development packages required by GLEW
 
-The build currently rejects non-MSVC and 32-bit configurations because the libraries retain Windows DLL interfaces and platform-specific implementation code.
+On Ubuntu 22.04 or newer, install the Linux prerequisites with:
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake git libgl1-mesa-dev libglu1-mesa-dev
+```
+
+For a Clang build, also install `clang`.
 
 ## Cloning
 
 Clone recursively so that both Willpower's dependencies and MassivePolyPusher's nested dependencies are populated:
 
-```powershell
+```bash
 git clone --recurse-submodules <repository-url>
 cd willpower
 ```
 
 For an existing clone:
 
-```powershell
+```bash
 git submodule update --init --recursive
 ```
 
@@ -49,6 +60,29 @@ The repository declares these direct submodules:
 
 ## Building
 
+Clone the repository and populate its submodules before configuring a build.
+On the first build, CMake configures MassivePolyPusher in an independent build tree and builds the library targets required by Willpower. All generated files remain under the selected Willpower build directory.
+
+### Linux
+
+Configure and build with GCC:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+To use Clang, select it when creating a fresh build directory:
+
+```bash
+CC=clang CXX=clang++ cmake -S . -B build-clang -DCMAKE_BUILD_TYPE=Release
+cmake --build build-clang --parallel
+```
+
+Use `-DCMAKE_BUILD_TYPE=Debug` for a debug build.
+
+### Windows
+
 From a Visual Studio developer shell:
 
 ```powershell
@@ -56,14 +90,16 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Debug --parallel
 ```
 
-Use `--config Release` for a release build. On the first build, CMake configures MassivePolyPusher in an independent build tree and builds the library targets required by Willpower. All generated files remain under the selected Willpower build directory.
+Use `--config Release` for a release build.
 
 Build outputs are placed under:
 
 ```text
-build/bin/<Config>/<Target>/   # DLLs, executables, and staged runtime DLLs
-build/lib/<Config>/<Target>/   # Import libraries
+build/bin/<Config>/<Target>/   # Shared libraries and executables
+build/lib/<Config>/<Target>/   # Import/static library artifacts
 ```
+
+For single-config Linux generators, `<Config>` is the value of `CMAKE_BUILD_TYPE`.
 
 ### Optional FMOD support
 
@@ -75,18 +111,25 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DWILLPOWER_FMOD_ROOT="C:/path/to/FMOD Studio API Windows"
 ```
 
-FMOD cannot be distributed as a public Git submodule. The configured root must contain the standard `api/core` and `api/studio` SDK directories. Required runtime DLLs are staged beside test executables.
+FMOD cannot be distributed as a public Git submodule. The configured root must contain the standard `api/core` and `api/studio` SDK directories. Required runtime DLLs are staged beside test executables. FMOD support is currently available only on Windows.
 
 ## Tests
 
-Build and run the CTest suite with:
+Tests are enabled by default. Build and run the suite on Linux with:
+
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+On Windows, specify the selected multi-config configuration:
 
 ```powershell
 cmake --build build --config Debug --parallel
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-The suite covers acceleration-grid set operations, removal of legacy geometry helpers, static-line clipping, and YAML resource manifests. Test data is self-contained under `willpower.application/tests/data`; no parent project or external resource tree is required.
+The suite covers acceleration-grid set operations, removal of legacy geometry helpers, static-line clipping, scheduling, input state, and YAML resource manifests. Test data is self-contained under `willpower.application/tests/data`; no parent project or external resource tree is required.
 
 Disable test targets at configure time with `-DBUILD_TESTING=OFF`.
 

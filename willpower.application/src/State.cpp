@@ -31,7 +31,7 @@ bool State::_imGuiCapturesInput() const {
   return _imGuiActive();
 }
 
-void State::_renderImGui(float frameTime, void* imGuiCtx, void* imPlotCtx, void* allocFunc, void* freeFunc, void* userData) {
+void State::_renderImGui(float, void*, void*, void*, void*, void*) {
 }
 
 void State::_render(mpp::RenderSystem* renderSystem, mpp::ResourceManager* resourceMgr) {

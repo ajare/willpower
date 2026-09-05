@@ -41,7 +41,8 @@ void InputStateManager::registerState(string const& name,
       mouseWheelUp,
       mouseWheelDown,
       keyModifiers,
-      disableInGui};
+      disableInGui,
+      false};
 
   mStates[name] = stateDef;
 }

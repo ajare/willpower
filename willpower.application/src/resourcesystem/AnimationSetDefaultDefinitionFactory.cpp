@@ -35,7 +35,8 @@ void AnimationSetDefaultDefinitionFactory::create(Resource* resource, ResourceMa
 
       AnimationSetResource::Animation anim{
           animName,
-          ls};
+          ls,
+          {}};
 
       // Read frames
       auto framesNode = animationNode->getChild("Frames");
