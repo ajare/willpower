@@ -22,12 +22,7 @@ AudioBankResource::AudioBankResource(string const& name,
                                      map<string, string> const& tags,
                                      application::resourcesystem::ResourceLocation* location,
                                      AudioSystem* audioSystem)
-    : application::resourcesystem::Resource(name, namesp, "AudioBank", source, tags, location), mwAudioSystem(audioSystem)
-#if defined(WP_APPLICATION_USE_FMOD)
-      ,
-      mBank(nullptr)
-#endif
-{
+    : application::resourcesystem::Resource(name, namesp, "AudioBank", source, tags, location), mwAudioSystem(audioSystem), mBank(nullptr) {
 }
 
 AudioBankResource::~AudioBankResource() {

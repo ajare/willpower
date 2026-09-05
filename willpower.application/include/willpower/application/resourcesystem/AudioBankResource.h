@@ -6,6 +6,12 @@
 #include "willpower/application/resourcesystem/AnimationSetResourceDefinitionFactory.h"
 #include "willpower/application/AudioSystem.h"
 
+namespace FMOD {
+namespace Studio {
+class Bank;
+}  // namespace Studio
+}  // namespace FMOD
+
 namespace WP_NAMESPACE {
 namespace application {
 namespace resourcesystem {
@@ -18,9 +24,7 @@ class WP_APPLICATION_API AudioBankResource : public Resource {
 private:
   AudioSystem* mwAudioSystem;
 
-#if defined(WP_APPLICATION_USE_FMOD)
   FMOD::Studio::Bank* mBank;
-#endif
 
 private:
   void create(wp::application::resourcesystem::DataStreamPtr dataPtr, wp::application::resourcesystem::ResourceManager* resourceMgr) override;

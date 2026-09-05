@@ -2,13 +2,15 @@
 
 #include "willpower/application/Platform.h"
 
-#if defined(WP_APPLICATION_USE_FMOD)
-#include <fmod.hpp>
-#include <fmod_errors.h>
-#include <fmod_studio.hpp>
-#endif
 #include "willpower/application/AudioOptions.h"
 #include "willpower/application/resourcesystem/Resource.h"
+
+namespace FMOD {
+namespace Studio {
+class System;
+class EventInstance;
+}  // namespace Studio
+}  // namespace FMOD
 
 namespace WP_NAMESPACE {
 namespace application {
@@ -18,9 +20,7 @@ class AudioBankResource;
 }
 
 class WP_APPLICATION_API AudioSystem {
-#if defined(WP_APPLICATION_USE_FMOD)
   FMOD::Studio::System* mSystem;
-#endif
 
 public:
   explicit AudioSystem(AudioOptions const& options);
@@ -29,11 +29,9 @@ public:
 
   void createAudioBank(resourcesystem::AudioBankResource* audioBank, resourcesystem::DataStreamPtr dataPtr);
 
-#if defined(WP_APPLICATION_USE_FMOD)
   FMOD::Studio::EventInstance* startEvent(std::string const& eventName);
 
   void setEventVolume(FMOD::Studio::EventInstance* inst, float volume);
-#endif
 
   void update();
 };

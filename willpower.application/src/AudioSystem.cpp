@@ -4,6 +4,12 @@
 #include "willpower/application/resourcesystem/AudioBankResource.h"
 #include "willpower/application/resourcesystem/ResourceExceptions.h"
 
+#if defined(WP_APPLICATION_USE_FMOD)
+#include <fmod.hpp>
+#include <fmod_errors.h>
+#include <fmod_studio.hpp>
+#endif
+
 namespace WP_NAMESPACE {
 namespace application {
 
@@ -107,7 +113,8 @@ void AudioSystem::update() {
   }
 }
 #else
-AudioSystem::AudioSystem(AudioOptions const& options) {
+AudioSystem::AudioSystem(AudioOptions const& options)
+    : mSystem(nullptr) {
   WP_UNUSED(options);
 }
 
@@ -116,6 +123,16 @@ AudioSystem::~AudioSystem() = default;
 void AudioSystem::createAudioBank(resourcesystem::AudioBankResource* audioBank, resourcesystem::DataStreamPtr dataPtr) {
   WP_UNUSED(audioBank);
   WP_UNUSED(dataPtr);
+}
+
+FMOD::Studio::EventInstance* AudioSystem::startEvent(string const& eventName) {
+  WP_UNUSED(eventName);
+  return nullptr;
+}
+
+void AudioSystem::setEventVolume(FMOD::Studio::EventInstance* inst, float volume) {
+  WP_UNUSED(inst);
+  WP_UNUSED(volume);
 }
 
 void AudioSystem::update() {
