@@ -66,10 +66,9 @@ function(willpower_import_mpp target stem)
             IMPORTED_LOCATION_MEMCHECK "${_mpp_bin}/MemCheck/${stem}.dll"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     else()
-        # Linux is single-config and MPP's CMAKE_LIBRARY_OUTPUT_DIRECTORY puts
-        # every shared library in the flat bin/ directory (verified against a
-        # real MPP build). The external build passes no CMAKE_BUILD_TYPE, so
-        # artifacts carry no debug postfix: bin/<stem>.so.
+        # Linux is single-config and MPP's output layout includes the selected
+        # build type (verified against a real MPP build). The root project
+        # defaults an otherwise unspecified CMAKE_BUILD_TYPE to Release.
         #
         # LINUX_STEM overrides the artifact stem where it differs from the
         # Windows one (GLEW builds as libGLEW.so, not libglew32.so).

@@ -1,5 +1,7 @@
 #include <mpp/TextureStream.h>
 
+#include <utility>
+
 #include "willpower/common/StringUtils.h"
 
 #include "willpower/common/Exceptions.h"
@@ -491,7 +493,7 @@ void ResourceManager::addResource(ResourcePtr resource) {
   }
 
   mwLogger->info("Registered programmatic resource: " + resource->getQualifiedName());
-  resources[resource->getName()] = move(resource);
+  resources[resource->getName()] = std::move(resource);
 }
 
 ResourcePtr ResourceManager::getResource(string const& name, string const& namesp) {

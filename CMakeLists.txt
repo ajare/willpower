@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.25)
 
 project(Willpower VERSION 0.1.0 LANGUAGES CXX)
 
+# Keep the documented no-options configure command usable with single-config
+# generators. MPP's output layout includes the configuration name, so an empty
+# CMAKE_BUILD_TYPE cannot be mapped to an imported library path.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
 if(CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "Willpower and MassivePolyPusher support x64 builds only. Configure with -A x64.")
 endif()
