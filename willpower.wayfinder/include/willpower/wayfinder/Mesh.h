@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "willpower/common/Vector2.h"
 #include "willpower/common/MathsUtils.h"
 #include "willpower/common/AccelerationGrid.h"
@@ -53,6 +55,15 @@ namespace WP_NAMESPACE
 			 * @param insetSizes The insetSizes parameter used by the method.
 			 */
 			Mesh(geometry::Mesh const* geometryMesh, std::vector<int> const& insetSizes);
+
+			/**
+			 * @brief Creates a zero-inset navigation mesh from an existing triangulation.
+			 * @param vertices Vertex positions used by triangles.
+			 * @param triangles Triangle vertex indices.
+			 */
+			Mesh(
+				std::vector<Vector2> const& vertices,
+				std::vector<Triangle> const& triangles);
 
 			/**
 			 * @brief Destroys the mesh instance.

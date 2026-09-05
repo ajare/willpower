@@ -164,6 +164,13 @@ namespace WP_NAMESPACE
 			void addArea(std::vector<Vector2> const& border, std::vector<std::vector<Vector2>> const& holes);
 
 			/**
+			 * @brief Adds an existing triangulation without triangulating it again.
+			 * @param vertices Vertex positions used by triangles.
+			 * @param triangles Triangle vertex indices.
+			 */
+			void addTriangulation(std::vector<Vector2> const& vertices, std::vector<Triangle> const& triangles);
+
+			/**
 			 * @brief Performs the build path graph operation.
 			 */
 			void buildPathGraph();

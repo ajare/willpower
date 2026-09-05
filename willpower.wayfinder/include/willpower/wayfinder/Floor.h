@@ -49,6 +49,8 @@ namespace WP_NAMESPACE
 			 */
 			void calculatePaths(PolygonIndex target, bool recalculate) const;
 
+			void initialiseNavigationData();
+
 		public:
 
 			/**
@@ -68,6 +70,15 @@ namespace WP_NAMESPACE
 			 * @param holes The holes parameter used by the method.
 			 */
 			Floor(std::vector<Vector2> const& border, std::vector<std::vector<Vector2>> const& holes);
+
+			/**
+			 * @brief Creates a zero-inset floor from an existing triangulation.
+			 */
+			Floor(
+				std::vector<Vector2> const& border,
+				std::vector<std::vector<Vector2>> const& holes,
+				std::vector<Vector2> const& vertices,
+				std::vector<Triangle> const& triangles);
 
 			/**
 			 * @brief Destroys the floor instance.
@@ -116,6 +127,13 @@ namespace WP_NAMESPACE
 			 * @param inset The inset parameter used by the method.
 			 */
 			void triangulate(int inset);
+
+			/**
+			 * @brief Replaces polygonisation with an existing zero-inset triangulation.
+			 */
+			void setTriangulation(
+				std::vector<Vector2> const& vertices,
+				std::vector<Triangle> const& triangles);
 
 			/**
 			 * @brief Gets the inset.

@@ -136,6 +136,13 @@ namespace WP_NAMESPACE
 			Floor* createFloor(int insetSize);
 
 			/**
+			 * @brief Creates the zero-inset floor from an existing triangulation.
+			 */
+			Floor* createFloor(
+				std::vector<Vector2> const& vertices,
+				std::vector<Triangle> const& triangles);
+
+			/**
 			 * @brief Gets the floor inset sizes.
 			 * @return The requested value or operation result.
 			 */

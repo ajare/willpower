@@ -221,6 +221,18 @@ namespace WP_NAMESPACE
 			return floor;
 		}
 
+		Floor* Sector::createFloor(
+			vector<Vector2> const& vertices, vector<Triangle> const& triangles)
+		{
+			Floor* floor = new Floor(mBorder, mHoles, vertices, triangles);
+			if (mFloors.find(0) != mFloors.end())
+			{
+				delete mFloors[0];
+			}
+			mFloors[0] = floor;
+			return floor;
+		}
+
 		void Sector::composeConvex(int maxDegree)
 		{
 			for (auto kvp: mFloors)

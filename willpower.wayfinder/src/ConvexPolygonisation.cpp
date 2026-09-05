@@ -1,6 +1,8 @@
 #include <poly2tri/poly2tri.h>
 
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 #include "willpower/common/Globals.h"
 #include "willpower/common/WillpowerWalker.h"
@@ -49,6 +51,45 @@ namespace WP_NAMESPACE
 		void ConvexPolygonisation::addArea(vector<Vector2> const& border, vector<vector<Vector2>> const& holes)
 		{
 			polygonise1(border, holes);
+		}
+
+		void ConvexPolygonisation::addTriangulation(
+			vector<Vector2> const& vertices, vector<Triangle> const& triangles)
+		{
+			constexpr size_t indexCapacity =
+				static_cast<size_t>(numeric_limits<VertexIndex>::max()) + 1;
+			if (mVertices.size() + vertices.size() > indexCapacity ||
+				mPolygons.size() + triangles.size() > indexCapacity)
+			{
+				throw overflow_error("Wayfinder triangulation exceeds its 16-bit index capacity.");
+			}
+
+			auto vertexBase = static_cast<VertexIndex>(mVertices.size());
+			for (auto const& vertex: vertices)
+			{
+				addVertex(vertex.x, vertex.y);
+			}
+
+			for (auto const& triangle: triangles)
+			{
+				VertexIndex indices[3];
+				for (size_t i = 0; i < 3; ++i)
+				{
+					if (triangle[i] >= vertices.size())
+					{
+						throw out_of_range("Wayfinder triangle vertex index is out of range.");
+					}
+					indices[i] = static_cast<VertexIndex>(vertexBase + triangle[i]);
+				}
+
+				if (MathsUtils::pointSideOnLine(
+					mVertices[indices[0]], mVertices[indices[1]],
+					mVertices[indices[2]]) == MathsUtils::Side::Right)
+				{
+					swap(indices[0], indices[1]);
+				}
+				addTriangle(indices);
+			}
 		}
 
 		vector<Vector2> ConvexPolygonisation::processLoop(vector<Vector2> const& points)
@@ -143,6 +184,8 @@ namespace WP_NAMESPACE
 
 					auto& otherPoly = mPolygons[edge.p[otherIndex]];
 					otherPoly.neighbours[otherPoly.numNeighbours++] = polygonIndex;
+					mPolygonToEdgeLookup[(polygonIndex << 16) + edge.p[otherIndex]] = it->second;
+					mPolygonToEdgeLookup[(edge.p[otherIndex] << 16) + polygonIndex] = it->second;
 				}
 				else
 				{

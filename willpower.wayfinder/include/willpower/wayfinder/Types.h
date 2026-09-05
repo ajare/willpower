@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 #include "willpower/wayfinder/Platform.h"
@@ -19,6 +20,8 @@ namespace WP_NAMESPACE
 		typedef int PossibleEdgeIndex;
 		typedef int PossiblePolygonIndex;
 		typedef int PossibleSectorIndex;
+
+		using Triangle = std::array<uint32_t, 3>;
 
 		static const int NoIndex = -1;
 

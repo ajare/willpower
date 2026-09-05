@@ -35,6 +35,14 @@ namespace WP_NAMESPACE
 			mHoles = holes;
 		}
 
+		Floor::Floor(
+			vector<Vector2> const& border, vector<vector<Vector2>> const& holes,
+			vector<Vector2> const& vertices, vector<Triangle> const& triangles)
+			: Floor(border, holes)
+		{
+			setTriangulation(vertices, triangles);
+		}
+
 		Floor::~Floor()
 		{
 			delete mPolygons;
@@ -115,6 +123,21 @@ namespace WP_NAMESPACE
 				mPolygons->addArea(area.border, area.holes);
 			}
 
+			initialiseNavigationData();
+		}
+
+		void Floor::setTriangulation(
+			vector<Vector2> const& vertices, vector<Triangle> const& triangles)
+		{
+			mInset = 0;
+			delete mPolygons;
+			mPolygons = new ConvexPolygonisation();
+			mPolygons->addTriangulation(vertices, triangles);
+			initialiseNavigationData();
+		}
+
+		void Floor::initialiseNavigationData()
+		{
 			// Build acceleration grid
 			mPolygons->createAccelerationGrids(10, 10);
 
