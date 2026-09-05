@@ -29,7 +29,7 @@ All tickets are published as GitHub issues on [`ajare/willpower`](https://github
 | [WP-009](WP-009.md) | [#9](https://github.com/ajare/willpower/issues/9) | 3 — CMake | P0 | medium | `cmake/Helpers.cmake`: platform-aware target helpers | WP-008 | done |
 | [WP-010](WP-010.md) | [#10](https://github.com/ajare/willpower/issues/10) | 3 — CMake | P0 | medium | `cmake/Dependencies.cmake`: branch MPP import; keep FMOD WIN32 gate | WP-008 | done |
 | [WP-011](WP-011.md) | [#11](https://github.com/ajare/willpower/issues/11) | 3 — CMake | P1 | easy | Application module CMake: compiler-aware warnings | WP-009 | done |
-| [WP-012](WP-012.md) | [#12](https://github.com/ajare/willpower/issues/12) | 4 — Verify | P0 | medium | Linux end-to-end build + `ctest` (acceptance gate) | all above | open |
+| [WP-012](WP-012.md) | [#12](https://github.com/ajare/willpower/issues/12) | 4 — Verify | P0 | medium | Linux end-to-end build + `ctest` (acceptance gate) | all above | done |
 | [WP-013](WP-013.md) | [#13](https://github.com/ajare/willpower/issues/13) | 4 — Verify | P1 | easy | CI: Linux job (GCC + Clang) | WP-012 | open |
 | [WP-014](WP-014.md) | [#14](https://github.com/ajare/willpower/issues/14) | 4 — Verify | P1 | easy | Docs: Linux prerequisites + README update | WP-012 | open |
 
