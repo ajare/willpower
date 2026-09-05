@@ -42,6 +42,8 @@ namespace WP_NAMESPACE
 
 			PathDatabase* mPathDatabase;
 
+			size_t mMaxCachedPathTargets{32};
+
 			/**
 			 * @brief Calculates paths.
 			 * @param target The target parameter used by the method.
@@ -158,6 +160,15 @@ namespace WP_NAMESPACE
 			 * @param target The target parameter used by the method.
 			 */
 			void recalculatePaths(PolygonIndex target);
+
+			/**
+			 * @brief Sets the maximum number of target path trees retained by this floor.
+			 */
+			void setMaxCachedPathTargets(size_t maxCachedTargets);
+
+			size_t getMaxCachedPathTargets() const;
+
+			size_t getNumCachedPathTargets() const;
 
 			/**
 			 * @brief Calculates path lengths.

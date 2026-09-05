@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 #include "willpower/wayfinder/Platform.h"
 #include "willpower/wayfinder/Types.h"
@@ -9,138 +13,79 @@ namespace WP_NAMESPACE
 	namespace wayfinder
 	{
 
+		class ConvexPolygonisation;
+
 		/**
-		 * @brief Represents the path database type.
+		 * @brief Caches compact reverse shortest-path trees for recently used targets.
 		 */
 		class WP_WAYFINDER_API PathDatabase
 		{
 			friend class ConvexPolygonisation;
 
-		public:
+			static constexpr uint8_t NoRoute = 0xff;
 
-			/**
-			 * @brief Represents the entry type.
-			 */
-			struct Entry
+			struct TargetRoutes
 			{
-				EdgeIndex* base;
-				uint32_t length;
-
-			public:
-
-				/**
-				 * @brief Performs the entry operation.
-				 * @param nullptr The nullptr parameter used by the method.
-				 * @param length The length parameter used by the method.
-				 */
-				Entry()
-					: base(nullptr)
-					, length(0)
-				{
-				}
+				std::vector<uint8_t> nextNeighbour;
+				uint64_t lastUsed{0};
+				bool calculated{false};
 			};
 
-		private:
+			uint32_t mNumPolygons{0};
+			size_t mMaxCachedTargets{32};
+			mutable uint64_t mUseCounter{0};
+			mutable std::unordered_map<PolygonIndex, TargetRoutes> mRoutesByTarget;
 
-			EdgeIndex* mData;
+			TargetRoutes& resetTarget(PolygonIndex target);
 
-			EdgeIndex* mpHead;
+			void setNextNeighbour(
+				PolygonIndex target,
+				PolygonIndex source,
+				uint8_t nextNeighbour);
 
-			Entry* mEntries;
+			void touch(TargetRoutes& routes) const;
 
-			std::vector<bool> mIsCalculated;
-
-			uint32_t mNumPolygons;
-
-		private:
-
-			/**
-			 * @brief Performs the triangular operation.
-			 * @param n The n parameter used by the method.
-			 * @return The requested value or operation result.
-			 */
-			inline uint32_t triangular(uint32_t n) const
-			{
-				return n * (n + 1) / 2;
-			}
-
-			/**
-			 * @brief Gets the index.
-			 * @param source The source parameter used by the method.
-			 * @param target The target parameter used by the method.
-			 * @return The requested value or operation result.
-			 */
-			inline uint32_t getIndex(EdgeIndex source, EdgeIndex target) const
-			{
-				uint32_t source1 = source + 1;
-				return triangular(mNumPolygons - 1) - triangular(mNumPolygons - source1) + (target - source1);
-			}
-
-			/**
-			 * @brief Creates entry.
-			 * @param source The source parameter used by the method.
-			 * @param target The target parameter used by the method.
-			 * @param base The base parameter used by the method.
-			 * @param length The length parameter used by the method.
-			 */
-			void createEntry(PolygonIndex source, PolygonIndex target, EdgeIndex* base, uint32_t length);
-
-			/**
-			 * @brief Gets the head.
-			 * @return The requested value or operation result.
-			 */
-			EdgeIndex* getHead() const;
-
-			/**
-			 * @brief Gets the data at offset.
-			 * @param offset The offset parameter used by the method.
-			 * @return The requested value or operation result.
-			 */
-			EdgeIndex* getDataAtOffset(uint32_t offset);
+			void evictOldestTarget();
 
 		public:
 
-			/**
-			 * @brief Performs the path database operation.
-			 */
-			PathDatabase();
+			PathDatabase() = default;
+
+			PathDatabase(PathDatabase const&) = delete;
+
+			PathDatabase& operator=(PathDatabase const&) = delete;
+
+			PathDatabase(PathDatabase&&) noexcept = default;
+
+			PathDatabase& operator=(PathDatabase&&) noexcept = default;
+
+			~PathDatabase() = default;
 
 			/**
-			 * @brief Destroys the path database instance.
+			 * @brief Resets the cache for a polygon count without allocating routes.
+			 * @param numPolygons Number of polygons in the path graph.
 			 */
-			~PathDatabase();
+			void setSize(uint32_t numPolygons);
 
 			/**
-			 * @brief Sets the size.
-			 * @param numPolygons The numPolygons parameter used by the method.
+			 * @brief Sets the maximum number of target trees retained by the cache.
 			 */
-			void setSize(int numPolygons);
+			void setMaxCachedTargets(size_t maxCachedTargets);
+
+			size_t getMaxCachedTargets() const;
+
+			size_t getNumCachedTargets() const;
 
 			/**
-			 * @brief Gets the free space.
-			 * @return The requested value or operation result.
+			 * @brief Reconstructs the portal sequence from source to target.
 			 */
-			uint32_t getFreeSpace() const;
+			std::vector<EdgeIndex> getPath(
+				PolygonIndex source,
+				PolygonIndex target,
+				ConvexPolygonisation const& polygons) const;
 
-			/**
-			 * @brief Gets the entry.
-			 * @param source The source parameter used by the method.
-			 * @param target The target parameter used by the method.
-			 * @return The requested value or operation result.
-			 */
-			Entry const& getEntry(PolygonIndex source, PolygonIndex target) const;
-
-			/**
-			 * @brief Sets the calculated.
-			 * @param target The target parameter used by the method.
-			 */
 			void setCalculated(PolygonIndex target);
 
-			/**
-			 * @brief Determines whether calculated is true.
-			 * @param target The target parameter used by the method.
-			 * @return The requested value or operation result.
-			 */
 			bool isCalculated(PolygonIndex target) const;
 		};
 

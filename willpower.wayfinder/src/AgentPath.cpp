@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "willpower/common/Globals.h"
 #include "willpower/common/WillpowerWalker.h"
 
@@ -13,23 +15,21 @@ namespace WP_NAMESPACE
 
 		AgentPath::Iterator::Iterator()
 			: mPath(nullptr)
-			, mFirstPathNode(nullptr)
 			, mPosition(0)
 		{
 		}
 
 		AgentPath::Iterator::Iterator(AgentPath const* path, int position)
 			: mPath(path)
-			, mFirstPathNode(path->mFirstPathNode)
-			, mPosition(position)
+			, mPosition(static_cast<size_t>(position))
 		{
 		}
 
 		AgentPath::Iterator const& AgentPath::Iterator::operator++()
 		{
-			if ((mFirstPathNode + mPosition - mPath->mPathIncrement) != mPath->mLastPathNode)
+			if (mPosition < mPath->mPathNodes.size())
 			{
-				mPosition += mPath->mPathIncrement;
+				++mPosition;
 			}
 
 			return *this;
@@ -46,14 +46,13 @@ namespace WP_NAMESPACE
 
 		EdgeIndex AgentPath::Iterator::operator*()
 		{
-			return *(mFirstPathNode + mPosition);
+			return mPath->mPathNodes[mPosition];
 		}
 
 		bool AgentPath::Iterator::operator==(Iterator const& other) const
 		{
 			return
 				this->mPath == other.mPath &&
-				this->mFirstPathNode == other.mFirstPathNode &&
 				this->mPosition == other.mPosition;
 		}
 
@@ -64,36 +63,55 @@ namespace WP_NAMESPACE
 
 		AgentPath::AgentPath()
 			: mTarget(nullptr)
-			, mTargetLastSeenPolygon(NoIndex)
-			, mFirstPathNode(nullptr)
-			, mCurPathNode(nullptr)
-			, mLastPathNode(nullptr)
-			, mPathIncrement(0)
-			, mStartTimer(0.0f)
 			, mPolygons(nullptr)
+			, mCurrentPathNode(0)
+			, mStartTimer(0.0f)
+			, mTargetLastSeenPolygon(NoIndex)
 		{
 		}
 
 		AgentPath::AgentPath(Vector2 const& position, EdgeIndex const* pathStart, EdgeIndex const* pathEnd, int pathInc, ConvexPolygonisation const* polygons, float startTimer)
-			: mTarget(nullptr)
-			, mTargetLastSeenPolygon(NoIndex)
-			, mFirstPathNode(pathStart)
-			, mCurPathNode(pathStart)
-			, mLastPathNode(pathEnd)
-			, mPathIncrement(pathInc)
-			, mStartTimer(startTimer)
-			, mPolygons(polygons)
+			: AgentPath()
 		{
-			if (mCurPathNode)
+			mStartTimer = startTimer;
+			mPolygons = polygons;
+			if (pathStart && pathEnd && pathInc != 0)
 			{
-				calculateNextEdge(position, *mCurPathNode);
+				for (auto node = pathStart;; node += pathInc)
+				{
+					mPathNodes.push_back(*node);
+					if (node == pathEnd)
+					{
+						break;
+					}
+				}
+			}
+			if (!mPathNodes.empty())
+			{
+				calculateNextEdge(position, mPathNodes.front());
+			}
+		}
+
+		AgentPath::AgentPath(
+			Vector2 const& position, vector<EdgeIndex> path,
+			ConvexPolygonisation const* polygons, float startTimer)
+			: mTarget(nullptr)
+			, mPolygons(polygons)
+			, mPathNodes(move(path))
+			, mCurrentPathNode(0)
+			, mStartTimer(startTimer)
+			, mTargetLastSeenPolygon(NoIndex)
+		{
+			if (!mPathNodes.empty())
+			{
+				calculateNextEdge(position, mPathNodes.front());
 			}
 		}
 
 		void AgentPath::clear()
 		{
-			mCurPathNode = mLastPathNode = nullptr;
-			mPathIncrement = 0;
+			mPathNodes.clear();
+			mCurrentPathNode = 0;
 			mStartTimer = 0.0f;
 
 			mTargetLastSeenPolygon = NoIndex;
@@ -113,12 +131,12 @@ namespace WP_NAMESPACE
 
 		AgentPath::Iterator AgentPath::end() const
 		{
-			return Iterator(this, (int32_t)(mLastPathNode - mFirstPathNode) + mPathIncrement);
+			return Iterator(this, static_cast<int>(mPathNodes.size()));
 		}
 
 		bool AgentPath::inFinalPolygon() const
 		{
-			return mCurPathNode - mPathIncrement == mLastPathNode;
+			return mCurrentPathNode >= mPathNodes.size();
 		}
 
 		void AgentPath::calculateNextEdge(Vector2 const& position, EdgeIndex node)
@@ -209,11 +227,11 @@ namespace WP_NAMESPACE
 				if (movedToNewNode(position))
 				{
 					// Move onto next node
-					mCurPathNode += mPathIncrement;
+					++mCurrentPathNode;
 
 					if (!inFinalPolygon())
 					{
-						calculateNextEdge(position, *mCurPathNode);
+						calculateNextEdge(position, mPathNodes[mCurrentPathNode]);
 					}
 				}
 

@@ -236,6 +236,19 @@ namespace WP_NAMESPACE
 
 					graphEdge.distance = (uint32_t)sourceCentre.distanceTo(targetCentre);
 					graphEdge.target = sourcePoly.neighbours[i];
+					graphEdge.targetNeighbour = numeric_limits<uint8_t>::max();
+					for (uint32_t j = 0; j < targetPoly.numNeighbours; ++j)
+					{
+						if (targetPoly.neighbours[j] == polyIndex)
+						{
+							graphEdge.targetNeighbour = static_cast<uint8_t>(j);
+							break;
+						}
+					}
+					if (graphEdge.targetNeighbour == numeric_limits<uint8_t>::max())
+					{
+						throw logic_error("Path graph contains a one-way polygon adjacency.");
+					}
 
 					mPathGraph[polyIndex].push_back(graphEdge);
 				}
@@ -272,6 +285,7 @@ namespace WP_NAMESPACE
 
 		void ConvexPolygonisation::calculatePaths(PolygonIndex target, PathDatabase* database) const
 		{
+			database->resetTarget(target);
 			vector<uint32_t> minDistance(mPathGraph.size(), numeric_limits<uint32_t>::max());
 			minDistance[target] = 0;
 
@@ -281,7 +295,6 @@ namespace WP_NAMESPACE
 			while (!activePolygons.empty())
 			{
 				PolygonIndex where = activePolygons.begin()->second;
-
 				activePolygons.erase(activePolygons.begin());
 
 				for (auto const& edge: mPathGraph[where])
@@ -290,83 +303,8 @@ namespace WP_NAMESPACE
 					{
 						activePolygons.erase(make_pair(minDistance[edge.target], edge.target));
 						minDistance[edge.target] = minDistance[where] + edge.distance;
-
-						// Store portal to next polygon in path
-						EdgeIndex joiningEdgeIndex = mPolygonToEdgeLookup.at((edge.target << 16) + where);
-
-						PolygonIndex sourcePolygon = edge.target;
-						PolygonIndex targetPolygon = target;
-						PolygonIndex prevPolygon = where;
-
-						// Only add in one direction
-						VertexIndex* basePtr = database->getHead();
-						VertexIndex* ptr = basePtr;
-
-						if (sourcePolygon < targetPolygon)
-						{
-							uint32_t newLength = 1;
-							*ptr++ = joiningEdgeIndex;
-
-							if (prevPolygon != targetPolygon)
-							{
-								if (prevPolygon < targetPolygon)
-								{
-									auto const& prevEntry = database->getEntry(prevPolygon, targetPolygon);
-									for (uint32_t i = 0; i < prevEntry.length; ++i)
-									{
-										*ptr++ = prevEntry.base[i];
-									}
-
-									newLength += prevEntry.length;
-								}
-								else if (prevPolygon > targetPolygon)
-								{
-									auto const& prevEntry = database->getEntry(targetPolygon, prevPolygon);
-									for (uint32_t i = 0; i < prevEntry.length; ++i)
-									{
-										*ptr++ = prevEntry.base[prevEntry.length - i - 1];
-									}
-
-									newLength += prevEntry.length;
-								}
-							}
-
-							database->createEntry(sourcePolygon, targetPolygon, basePtr, newLength);
-						}
-						else
-						{
-							// Add in reverse
-							uint32_t newLength = 0;
-							if (prevPolygon != targetPolygon)
-							{
-								if (prevPolygon < targetPolygon)
-								{
-									auto const& prevEntry = database->getEntry(prevPolygon, targetPolygon);
-									for (uint32_t i = 0; i < prevEntry.length; ++i)
-									{
-										*ptr++ = prevEntry.base[prevEntry.length - i - 1];
-									}
-
-									newLength += prevEntry.length;
-								}
-								else if (prevPolygon > targetPolygon)
-								{
-									auto const& prevEntry = database->getEntry(targetPolygon, prevPolygon);
-									for (uint32_t i = 0; i < prevEntry.length; ++i)
-									{
-										*ptr++ = prevEntry.base[i];
-									}
-
-									newLength += prevEntry.length;
-								}
-							}
-
-							*ptr++ = joiningEdgeIndex;
-							newLength++;
-
-							database->createEntry(targetPolygon, sourcePolygon, basePtr, newLength);
-						}
-
+						database->setNextNeighbour(
+							target, edge.target, edge.targetNeighbour);
 						activePolygons.insert(make_pair(minDistance[edge.target], edge.target));
 					}
 				}

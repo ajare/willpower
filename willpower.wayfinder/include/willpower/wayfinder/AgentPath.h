@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <vector>
+
 #include "willpower/common/Vector2.h"
 
 #include "willpower/wayfinder/Platform.h"
@@ -27,13 +30,9 @@ namespace WP_NAMESPACE
 			ConvexPolygonisation const* mPolygons;
 
 			// Path
-			EdgeIndex const* mFirstPathNode;
+			std::vector<EdgeIndex> mPathNodes;
 
-			EdgeIndex const* mCurPathNode;
-
-			EdgeIndex const* mLastPathNode;
-
-			int mPathIncrement;
+			size_t mCurrentPathNode;
 
 			Vector2 mNodeVertices[2];
 
@@ -94,9 +93,7 @@ namespace WP_NAMESPACE
 
 				AgentPath const* mPath;
 
-				EdgeIndex const* mFirstPathNode;
-
-				int mPosition;
+				size_t mPosition;
 
 			private:
 
@@ -164,6 +161,15 @@ namespace WP_NAMESPACE
 			 * @param startTimer The startTimer parameter used by the method.
 			 */
 			AgentPath(Vector2 const& position, EdgeIndex const* pathStart, EdgeIndex const* pathEnd, int pathInc, ConvexPolygonisation const* polygons, float startTimer = 0.0f);
+
+			/**
+			 * @brief Creates a path that owns its portal sequence.
+			 */
+			AgentPath(
+				Vector2 const& position,
+				std::vector<EdgeIndex> path,
+				ConvexPolygonisation const* polygons,
+				float startTimer = 0.0f);
 
 			/**
 			 * @brief Performs the clear operation.

@@ -1,5 +1,7 @@
 #include <utils/StringUtils.h>
 
+#include <stdexcept>
+
 #include "willpower/common/Globals.h"
 #include "willpower/common/WillpowerWalker.h"
 
@@ -147,6 +149,7 @@ namespace WP_NAMESPACE
 			// Pathfinding (PathDatabase)
 			delete mPathDatabase;
 			mPathDatabase = new PathDatabase();
+			mPathDatabase->setMaxCachedTargets(mMaxCachedPathTargets);
 			mPathDatabase->setSize(mPolygons->getNumPolygons());
 		}
 
@@ -178,6 +181,29 @@ namespace WP_NAMESPACE
 			calculatePaths(target, true);
 		}
 
+		void Floor::setMaxCachedPathTargets(size_t maxCachedTargets)
+		{
+			if (maxCachedTargets == 0)
+			{
+				throw invalid_argument("Floor must cache at least one path target.");
+			}
+			if (mPathDatabase)
+			{
+				mPathDatabase->setMaxCachedTargets(maxCachedTargets);
+			}
+			mMaxCachedPathTargets = maxCachedTargets;
+		}
+
+		size_t Floor::getMaxCachedPathTargets() const
+		{
+			return mMaxCachedPathTargets;
+		}
+
+		size_t Floor::getNumCachedPathTargets() const
+		{
+			return mPathDatabase ? mPathDatabase->getNumCachedTargets() : 0;
+		}
+
 		vector<int> Floor::calculatePathLengths(PolygonIndex target) const
 		{
 			return mPolygons->calculatePathLengths(target);
@@ -185,20 +211,9 @@ namespace WP_NAMESPACE
 
 		AgentPath Floor::getPath(Vector2 const& position, PolygonIndex source, PolygonIndex target, float startTimer) const
 		{
-			if (source < target)
-			{
-				auto const& entry = mPathDatabase->getEntry(source, target);
-				return AgentPath(position, entry.base, entry.base + entry.length - 1, 1, mPolygons, startTimer);
-			}
-			else if (source > target)
-			{
-				auto const& entry = mPathDatabase->getEntry(target, source);
-				return AgentPath(position, entry.base + entry.length - 1, entry.base, -1, mPolygons, startTimer);
-			}
-			else
-			{
-				return AgentPath(position, nullptr, nullptr, 0, mPolygons, startTimer);
-			}
+			return AgentPath(
+				position, mPathDatabase->getPath(source, target, *mPolygons),
+				mPolygons, startTimer);
 		}
 
 		int Floor::getInset() const

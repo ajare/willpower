@@ -21,6 +21,8 @@ namespace WP_NAMESPACE
 		 */
 		class WP_WAYFINDER_API ConvexPolygonisation
 		{
+			friend class PathDatabase;
+
 		public:
 
 			static const unsigned int MaxPolygonDegree = 16;
@@ -86,6 +88,7 @@ namespace WP_NAMESPACE
 			{
 				PolygonIndex target;
 				uint32_t distance;
+				uint8_t targetNeighbour;
 			};
 
 		private:
