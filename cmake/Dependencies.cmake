@@ -12,7 +12,8 @@ foreach(required_path
         "${WILLPOWER_MPP_SOURCE_DIR}/ext/assimp/CMakeLists.txt"
         "${WILLPOWER_MPP_SOURCE_DIR}/ext/glew/.git"
         "${WILLPOWER_EXT_DIR}/earcut.hpp/include/mapbox/earcut.hpp"
-        "${WILLPOWER_EXT_DIR}/SplineLibrary/spline_library/spline.h")
+        "${WILLPOWER_EXT_DIR}/SplineLibrary/spline_library/spline.h"
+        "${WILLPOWER_MPP_SOURCE_DIR}/ext/assimp/contrib/poly2tri/poly2tri/poly2tri.h")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR
             "A required dependency is missing (${required_path}).\n"
@@ -95,6 +96,22 @@ willpower_import_mpp(ext::glew glew32
 # Runtime dependencies which cannot be inferred from an imported DLL alone.
 set_property(TARGET ext::mpp APPEND PROPERTY
     INTERFACE_LINK_LIBRARIES "ext::mpp-data;ext::glew")
+
+set(_poly2tri_dir "${WILLPOWER_MPP_SOURCE_DIR}/ext/assimp/contrib/poly2tri")
+add_library(vendor_poly2tri STATIC
+    "${_poly2tri_dir}/poly2tri/common/shapes.cc"
+    "${_poly2tri_dir}/poly2tri/sweep/advancing_front.cc"
+    "${_poly2tri_dir}/poly2tri/sweep/cdt.cc"
+    "${_poly2tri_dir}/poly2tri/sweep/sweep.cc"
+    "${_poly2tri_dir}/poly2tri/sweep/sweep_context.cc")
+add_library(vendor::poly2tri ALIAS vendor_poly2tri)
+target_include_directories(vendor_poly2tri PUBLIC "${_poly2tri_dir}")
+target_compile_definitions(vendor_poly2tri PUBLIC P2T_STATIC_EXPORTS)
+target_compile_features(vendor_poly2tri PUBLIC cxx_std_20)
+set_target_properties(vendor_poly2tri PROPERTIES
+    FOLDER Dependencies
+    POSITION_INDEPENDENT_CODE ON)
+unset(_poly2tri_dir)
 
 add_library(vendor_headers INTERFACE)
 add_library(vendor::headers ALIAS vendor_headers)
