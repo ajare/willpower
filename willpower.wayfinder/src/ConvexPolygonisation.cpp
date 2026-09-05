@@ -1,6 +1,7 @@
 #include <poly2tri/poly2tri.h>
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 

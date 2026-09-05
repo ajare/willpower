@@ -1,6 +1,8 @@
 #include "willpower/common/WillpowerWalker.h"
 
 #include "willpower/geometry/CsgUtils.h"
+
+#include <cstdint>
 #include "willpower/geometry/clipper.hpp"
 
 #undef max

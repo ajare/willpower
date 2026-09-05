@@ -1,5 +1,7 @@
 #include "willpower/common/MathsUtils.h"
 
+#include <stdexcept>
+
 #include "willpower/geometry/Offsetter.h"
 #include "willpower/geometry/Exception.h"
 
@@ -69,7 +71,7 @@ void Offsetter::makeUnmitredCorner(Edge& edge, Edge const* prev, Edge const* nex
   auto intersects = MathsUtils::rayRayIntersection(edge.v0, prev->dir, edge.v1, -next->dir, &hit);
   if (intersects == MathsUtils::LineIntersectionType::Intersecting) {
     if (hit.getTime() < 0) {
-      throw exception("Corner angle is obtuse.");
+      throw runtime_error("Corner angle is obtuse.");
     }
 
     auto const& hitPos = hit.getPosition();
@@ -83,7 +85,7 @@ void Offsetter::makeUnmitredCorner(Edge& edge, Edge const* prev, Edge const* nex
       edge.vertices.push_back(hitPos);
     }
   } else {
-    throw exception("Corner angle is obtuse.");
+    throw runtime_error("Corner angle is obtuse.");
   }
 }
 
@@ -117,7 +119,7 @@ void Offsetter::makeSquareCorner(Edge& edge, Edge const* prev, Edge const* next,
 
 void Offsetter::extrudeCorner(Edge& edge, Edge const* prev, Edge const* next, float distance) {
   if (!prev || !next) {
-    throw exception("Corner is not between two edges.");
+    throw runtime_error("Corner is not between two edges.");
   }
 
   edge.v0 += edge.normal0 * distance;

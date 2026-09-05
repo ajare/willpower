@@ -60,8 +60,71 @@ The repository declares these direct submodules:
 
 ## Building
 
-Clone the repository and populate its submodules before configuring a build.
-On the first build, CMake configures MassivePolyPusher in an independent build tree and builds the library targets required by Willpower. All generated files remain under the selected Willpower build directory.
+### Complete build from scratch
+
+The following sequence starts with a new checkout and builds Willpower and every dependency it needs. Do not build the submodules in separate build trees: the top-level CMake build configures MassivePolyPusher, and MassivePolyPusher in turn adds its nested dependencies in the required order.
+
+After cloning, the root-level script automates the complete process:
+
+```bash
+./build_from_scratch.sh
+```
+
+Pass `--with-mpp-lfs` to also download MassivePolyPusher's Git LFS assets. This option reports platform-specific installation instructions and exits if Git LFS is unavailable. Run `./build_from_scratch.sh --help` for build type, build directory, and compiler selection details.
+
+To perform the same process manually:
+
+1. Clone Willpower and enter the checkout:
+
+   ```bash
+   git clone <repository-url> willpower
+   cd willpower
+   ```
+
+2. Populate the submodules, including all nested submodules:
+
+   ```bash
+   git submodule sync --recursive
+   git submodule update --init --recursive
+   ```
+
+   The recursive command resolves the checkout hierarchy in this order:
+
+   1. `ext/SplineLibrary` and `ext/earcut.hpp` (header-only)
+   2. `ext/massive-poly-pusher`
+   3. MassivePolyPusher's `ext/sdl`, `ext/glew`, `ext/assimp`, and `ext/utils`
+   4. Utils' `vendor/yaml-cpp`
+
+   To initialize the same hierarchy explicitly, which can be useful when diagnosing a failed recursive checkout, run:
+
+   ```bash
+   git submodule update --init ext/SplineLibrary ext/earcut.hpp ext/massive-poly-pusher
+   git -C ext/massive-poly-pusher submodule update --init ext/sdl ext/glew ext/assimp ext/utils
+   git -C ext/massive-poly-pusher/ext/utils submodule update --init vendor/yaml-cpp
+   ```
+
+3. Configure a fresh build tree and build from the repository root:
+
+   ```bash
+   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+   cmake --build build --parallel
+   ```
+
+   On the first build, CMake configures MassivePolyPusher in `build/_deps`. CMake's target dependencies then build yaml-cpp and Utils, GLEW, the required MassivePolyPusher libraries, and finally the Willpower modules. SplineLibrary and earcut.hpp are header-only; Assimp supplies the Poly2Tri sources used by Willpower. No manual dependency build or install step is required.
+
+For a completely clean rebuild of an existing checkout, remove the generated tree, refresh all submodules, and repeat configuration:
+
+```bash
+rm -rf build
+# Remove ignored build output produced inside the MPP checkout, if present.
+rm -rf ext/massive-poly-pusher/build
+git submodule sync --recursive
+git submodule update --init --recursive
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+On PowerShell, use `Remove-Item -Recurse -Force build, ext/massive-poly-pusher/build` in place of the two `rm` commands (omit paths that do not exist).
 
 ### Linux
 

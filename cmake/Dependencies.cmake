@@ -4,6 +4,9 @@ include(ExternalProject)
 set(WILLPOWER_EXT_DIR "${PROJECT_SOURCE_DIR}/ext")
 set(WILLPOWER_MPP_SOURCE_DIR "${WILLPOWER_EXT_DIR}/massive-poly-pusher")
 set(WILLPOWER_MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/massive-poly-pusher-build")
+# MPP deliberately places artifacts under its source checkout's build tree,
+# independently of the CMake binary directory used to configure it.
+set(WILLPOWER_MPP_OUTPUT_DIR "${WILLPOWER_MPP_SOURCE_DIR}/build")
 
 foreach(required_path
         "${WILLPOWER_MPP_SOURCE_DIR}/CMakeLists.txt"
@@ -27,17 +30,21 @@ endforeach()
 ExternalProject_Add(willpower_mpp_external
     SOURCE_DIR "${WILLPOWER_MPP_SOURCE_DIR}"
     BINARY_DIR "${WILLPOWER_MPP_BUILD_DIR}"
-    CMAKE_ARGS "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+    CMAKE_ARGS
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        "-DCMAKE_BUILD_TYPE=$<CONFIG>"
     BUILD_COMMAND
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG> --parallel
         --target MassivePolyPusher MppMesh MppHelper MppProgram MppData Utils glew
-    INSTALL_COMMAND ""
+    # MPP is consumed directly from its build tree; make the no-op explicit
+    # rather than having ExternalProject print a misleading "No install step".
+    INSTALL_COMMAND "${CMAKE_COMMAND}" -E true
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE)
 set_target_properties(willpower_mpp_external PROPERTIES FOLDER Dependencies)
 
-set(_mpp_lib "${WILLPOWER_MPP_BUILD_DIR}/lib")
-set(_mpp_bin "${WILLPOWER_MPP_BUILD_DIR}/bin")
+set(_mpp_lib "${WILLPOWER_MPP_OUTPUT_DIR}/lib")
+set(_mpp_bin "${WILLPOWER_MPP_OUTPUT_DIR}/bin")
 set(_mpp_glew_include "${WILLPOWER_MPP_BUILD_DIR}/_deps/glew-2.3.1/include")
 # Imported include directories must exist while CMake generates the build.
 file(MAKE_DIRECTORY "${_mpp_glew_include}")
@@ -70,8 +77,11 @@ function(willpower_import_mpp target stem)
         if(ARG_LINUX_STEM)
             set(_mpp_stem "${ARG_LINUX_STEM}")
         endif()
+        if(NOT CMAKE_BUILD_TYPE)
+            message(FATAL_ERROR "Linux builds require CMAKE_BUILD_TYPE (for example, Release or Debug).")
+        endif()
         set_target_properties(${target} PROPERTIES
-            IMPORTED_LOCATION "${_mpp_bin}/${_mpp_stem}.so"
+            IMPORTED_LOCATION "${_mpp_bin}/${CMAKE_BUILD_TYPE}/lib${_mpp_stem}.so"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     endif()
     add_dependencies(${target} willpower_mpp_external)
@@ -92,6 +102,8 @@ willpower_import_mpp(ext::mpp-data MppData
 willpower_import_mpp(ext::glew glew32
     LINUX_STEM GLEW
     INCLUDE "${_mpp_glew_include}")
+set_property(TARGET ext::glew APPEND PROPERTY
+    INTERFACE_COMPILE_DEFINITIONS GLEW_NO_GLU)
 
 # Runtime dependencies which cannot be inferred from an imported DLL alone.
 set_property(TARGET ext::mpp APPEND PROPERTY

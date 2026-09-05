@@ -1,7 +1,9 @@
+#pragma once
 
+#include <cstdint>
 #include <list>
-#include <vector>
 #include <set>
+#include <vector>
 
 #include "willpower/geometry/Platform.h"
 
@@ -14,4 +16,3 @@ typedef std::set<uint32_t> IndexSet;
 
 }  // namespace geometry
 }  // namespace WP_NAMESPACE
-#pragma once

@@ -3,7 +3,7 @@
 #include <vector>
 #include <set>
 #include <map>
-#include <exception>
+#include <stdexcept>
 
 #include "willpower/common/Platform.h"
 
@@ -118,7 +118,7 @@ public:
 
   void setAttribute(uint32_t index, T attr) {
     if (index >= mAttributes.size()) {
-      throw std::exception("Out of bounds.");
+      throw std::out_of_range("Out of bounds.");
     }
 
     mAttributes[index] = attr;
@@ -126,7 +126,7 @@ public:
 
   T const& getAttribute(uint32_t index) const {
     if (index >= mAttributes.size()) {
-      throw std::exception("Out of bounds.");
+      throw std::out_of_range("Out of bounds.");
     }
 
     return mAttributes[index];

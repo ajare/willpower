@@ -12,6 +12,7 @@ namespace WP_NAMESPACE
 {
 	namespace wayfinder
 	{
+		class AgentSwarm;
 
 		/**
 		 * @brief Represents the agent type.

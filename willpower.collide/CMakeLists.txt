@@ -9,7 +9,7 @@ target_include_directories(Willpower.Collide PUBLIC include)
 willpower_add_header_filter(Willpower.Collide)
 
 target_compile_definitions(Willpower.Collide PRIVATE
-    WIN32 _WINDOWS _USRDLL
+    $<$<PLATFORM_ID:Windows>:WIN32 _WINDOWS _USRDLL>
     WP_COLLIDE_DLL_EXPORT
     WP_USE_ASSERT_TRACE
     $<$<CONFIG:Debug>:WP_USE_MEMLEAK_TRACKING>)
@@ -19,7 +19,6 @@ target_link_libraries(Willpower.Collide
     PRIVATE ext::Utils vendor::headers)
 
 target_compile_features(Willpower.Collide PRIVATE cxx_std_20)
-target_compile_options(Willpower.Collide PRIVATE /W4)
 willpower_target_defaults(Willpower.Collide)
 willpower_output_dirs(Willpower.Collide)
 set_target_properties(Willpower.Collide PROPERTIES FOLDER Willpower)

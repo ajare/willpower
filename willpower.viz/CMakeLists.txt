@@ -20,7 +20,7 @@ target_include_directories(WillPower.Viz PUBLIC include)
 willpower_add_header_filter(WillPower.Viz)
 
 target_compile_definitions(WillPower.Viz PRIVATE
-    WIN32 _WINDOWS _USRDLL
+    $<$<PLATFORM_ID:Windows>:WIN32 _WINDOWS _USRDLL>
     WP_VIZ_DLL_EXPORT
     $<$<CONFIG:Debug>:WP_USE_ASSERT_TRACE WP_USE_MEMLEAK_TRACKING>)
 
@@ -30,7 +30,6 @@ target_link_libraries(WillPower.Viz
     PRIVATE ext::Utils)
 
 target_compile_features(WillPower.Viz PRIVATE cxx_std_20)
-target_compile_options(WillPower.Viz PRIVATE /W4)
 willpower_target_defaults(WillPower.Viz)
 willpower_output_dirs(WillPower.Viz)
 set_target_properties(WillPower.Viz PROPERTIES FOLDER Willpower)

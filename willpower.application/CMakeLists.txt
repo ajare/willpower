@@ -49,7 +49,7 @@ willpower_add_header_filter(Willpower.Application)
 
 target_compile_definitions(Willpower.Application
     PUBLIC  $<$<BOOL:${WILLPOWER_ENABLE_FMOD}>:WP_APPLICATION_USE_FMOD>
-    PRIVATE WIN32 _WINDOWS
+    PRIVATE $<$<PLATFORM_ID:Windows>:WIN32 _WINDOWS>
             WP_APPLICATION_DLL_EXPORT
             WP_USE_ASSERT_TRACE
             $<$<CONFIG:Debug>:WP_USE_MEMLEAK_TRACKING>)
@@ -63,11 +63,6 @@ if(WILLPOWER_ENABLE_FMOD)
 endif()
 
 target_compile_features(Willpower.Application PRIVATE cxx_std_20)
-if(MSVC)
-    target_compile_options(Willpower.Application PRIVATE /W4)
-else()
-    target_compile_options(Willpower.Application PRIVATE -Wall -Wextra)
-endif()
 willpower_target_defaults(Willpower.Application)
 willpower_output_dirs(Willpower.Application)
 willpower_enable_sdl_checks(Willpower.Application)

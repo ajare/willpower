@@ -1,5 +1,7 @@
 #include "willpower/geometry/BezierOffsetter.h"
 
+#include <algorithm>
+
 namespace WP_NAMESPACE {
 namespace geometry {
 

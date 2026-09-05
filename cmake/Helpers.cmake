@@ -31,7 +31,7 @@ function(willpower_target_defaults target)
             # and lose symbolised reports.
             MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,MemCheck>:ProgramDatabase>")
         target_compile_options(${target} PRIVATE
-            /MP
+            /MP /W4
             $<$<CONFIG:MemCheck>:/fsanitize=address>)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra)

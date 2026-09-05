@@ -27,11 +27,6 @@ target_link_libraries(Willpower.Wayfinder
     PRIVATE ext::Utils vendor::poly2tri)
 
 target_compile_features(Willpower.Wayfinder PRIVATE cxx_std_20)
-if(MSVC)
-    target_compile_options(Willpower.Wayfinder PRIVATE /W4)
-else()
-    target_compile_options(Willpower.Wayfinder PRIVATE -Wall -Wextra)
-endif()
 willpower_target_defaults(Willpower.Wayfinder)
 willpower_output_dirs(Willpower.Wayfinder)
 set_target_properties(Willpower.Wayfinder PROPERTIES FOLDER Willpower)
