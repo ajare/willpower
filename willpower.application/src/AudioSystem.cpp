@@ -1,4 +1,4 @@
-#include <exception>
+#include <stdexcept>
 
 #include "willpower/application/AudioSystem.h"
 #include "willpower/application/resourcesystem/AudioBankResource.h"
@@ -39,7 +39,7 @@ AudioSystem::AudioSystem(AudioOptions const& options)
   // Create audio system
   res = FMOD::Studio::System::create(&mSystem);
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
   // Create core system
@@ -47,23 +47,23 @@ AudioSystem::AudioSystem(AudioOptions const& options)
 
   res = mSystem->getCoreSystem(&coreSystem);
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
   // Set up system
   res = coreSystem->setSoftwareFormat(0, toFmodSpeakerMode(options.speakerMode), 0);
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
-  FMOD_STUDIO_INITFLAGS studioFlags = 0 | options.synchronous
+  FMOD_STUDIO_INITFLAGS studioFlags = options.synchronous
                                           ? FMOD_STUDIO_INIT_SYNCHRONOUS_UPDATE
                                           : FMOD_STUDIO_INIT_NORMAL;
 
   res = mSystem->initialize(
       options.numChannels, studioFlags, FMOD_INIT_3D_RIGHTHANDED, nullptr);
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 }
 
@@ -90,11 +90,11 @@ FMOD::Studio::EventInstance* AudioSystem::startEvent(string const& eventName) {
   FMOD::Studio::EventDescription* desc{nullptr};
 
   // Get event
-  string eventEventName = format("event:/{}", eventName);
+  string eventEventName = "event:/" + eventName;
   auto res = mSystem->getEvent(eventEventName.c_str(), &desc);
 
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
   // Create instance
@@ -102,14 +102,14 @@ FMOD::Studio::EventInstance* AudioSystem::startEvent(string const& eventName) {
   res = desc->createInstance(&inst);
 
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
   // Start instance
   res = inst->start();
 
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 
   return inst;
@@ -119,7 +119,7 @@ void AudioSystem::setEventVolume(FMOD::Studio::EventInstance* inst, float volume
   auto res = inst->setVolume(volume);
 
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 }
 
@@ -127,7 +127,7 @@ FMOD::System* AudioSystem::getCoreSystem() const {
   FMOD::System* coreSystem{nullptr};
   auto res = mSystem->getCoreSystem(&coreSystem);
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
   return coreSystem;
 }
@@ -135,7 +135,7 @@ FMOD::System* AudioSystem::getCoreSystem() const {
 void AudioSystem::update() {
   auto res = mSystem->update();
   if (res != FMOD_OK) {
-    throw exception(FMOD_ErrorString(res));
+    throw runtime_error(FMOD_ErrorString(res));
   }
 }
 #else

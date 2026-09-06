@@ -19,7 +19,7 @@ namespace resourcesystem {
 class WP_APPLICATION_API AudioBankResource : public Resource {
   friend class AudioBankResourceDefinitionFactory;
 
-  friend class AudioSystem;
+  friend class wp::application::AudioSystem;
 
 private:
   AudioSystem* mwAudioSystem;
