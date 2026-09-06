@@ -60,7 +60,8 @@ AudioSystem::AudioSystem(AudioOptions const& options)
                                           ? FMOD_STUDIO_INIT_SYNCHRONOUS_UPDATE
                                           : FMOD_STUDIO_INIT_NORMAL;
 
-  res = mSystem->initialize(options.numChannels, studioFlags, FMOD_INIT_NORMAL, nullptr);
+  res = mSystem->initialize(
+      options.numChannels, studioFlags, FMOD_INIT_3D_RIGHTHANDED, nullptr);
   if (res != FMOD_OK) {
     throw exception(FMOD_ErrorString(res));
   }
@@ -122,6 +123,15 @@ void AudioSystem::setEventVolume(FMOD::Studio::EventInstance* inst, float volume
   }
 }
 
+FMOD::System* AudioSystem::getCoreSystem() const {
+  FMOD::System* coreSystem{nullptr};
+  auto res = mSystem->getCoreSystem(&coreSystem);
+  if (res != FMOD_OK) {
+    throw exception(FMOD_ErrorString(res));
+  }
+  return coreSystem;
+}
+
 void AudioSystem::update() {
   auto res = mSystem->update();
   if (res != FMOD_OK) {
@@ -149,6 +159,10 @@ FMOD::Studio::EventInstance* AudioSystem::startEvent(string const& eventName) {
 void AudioSystem::setEventVolume(FMOD::Studio::EventInstance* inst, float volume) {
   WP_UNUSED(inst);
   WP_UNUSED(volume);
+}
+
+FMOD::System* AudioSystem::getCoreSystem() const {
+  return nullptr;
 }
 
 void AudioSystem::update() {

@@ -6,6 +6,7 @@
 #include "willpower/application/resourcesystem/Resource.h"
 
 namespace FMOD {
+class System;
 namespace Studio {
 class System;
 class EventInstance;
@@ -32,6 +33,9 @@ public:
   FMOD::Studio::EventInstance* startEvent(std::string const& eventName);
 
   void setEventVolume(FMOD::Studio::EventInstance* inst, float volume);
+
+  // The core system owns DSP plugins and listener attributes.
+  FMOD::System* getCoreSystem() const;
 
   void update();
 };
