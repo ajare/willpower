@@ -70,7 +70,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_acceleration_grid_set_operations_tests)
     willpower_output_dirs(willpower_acceleration_grid_set_operations_tests)
     willpower_deploy_runtime_dlls(willpower_acceleration_grid_set_operations_tests)
-    add_test(NAME willpower_acceleration_grid_set_operations
+    willpower_add_test(NAME willpower_acceleration_grid_set_operations
              COMMAND willpower_acceleration_grid_set_operations_tests)
 
     add_executable(willpower_bounding_convex_polygon_intersection_tests
@@ -80,7 +80,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_bounding_convex_polygon_intersection_tests)
     willpower_output_dirs(willpower_bounding_convex_polygon_intersection_tests)
     willpower_deploy_runtime_dlls(willpower_bounding_convex_polygon_intersection_tests)
-    add_test(NAME willpower_bounding_convex_polygon_intersection
+    willpower_add_test(NAME willpower_bounding_convex_polygon_intersection
              COMMAND willpower_bounding_convex_polygon_intersection_tests)
 
     # Manual Release-mode evidence for PERF-3; deliberately not a pass/fail test.
@@ -99,7 +99,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_legacy_geometry_helper_removal_tests)
     willpower_output_dirs(willpower_legacy_geometry_helper_removal_tests)
     willpower_deploy_runtime_dlls(willpower_legacy_geometry_helper_removal_tests)
-    add_test(NAME willpower_legacy_geometry_helper_removal
+    willpower_add_test(NAME willpower_legacy_geometry_helper_removal
              COMMAND willpower_legacy_geometry_helper_removal_tests)
 
     add_executable(willpower_vector2_assignment_semantics_tests
@@ -109,7 +109,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_vector2_assignment_semantics_tests)
     willpower_output_dirs(willpower_vector2_assignment_semantics_tests)
     willpower_deploy_runtime_dlls(willpower_vector2_assignment_semantics_tests)
-    add_test(NAME willpower_vector2_assignment_semantics
+    willpower_add_test(NAME willpower_vector2_assignment_semantics
              COMMAND willpower_vector2_assignment_semantics_tests)
 
     add_executable(willpower_geometric_epsilon_tests
@@ -119,7 +119,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_geometric_epsilon_tests)
     willpower_output_dirs(willpower_geometric_epsilon_tests)
     willpower_deploy_runtime_dlls(willpower_geometric_epsilon_tests)
-    add_test(NAME willpower_geometric_epsilon
+    willpower_add_test(NAME willpower_geometric_epsilon
              COMMAND willpower_geometric_epsilon_tests)
 
     add_executable(willpower_curve_tessellation_tests
@@ -129,7 +129,7 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_curve_tessellation_tests)
     willpower_output_dirs(willpower_curve_tessellation_tests)
     willpower_deploy_runtime_dlls(willpower_curve_tessellation_tests)
-    add_test(NAME willpower_curve_tessellation
+    willpower_add_test(NAME willpower_curve_tessellation
              COMMAND willpower_curve_tessellation_tests)
 
     add_executable(willpower_timer_tests tests/timer_tests.cpp)
@@ -138,5 +138,5 @@ if(BUILD_TESTING)
     willpower_target_defaults(willpower_timer_tests)
     willpower_output_dirs(willpower_timer_tests)
     willpower_deploy_runtime_dlls(willpower_timer_tests)
-    add_test(NAME willpower_timer COMMAND willpower_timer_tests)
+    willpower_add_test(NAME willpower_timer COMMAND willpower_timer_tests)
 endif()
