@@ -184,7 +184,19 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DWILLPOWER_FMOD_STUDIO_DLL="$sdk/api/studio/lib/x64/fmodstudio.dll"
 ```
 
-FMOD cannot be distributed as a public Git submodule. The paths are given individually rather than as a single root because the Engine API is not always laid out as the SDK installer leaves it — a project that vendors it into its own tree works just as well. Configuring with any of them missing lists exactly which. Required runtime DLLs are staged beside test executables. FMOD support is currently available only on Windows.
+On Linux, use the shared objects from the Linux SDK; separate runtime paths are not required:
+
+```bash
+sdk="/path/to/FMOD Studio API Linux"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DWILLPOWER_ENABLE_FMOD=ON \
+  -DWILLPOWER_FMOD_CORE_INCLUDE="$sdk/api/core/inc" \
+  -DWILLPOWER_FMOD_STUDIO_INCLUDE="$sdk/api/studio/inc" \
+  -DWILLPOWER_FMOD_CORE_LIBRARY="$sdk/api/core/lib/x86_64/libfmod.so" \
+  -DWILLPOWER_FMOD_STUDIO_LIBRARY="$sdk/api/studio/lib/x86_64/libfmodstudio.so"
+```
+
+FMOD cannot be distributed as a public Git submodule. The paths are given individually rather than as a single root because the Engine API is not always laid out as the SDK installer leaves it — a project that vendors it into its own tree works just as well. Configuring with any required path missing lists exactly which. On Windows, runtime DLLs are staged beside test executables; Linux executables use CMake's build-tree runtime path.
 
 ## Tests
 
