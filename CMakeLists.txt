@@ -62,8 +62,9 @@ if(WIN32)
     add_compile_definitions(UNICODE _UNICODE)
 endif()
 
-option(WILLPOWER_ENABLE_FMOD "Enable FMOD-backed audio (requires a separately installed FMOD SDK)" OFF)
-set(WILLPOWER_FMOD_ROOT "" CACHE PATH "Root of the FMOD Studio API installation")
+option(WILLPOWER_ENABLE_FMOD "Enable FMOD-backed audio (requires the FMOD Engine API)" OFF)
+# The paths to that API are declared as cache variables in cmake/Dependencies.cmake,
+# which documents each one and reports the ones still missing.
 
 include(CTest)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

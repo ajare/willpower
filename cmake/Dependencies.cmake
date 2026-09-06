@@ -138,23 +138,53 @@ if(WILLPOWER_ENABLE_FMOD)
     if(NOT WIN32)
         message(FATAL_ERROR "WILLPOWER_ENABLE_FMOD is supported on Windows only.")
     endif()
-    if(NOT WILLPOWER_FMOD_ROOT)
-        message(FATAL_ERROR
-            "WILLPOWER_ENABLE_FMOD requires -DWILLPOWER_FMOD_ROOT=<FMOD Studio API directory>.")
-    endif()
+    # FMOD is located by explicit paths rather than by a root directory. The
+    # official SDK installer's layout (api/core/inc, api/core/lib/x64, ...) is
+    # only one shape the Engine API appears in: a project that vendors it
+    # arranges the headers, import libraries and DLLs however it likes, so
+    # Willpower assumes no layout at all and asks for the six paths it uses.
+    set(WILLPOWER_FMOD_CORE_INCLUDE "" CACHE PATH
+        "Directory containing fmod.hpp")
+    set(WILLPOWER_FMOD_STUDIO_INCLUDE "" CACHE PATH
+        "Directory containing fmod_studio.hpp")
+    set(WILLPOWER_FMOD_CORE_LIBRARY "" CACHE FILEPATH
+        "FMOD core import library (fmod_vc.lib)")
+    set(WILLPOWER_FMOD_STUDIO_LIBRARY "" CACHE FILEPATH
+        "FMOD Studio import library (fmodstudio_vc.lib)")
+    set(WILLPOWER_FMOD_CORE_DLL "" CACHE FILEPATH
+        "FMOD core runtime DLL (fmod.dll)")
+    set(WILLPOWER_FMOD_STUDIO_DLL "" CACHE FILEPATH
+        "FMOD Studio runtime DLL (fmodstudio.dll)")
 
-    find_path(WILLPOWER_FMOD_CORE_INCLUDE fmod.hpp
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/core/inc" NO_DEFAULT_PATH REQUIRED)
-    find_path(WILLPOWER_FMOD_STUDIO_INCLUDE fmod_studio.hpp
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/studio/inc" NO_DEFAULT_PATH REQUIRED)
-    find_library(WILLPOWER_FMOD_CORE_LIBRARY NAMES fmod_vc fmodL_vc
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/core/lib/x64" NO_DEFAULT_PATH REQUIRED)
-    find_library(WILLPOWER_FMOD_STUDIO_LIBRARY NAMES fmodstudio_vc fmodstudioL_vc
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/studio/lib/x64" NO_DEFAULT_PATH REQUIRED)
-    find_file(WILLPOWER_FMOD_CORE_DLL NAMES fmod.dll fmodL.dll
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/core/lib/x64" NO_DEFAULT_PATH REQUIRED)
-    find_file(WILLPOWER_FMOD_STUDIO_DLL NAMES fmodstudio.dll fmodstudioL.dll
-        PATHS "${WILLPOWER_FMOD_ROOT}/api/studio/lib/x64" NO_DEFAULT_PATH REQUIRED)
+    set(_fmod_problems "")
+    foreach(_fmod_var
+            WILLPOWER_FMOD_CORE_INCLUDE
+            WILLPOWER_FMOD_STUDIO_INCLUDE
+            WILLPOWER_FMOD_CORE_LIBRARY
+            WILLPOWER_FMOD_STUDIO_LIBRARY
+            WILLPOWER_FMOD_CORE_DLL
+            WILLPOWER_FMOD_STUDIO_DLL)
+        if(NOT ${_fmod_var})
+            string(APPEND _fmod_problems "  ${_fmod_var} is not set\n")
+        elseif(NOT EXISTS "${${_fmod_var}}")
+            string(APPEND _fmod_problems
+                "  ${_fmod_var} does not exist: ${${_fmod_var}}\n")
+        endif()
+    endforeach()
+    if(_fmod_problems)
+        message(FATAL_ERROR
+            "WILLPOWER_ENABLE_FMOD needs the FMOD Engine API located explicitly:\n"
+            "${_fmod_problems}"
+            "Point each variable at your FMOD tree, for example an official SDK "
+            "install:\n"
+            "  -DWILLPOWER_FMOD_CORE_INCLUDE=<sdk>/api/core/inc\n"
+            "  -DWILLPOWER_FMOD_STUDIO_INCLUDE=<sdk>/api/studio/inc\n"
+            "  -DWILLPOWER_FMOD_CORE_LIBRARY=<sdk>/api/core/lib/x64/fmod_vc.lib\n"
+            "  -DWILLPOWER_FMOD_STUDIO_LIBRARY=<sdk>/api/studio/lib/x64/fmodstudio_vc.lib\n"
+            "  -DWILLPOWER_FMOD_CORE_DLL=<sdk>/api/core/lib/x64/fmod.dll\n"
+            "  -DWILLPOWER_FMOD_STUDIO_DLL=<sdk>/api/studio/lib/x64/fmodstudio.dll")
+    endif()
+    unset(_fmod_problems)
 
     add_library(vendor::fmod SHARED IMPORTED GLOBAL)
     set_target_properties(vendor::fmod PROPERTIES

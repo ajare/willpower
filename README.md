@@ -166,15 +166,21 @@ For single-config Linux generators, `<Config>` is the value of `CMAKE_BUILD_TYPE
 
 ### Optional FMOD support
 
-Audio compiles to a no-op backend by default, so a proprietary SDK is not needed for a complete build. To enable the FMOD backend, install the FMOD Studio API separately and configure with:
+Audio compiles to a no-op backend by default, so a proprietary SDK is not needed for a complete build. To enable the FMOD backend, supply the FMOD Engine API separately and name each path it is made of:
 
 ```powershell
+$sdk = "C:/path/to/FMOD Studio API Windows"
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DWILLPOWER_ENABLE_FMOD=ON `
-  -DWILLPOWER_FMOD_ROOT="C:/path/to/FMOD Studio API Windows"
+  -DWILLPOWER_FMOD_CORE_INCLUDE="$sdk/api/core/inc" `
+  -DWILLPOWER_FMOD_STUDIO_INCLUDE="$sdk/api/studio/inc" `
+  -DWILLPOWER_FMOD_CORE_LIBRARY="$sdk/api/core/lib/x64/fmod_vc.lib" `
+  -DWILLPOWER_FMOD_STUDIO_LIBRARY="$sdk/api/studio/lib/x64/fmodstudio_vc.lib" `
+  -DWILLPOWER_FMOD_CORE_DLL="$sdk/api/core/lib/x64/fmod.dll" `
+  -DWILLPOWER_FMOD_STUDIO_DLL="$sdk/api/studio/lib/x64/fmodstudio.dll"
 ```
 
-FMOD cannot be distributed as a public Git submodule. The configured root must contain the standard `api/core` and `api/studio` SDK directories. Required runtime DLLs are staged beside test executables. FMOD support is currently available only on Windows.
+FMOD cannot be distributed as a public Git submodule. The paths are given individually rather than as a single root because the Engine API is not always laid out as the SDK installer leaves it — a project that vendors it into its own tree works just as well. Configuring with any of them missing lists exactly which. Required runtime DLLs are staged beside test executables. FMOD support is currently available only on Windows.
 
 ## Tests
 
