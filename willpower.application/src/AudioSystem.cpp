@@ -10,6 +10,22 @@
 #include <fmod_studio.hpp>
 #endif
 
+namespace {
+#if defined(WP_APPLICATION_USE_FMOD)
+FMOD_SPEAKERMODE toFmodSpeakerMode(wp::application::SpeakerMode mode) {
+  switch (mode) {
+    case wp::application::SpeakerMode::Stereo:
+      return FMOD_SPEAKERMODE_STEREO;
+    case wp::application::SpeakerMode::Surround5Point1:
+      return FMOD_SPEAKERMODE_5POINT1;
+    case wp::application::SpeakerMode::Default:
+      break;
+  }
+  return FMOD_SPEAKERMODE_DEFAULT;
+}
+#endif
+}  // namespace
+
 namespace WP_NAMESPACE {
 namespace application {
 
@@ -35,7 +51,7 @@ AudioSystem::AudioSystem(AudioOptions const& options)
   }
 
   // Set up system
-  res = coreSystem->setSoftwareFormat(0, FMOD_SPEAKERMODE_5POINT1, 0);
+  res = coreSystem->setSoftwareFormat(0, toFmodSpeakerMode(options.speakerMode), 0);
   if (res != FMOD_OK) {
     throw exception(FMOD_ErrorString(res));
   }
