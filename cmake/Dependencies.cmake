@@ -134,39 +134,37 @@ target_include_directories(vendor_headers INTERFACE
     "${WILLPOWER_EXT_DIR}/SplineLibrary")
 
 if(WILLPOWER_ENABLE_FMOD)
-    # FMOD also ships Linux and macOS SDKs; a future per-platform port would
-    # extend the find_* paths below (api/core/lib/linux, api/studio/lib/linux,
-    # ...). Until then the no-op audio default already covers non-Windows,
-    # so keep the explicit error.
-    if(NOT WIN32)
-        message(FATAL_ERROR "WILLPOWER_ENABLE_FMOD is supported on Windows only.")
-    endif()
     # FMOD is located by explicit paths rather than by a root directory. The
-    # official SDK installer's layout (api/core/inc, api/core/lib/x64, ...) is
-    # only one shape the Engine API appears in: a project that vendors it
-    # arranges the headers, import libraries and DLLs however it likes, so
-    # Willpower assumes no layout at all and asks for the six paths it uses.
+    # official SDK layout is only one shape the Engine API appears in, so a
+    # project-vendored SDK can be used without recreating that layout.
     set(WILLPOWER_FMOD_CORE_INCLUDE "" CACHE PATH
         "Directory containing fmod.hpp")
     set(WILLPOWER_FMOD_STUDIO_INCLUDE "" CACHE PATH
         "Directory containing fmod_studio.hpp")
     set(WILLPOWER_FMOD_CORE_LIBRARY "" CACHE FILEPATH
-        "FMOD core import library (fmod_vc.lib)")
+        "FMOD core link library (fmod_vc.lib on Windows or libfmod.so on Linux)")
     set(WILLPOWER_FMOD_STUDIO_LIBRARY "" CACHE FILEPATH
-        "FMOD Studio import library (fmodstudio_vc.lib)")
-    set(WILLPOWER_FMOD_CORE_DLL "" CACHE FILEPATH
-        "FMOD core runtime DLL (fmod.dll)")
-    set(WILLPOWER_FMOD_STUDIO_DLL "" CACHE FILEPATH
-        "FMOD Studio runtime DLL (fmodstudio.dll)")
+        "FMOD Studio link library (fmodstudio_vc.lib on Windows or libfmodstudio.so on Linux)")
 
-    set(_fmod_problems "")
-    foreach(_fmod_var
-            WILLPOWER_FMOD_CORE_INCLUDE
-            WILLPOWER_FMOD_STUDIO_INCLUDE
-            WILLPOWER_FMOD_CORE_LIBRARY
-            WILLPOWER_FMOD_STUDIO_LIBRARY
+    set(_fmod_required_paths
+        WILLPOWER_FMOD_CORE_INCLUDE
+        WILLPOWER_FMOD_STUDIO_INCLUDE
+        WILLPOWER_FMOD_CORE_LIBRARY
+        WILLPOWER_FMOD_STUDIO_LIBRARY)
+    if(WIN32)
+        # Windows has separate import libraries and runtime DLLs. On Linux the
+        # shared object supplied as *_LIBRARY serves both purposes.
+        set(WILLPOWER_FMOD_CORE_DLL "" CACHE FILEPATH
+            "FMOD core runtime DLL (fmod.dll)")
+        set(WILLPOWER_FMOD_STUDIO_DLL "" CACHE FILEPATH
+            "FMOD Studio runtime DLL (fmodstudio.dll)")
+        list(APPEND _fmod_required_paths
             WILLPOWER_FMOD_CORE_DLL
             WILLPOWER_FMOD_STUDIO_DLL)
+    endif()
+
+    set(_fmod_problems "")
+    foreach(_fmod_var IN LISTS _fmod_required_paths)
         if(NOT ${_fmod_var})
             string(APPEND _fmod_problems "  ${_fmod_var} is not set\n")
         elseif(NOT EXISTS "${${_fmod_var}}")
@@ -175,28 +173,47 @@ if(WILLPOWER_ENABLE_FMOD)
         endif()
     endforeach()
     if(_fmod_problems)
+        string(CONCAT _fmod_example
+            "  -DWILLPOWER_FMOD_CORE_INCLUDE=<sdk>/api/core/inc\n"
+            "  -DWILLPOWER_FMOD_STUDIO_INCLUDE=<sdk>/api/studio/inc\n")
+        if(WIN32)
+            string(APPEND _fmod_example
+                "  -DWILLPOWER_FMOD_CORE_LIBRARY=<sdk>/api/core/lib/x64/fmod_vc.lib\n"
+                "  -DWILLPOWER_FMOD_STUDIO_LIBRARY=<sdk>/api/studio/lib/x64/fmodstudio_vc.lib\n"
+                "  -DWILLPOWER_FMOD_CORE_DLL=<sdk>/api/core/lib/x64/fmod.dll\n"
+                "  -DWILLPOWER_FMOD_STUDIO_DLL=<sdk>/api/studio/lib/x64/fmodstudio.dll")
+        else()
+            string(APPEND _fmod_example
+                "  -DWILLPOWER_FMOD_CORE_LIBRARY=<sdk>/api/core/lib/x86_64/libfmod.so\n"
+                "  -DWILLPOWER_FMOD_STUDIO_LIBRARY=<sdk>/api/studio/lib/x86_64/libfmodstudio.so")
+        endif()
         message(FATAL_ERROR
             "WILLPOWER_ENABLE_FMOD needs the FMOD Engine API located explicitly:\n"
             "${_fmod_problems}"
-            "Point each variable at your FMOD tree, for example an official SDK "
-            "install:\n"
-            "  -DWILLPOWER_FMOD_CORE_INCLUDE=<sdk>/api/core/inc\n"
-            "  -DWILLPOWER_FMOD_STUDIO_INCLUDE=<sdk>/api/studio/inc\n"
-            "  -DWILLPOWER_FMOD_CORE_LIBRARY=<sdk>/api/core/lib/x64/fmod_vc.lib\n"
-            "  -DWILLPOWER_FMOD_STUDIO_LIBRARY=<sdk>/api/studio/lib/x64/fmodstudio_vc.lib\n"
-            "  -DWILLPOWER_FMOD_CORE_DLL=<sdk>/api/core/lib/x64/fmod.dll\n"
-            "  -DWILLPOWER_FMOD_STUDIO_DLL=<sdk>/api/studio/lib/x64/fmodstudio.dll")
+            "Point each variable at your FMOD tree, for example an official SDK install:\n"
+            "${_fmod_example}")
     endif()
+    unset(_fmod_example)
     unset(_fmod_problems)
+    unset(_fmod_required_paths)
 
     add_library(vendor::fmod SHARED IMPORTED GLOBAL)
-    set_target_properties(vendor::fmod PROPERTIES
-        IMPORTED_IMPLIB "${WILLPOWER_FMOD_CORE_LIBRARY}"
-        IMPORTED_LOCATION "${WILLPOWER_FMOD_CORE_DLL}"
-        INTERFACE_INCLUDE_DIRECTORIES "${WILLPOWER_FMOD_CORE_INCLUDE}")
     add_library(vendor::fmodstudio SHARED IMPORTED GLOBAL)
+    if(WIN32)
+        set_target_properties(vendor::fmod PROPERTIES
+            IMPORTED_IMPLIB "${WILLPOWER_FMOD_CORE_LIBRARY}"
+            IMPORTED_LOCATION "${WILLPOWER_FMOD_CORE_DLL}")
+        set_target_properties(vendor::fmodstudio PROPERTIES
+            IMPORTED_IMPLIB "${WILLPOWER_FMOD_STUDIO_LIBRARY}"
+            IMPORTED_LOCATION "${WILLPOWER_FMOD_STUDIO_DLL}")
+    else()
+        set_target_properties(vendor::fmod PROPERTIES
+            IMPORTED_LOCATION "${WILLPOWER_FMOD_CORE_LIBRARY}")
+        set_target_properties(vendor::fmodstudio PROPERTIES
+            IMPORTED_LOCATION "${WILLPOWER_FMOD_STUDIO_LIBRARY}")
+    endif()
+    set_target_properties(vendor::fmod PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${WILLPOWER_FMOD_CORE_INCLUDE}")
     set_target_properties(vendor::fmodstudio PROPERTIES
-        IMPORTED_IMPLIB "${WILLPOWER_FMOD_STUDIO_LIBRARY}"
-        IMPORTED_LOCATION "${WILLPOWER_FMOD_STUDIO_DLL}"
         INTERFACE_INCLUDE_DIRECTORIES "${WILLPOWER_FMOD_STUDIO_INCLUDE}")
 endif()

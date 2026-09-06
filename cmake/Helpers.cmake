@@ -108,7 +108,9 @@ function(willpower_copy_asan_runtime target)
 endfunction()
 
 function(willpower_deploy_vendor_dlls target)
-    if(NOT WILLPOWER_ENABLE_FMOD)
+    # Linux shared objects are found through CMake's build-tree RPATH. Only
+    # Windows needs the FMOD runtime binaries staged beside executables.
+    if(NOT WILLPOWER_ENABLE_FMOD OR NOT WIN32)
         return()
     endif()
 
