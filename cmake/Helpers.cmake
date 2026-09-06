@@ -38,7 +38,7 @@ function(willpower_target_defaults target)
         DEBUG_POSTFIX "d")
     if(MSVC)
         set_target_properties(${target} PROPERTIES
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:Debug>DLL"
+            MSVC_RUNTIME_LIBRARY "${WILLPOWER_MSVC_RUNTIME_LIBRARY}"
             # CMake's default DebugInformationFormat only recognises the literal
             # "Debug" config (among the ones Willpower uses); MemCheck needs it
             # set explicitly too or ASan builds emit no PDB (MSVC warning C5072)

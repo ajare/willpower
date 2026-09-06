@@ -142,7 +142,9 @@ CC=clang CXX=clang++ cmake -S . -B build-clang -DCMAKE_BUILD_TYPE=Release
 cmake --build build-clang --parallel
 ```
 
-Use `-DCMAKE_BUILD_TYPE=Debug` for a debug build.
+Use `-DCMAKE_BUILD_TYPE=Debug` for a debug build. Use
+`-DCMAKE_BUILD_TYPE=Shipping` for maximum Release optimisations; on Windows,
+Shipping also statically links the Visual C++ runtime.
 
 ### Windows
 
@@ -153,7 +155,9 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Debug --parallel
 ```
 
-Use `--config Release` for a release build.
+Use `--config Release` for a release build, or `--config Shipping` for maximum
+Release optimisations and a statically linked Visual C++ runtime. Shipping
+executables therefore do not require the Visual C++ Redistributable.
 
 Build outputs are placed under:
 
