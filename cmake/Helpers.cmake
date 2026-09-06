@@ -108,17 +108,31 @@ function(willpower_copy_asan_runtime target)
 endfunction()
 
 function(willpower_deploy_vendor_dlls target)
-    # Linux shared objects are found through CMake's build-tree RPATH. Only
-    # Windows needs the FMOD runtime binaries staged beside executables.
-    if(NOT WILLPOWER_ENABLE_FMOD OR NOT WIN32)
+    if(NOT WILLPOWER_ENABLE_FMOD)
         return()
     endif()
 
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:vendor::fmod>"
-                "$<TARGET_FILE:vendor::fmodstudio>"
-                "$<TARGET_FILE_DIR:${target}>"
-        COMMAND_EXPAND_LISTS VERBATIM
-        COMMENT "Staging FMOD runtime DLLs for ${target}")
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:vendor::fmod>"
+                    "$<TARGET_FILE:vendor::fmodstudio>"
+                    "$<TARGET_FILE_DIR:${target}>"
+            COMMAND_EXPAND_LISTS VERBATIM
+            COMMENT "Staging FMOD runtime DLLs for ${target}")
+    else()
+        # Copy each SDK library directory so the versioned SONAME files travel
+        # with the unversioned linker names (for example libfmod.so.14).
+        get_filename_component(_fmod_core_dir
+                               "${WILLPOWER_FMOD_CORE_LIBRARY}" DIRECTORY)
+        get_filename_component(_fmod_studio_dir
+                               "${WILLPOWER_FMOD_STUDIO_LIBRARY}" DIRECTORY)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${_fmod_core_dir}" "$<TARGET_FILE_DIR:${target}>"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${_fmod_studio_dir}" "$<TARGET_FILE_DIR:${target}>"
+            VERBATIM
+            COMMENT "Staging FMOD runtime shared objects for ${target}")
+    endif()
 endfunction()
