@@ -2,12 +2,28 @@ cmake_minimum_required(VERSION 3.25)
 
 project(Willpower VERSION 0.1.0 LANGUAGES CXX)
 
+# Shipping uses CMake's maximum-speed Release compiler and linker flags.
+# Defining every standard per-configuration flag also makes the configuration
+# work with single-config generators such as Ninja.
+set(CMAKE_CXX_FLAGS_SHIPPING
+    "${CMAKE_CXX_FLAGS_RELEASE}"
+    CACHE STRING "Flags used by the C++ compiler for Shipping builds" FORCE)
+foreach(WILLPOWER_SHIPPING_LINKER EXE SHARED MODULE)
+    set(CMAKE_${WILLPOWER_SHIPPING_LINKER}_LINKER_FLAGS_SHIPPING
+        "${CMAKE_${WILLPOWER_SHIPPING_LINKER}_LINKER_FLAGS_RELEASE}"
+        CACHE STRING "Flags used by the ${WILLPOWER_SHIPPING_LINKER} linker for Shipping builds" FORCE)
+    mark_as_advanced(CMAKE_${WILLPOWER_SHIPPING_LINKER}_LINKER_FLAGS_SHIPPING)
+endforeach()
+unset(WILLPOWER_SHIPPING_LINKER)
+mark_as_advanced(CMAKE_CXX_FLAGS_SHIPPING)
+set(CMAKE_MAP_IMPORTED_CONFIG_SHIPPING Release)
+
 # Keep the documented no-options configure command usable with single-config
 # generators. MPP's output layout includes the configuration name, so an empty
 # CMAKE_BUILD_TYPE cannot be mapped to an imported library path.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel Shipping)
 endif()
 
 if(CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -15,7 +31,7 @@ if(CMAKE_SIZEOF_VOID_P AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 if(MSVC AND CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_CONFIGURATION_TYPES "Debug;Release;MemCheck" CACHE STRING "" FORCE)
+    set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Shipping;MemCheck" CACHE STRING "" FORCE)
 
     # MemCheck is a Debug variant instrumented with MSVC AddressSanitizer,
     # matching the MemCheck configuration already built by the
@@ -51,6 +67,17 @@ if(MSVC AND CMAKE_CONFIGURATION_TYPES)
     if(NOT EXISTS "${WILLPOWER_ASAN_DLL}")
         message(WARNING "Could not find the MSVC ASan runtime DLL at ${WILLPOWER_ASAN_DLL}; MemCheck executables may fail to start.")
     endif()
+endif()
+
+# Match MassivePolyPusher's runtime selection: developer configurations use
+# the DLL CRT, while Shipping uses the static release CRT so applications do
+# not require the Visual C++ Redistributable. Set this before creating any
+# targets so Willpower and its source-built dependencies agree.
+set(WILLPOWER_MSVC_RUNTIME_LIBRARY
+    "MultiThreaded$<$<OR:$<CONFIG:Debug>,$<CONFIG:MemCheck>>:Debug>$<$<NOT:$<CONFIG:Shipping>>:DLL>")
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "${WILLPOWER_MSVC_RUNTIME_LIBRARY}" CACHE STRING
+        "MSVC runtime library used by Willpower and its dependencies" FORCE)
 endif()
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

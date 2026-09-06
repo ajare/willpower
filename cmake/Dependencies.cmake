@@ -54,14 +54,17 @@ function(willpower_import_mpp target stem)
     add_library(${target} SHARED IMPORTED GLOBAL)
     if(WIN32)
         set_target_properties(${target} PROPERTIES
-            IMPORTED_CONFIGURATIONS "Debug;Release;MemCheck"
+            IMPORTED_CONFIGURATIONS "Debug;Release;Shipping;MemCheck"
+            MAP_IMPORTED_CONFIG_SHIPPING "Shipping;Release"
             IMPORTED_IMPLIB_RELEASE "${_mpp_lib}/Release/${stem}.lib"
+            IMPORTED_IMPLIB_SHIPPING "${_mpp_lib}/Shipping/${stem}.lib"
             IMPORTED_IMPLIB_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
             # MemCheck is a Debug variant, but DEBUG_POSTFIX only applies to a
             # config literally named "Debug" (see massive-poly-pusher and utils
             # CMakeLists.txt), so its artifacts keep the bare stem name.
             IMPORTED_IMPLIB_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
             IMPORTED_LOCATION_RELEASE "${_mpp_bin}/Release/${stem}.dll"
+            IMPORTED_LOCATION_SHIPPING "${_mpp_bin}/Shipping/${stem}.dll"
             IMPORTED_LOCATION_DEBUG "${_mpp_bin}/Debug/${stem}d.dll"
             IMPORTED_LOCATION_MEMCHECK "${_mpp_bin}/MemCheck/${stem}.dll"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
