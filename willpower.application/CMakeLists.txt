@@ -77,7 +77,7 @@ if(BUILD_TESTING)
     set_target_properties(willpower_application_resource_yaml_tests PROPERTIES FOLDER Willpower)
     willpower_deploy_runtime_dlls(willpower_application_resource_yaml_tests)
     willpower_deploy_vendor_dlls(willpower_application_resource_yaml_tests)
-    add_test(NAME willpower_application_resource_yaml
+    willpower_add_test(NAME willpower_application_resource_yaml
         COMMAND willpower_application_resource_yaml_tests
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml")
 
@@ -91,7 +91,7 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_application_resource_definition_tests)
     willpower_deploy_vendor_dlls(willpower_application_resource_definition_tests)
     foreach(scenario specialized-before-default idempotent-scan duplicate-default construct-destroy-reconstruct overlapping-construction)
-        add_test(NAME willpower_application_resource_definition_${scenario}
+        willpower_add_test(NAME willpower_application_resource_definition_${scenario}
             COMMAND willpower_application_resource_definition_tests ${scenario})
     endforeach()
 
@@ -104,7 +104,7 @@ if(BUILD_TESTING)
     set_target_properties(willpower_application_input_state_manager_tests PROPERTIES FOLDER Willpower)
     willpower_deploy_runtime_dlls(willpower_application_input_state_manager_tests)
     willpower_deploy_vendor_dlls(willpower_application_input_state_manager_tests)
-    add_test(NAME willpower_application_input_state_manager
+    willpower_add_test(NAME willpower_application_input_state_manager
         COMMAND willpower_application_input_state_manager_tests)
 
     add_executable(willpower_application_scheduler_tests
@@ -116,7 +116,7 @@ if(BUILD_TESTING)
     set_target_properties(willpower_application_scheduler_tests PROPERTIES FOLDER Willpower)
     willpower_deploy_runtime_dlls(willpower_application_scheduler_tests)
     willpower_deploy_vendor_dlls(willpower_application_scheduler_tests)
-    add_test(NAME willpower_application_scheduler
+    willpower_add_test(NAME willpower_application_scheduler
         COMMAND willpower_application_scheduler_tests)
 
     add_executable(willpower_application_resource_dependency_tests
@@ -129,7 +129,7 @@ if(BUILD_TESTING)
     willpower_deploy_runtime_dlls(willpower_application_resource_dependency_tests)
     willpower_deploy_vendor_dlls(willpower_application_resource_dependency_tests)
     foreach(scenario cycle missing-namespace missing-resource cross-location)
-        add_test(NAME willpower_application_resource_dependency_${scenario}
+        willpower_add_test(NAME willpower_application_resource_dependency_${scenario}
             COMMAND willpower_application_resource_dependency_tests ${scenario})
     endforeach()
 
@@ -142,6 +142,6 @@ if(BUILD_TESTING)
     set_target_properties(willpower_application_resource_release_tests PROPERTIES FOLDER Willpower)
     willpower_deploy_runtime_dlls(willpower_application_resource_release_tests)
     willpower_deploy_vendor_dlls(willpower_application_resource_release_tests)
-    add_test(NAME willpower_application_resource_release
+    willpower_add_test(NAME willpower_application_resource_release
         COMMAND willpower_application_resource_release_tests)
 endif()

@@ -19,6 +19,20 @@ function(willpower_add_header_filter target)
     endforeach()
 endfunction()
 
+# Register a test with SDL's assertion handler in non-interactive mode. SDL
+# writes the assertion to stderr before aborting, so CTest still records the
+# process as failed and exposes the diagnostic without opening a modal dialog.
+function(willpower_add_test)
+    cmake_parse_arguments(PARSE_ARGV 0 test "" "NAME" "")
+    if(NOT test_NAME)
+        message(FATAL_ERROR "willpower_add_test requires NAME")
+    endif()
+
+    add_test(${ARGN})
+    set_tests_properties(${test_NAME} PROPERTIES
+        ENVIRONMENT "SDL_ASSERT=abort")
+endfunction()
+
 function(willpower_target_defaults target)
     set_target_properties(${target} PROPERTIES
         DEBUG_POSTFIX "d")

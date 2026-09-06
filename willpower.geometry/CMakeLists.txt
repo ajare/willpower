@@ -58,6 +58,6 @@ if(BUILD_TESTING)
                     "${msvc_bin_dir}/clang_rt.asan_dynamic-x86_64.dll"
                     "$<TARGET_FILE_DIR:willpower_geometry_mesh_assignment_tests>")
     endif()
-    add_test(NAME willpower_geometry_mesh_assignment
+    willpower_add_test(NAME willpower_geometry_mesh_assignment
              COMMAND willpower_geometry_mesh_assignment_tests)
 endif()

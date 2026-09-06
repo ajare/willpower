@@ -191,11 +191,12 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-On Windows, specify the selected multi-config configuration:
+On Windows, specify the selected multi-config configuration and disable
+interactive system-debug dialogs so crashes cannot block unattended runs:
 
 ```powershell
 cmake --build build --config Debug --parallel
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --interactive-debug-mode 0 --output-on-failure
 ```
 
 The suite covers acceleration-grid set operations, removal of legacy geometry helpers, static-line clipping, scheduling, input state, and YAML resource manifests. Test data is self-contained under `willpower.application/tests/data`; no parent project or external resource tree is required.
