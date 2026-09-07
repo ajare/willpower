@@ -2,30 +2,30 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <string_view>
-
-#include "EmbeddedResourceManifestSchemas.h"
+#include <utility>
 
 namespace wp::application::resourcesystem {
 namespace {
-using detail::EmbeddedSchemaRecord;
-
 ResourceManifestValidator::SchemaKey const manifestSchemaKey{"ResourceManifest", ""};
 constexpr std::size_t maximumValidationFailures = 100;
 
-EmbeddedSchemaRecord const* findSchema(ResourceManifestValidator::SchemaKey const& key) {
-  auto const schemas = detail::embeddedResourceManifestSchemas();
-  auto found = std::find_if(schemas.begin(), schemas.end(), [&](auto const& schema) {
-    return schema.resourceType == key.resourceType && schema.factoryType == key.factoryType;
-  });
-  // A specialized factory without a schema deliberately falls back to the
-  // Resource Type schema. This keeps the key/API ready for later registration.
-  if (found == schemas.end() && !key.factoryType.empty()) {
-    found = std::find_if(schemas.begin(), schemas.end(), [&](auto const& schema) {
-      return schema.resourceType == key.resourceType && schema.factoryType.empty();
-    });
+ResourceSchemaCatalogSnapshot builtInCatalog() {
+  static auto const catalog = ResourceSchemaCatalog::builtIn().snapshot();
+  return catalog;
+}
+
+ResourceSchema const* findSchema(ResourceSchemaCatalogSnapshot const& catalog,
+                                 ResourceManifestValidator::SchemaKey const& key) {
+  if (key == manifestSchemaKey) {
+    auto const found = std::find_if(catalog.entries().begin(), catalog.entries().end(),
+                                    [](auto const& schema) {
+                                      return schema.kind == ResourceSchemaKind::manifest;
+                                    });
+    return found == catalog.entries().end() ? nullptr : &*found;
   }
-  return found == schemas.end() ? nullptr : &*found;
+  return catalog.find(key);
 }
 
 std::vector<std::string> pointerTokens(std::string const& pointer) {
@@ -84,8 +84,13 @@ void addResourceIdentity(utils::YamlReader const& reader,
 }
 }  // namespace
 
+ResourceManifestValidator::ResourceManifestValidator() : mCatalog(builtInCatalog()) {}
+
+ResourceManifestValidator::ResourceManifestValidator(ResourceSchemaCatalogSnapshot catalog)
+    : mCatalog(std::move(catalog)) {}
+
 bool ResourceManifestValidator::contains(SchemaKey const& key) const {
-  return findSchema(key) != nullptr;
+  return findSchema(mCatalog, key) != nullptr;
 }
 
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
@@ -96,19 +101,22 @@ std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::valid
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
     utils::YamlReader const& reader, std::string const& manifestPath,
     SchemaKey const& key) const {
-  auto const* root = findSchema(key);
+  auto const* root = findSchema(mCatalog, key);
   if (!root) return {};
 
   std::vector<utils::JsonSchemaDocument> catalog;
-  for (auto const& schema : detail::embeddedResourceManifestSchemas()) {
-    catalog.push_back({std::string(schema.id), std::string(schema.source)});
+  std::set<std::string> addedIds;
+  for (auto const& schema : mCatalog.entries()) {
+    if (addedIds.insert(schema.schemaId).second) {
+      catalog.push_back({schema.schemaId, schema.contents});
+    }
   }
 
   std::vector<Failure> failures;
   // Bound diagnostics defensively so hostile manifests cannot produce an
   // unbounded exception while still aggregating ordinary authoring errors.
   for (auto const& failure : reader.validateJsonSchema(
-           std::string(root->source), catalog, maximumValidationFailures)) {
+           root->contents, catalog, maximumValidationFailures)) {
     Failure result{manifestPath, key.resourceType, key.factoryType, "", "",
                    failure.instancePath, failure.message, failure.line, failure.column};
     addResourceIdentity(reader, result);

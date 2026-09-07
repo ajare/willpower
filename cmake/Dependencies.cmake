@@ -21,6 +21,27 @@ if(NOT willpower_valijson_POPULATED)
     endif()
 endif()
 
+# ResourceSchemaCatalog parses untrusted bundle metadata privately. Pin the
+# same header-only JSON implementation used by Utils without exposing it from
+# Willpower.Application's public include directories.
+FetchContent_Declare(willpower_nlohmann_json
+    URL "https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.tar.gz"
+    URL_HASH "SHA256=0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406"
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_GetProperties(willpower_nlohmann_json)
+if(NOT willpower_nlohmann_json_POPULATED)
+    if(POLICY CMP0169)
+        cmake_policy(PUSH)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(willpower_nlohmann_json)
+    if(POLICY CMP0169)
+        cmake_policy(POP)
+    endif()
+endif()
+set(WILLPOWER_NLOHMANN_JSON_INCLUDE_DIR
+    "${willpower_nlohmann_json_SOURCE_DIR}/single_include")
+
 set(WILLPOWER_EXT_DIR "${PROJECT_SOURCE_DIR}/ext")
 set(WILLPOWER_MPP_SOURCE_DIR "${WILLPOWER_EXT_DIR}/massive-poly-pusher")
 set(WILLPOWER_MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/massive-poly-pusher-build")
@@ -54,6 +75,7 @@ ExternalProject_Add(willpower_mpp_external
         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
         "-DCMAKE_BUILD_TYPE=$<CONFIG>"
         "-DUTILS_VALIJSON_SOURCE_DIR=${willpower_valijson_SOURCE_DIR}"
+        "-DFETCHCONTENT_SOURCE_DIR_UTILS_NLOHMANN_JSON=${willpower_nlohmann_json_SOURCE_DIR}"
     BUILD_COMMAND
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG> --parallel
         --target MassivePolyPusher MppMesh MppHelper MppProgram MppData Utils glew

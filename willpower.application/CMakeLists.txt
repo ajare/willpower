@@ -21,29 +21,15 @@ set(WILLPOWER_BUILTIN_SCHEMA_RECORDS
     "resourceType|Program||https://schemas.willpower.dev/resource-manifest/program.schema.json|program.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
     "resourceType|Material||https://schemas.willpower.dev/resource-manifest/material.schema.json|material.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
 
-set(WILLPOWER_SCHEMA_RECORDS "")
+set(WILLPOWER_SCHEMA_RECORDS ${WILLPOWER_BUILTIN_SCHEMA_RECORDS})
 set(WILLPOWER_SCHEMA_INPUTS "")
 foreach(_record IN LISTS WILLPOWER_BUILTIN_SCHEMA_RECORDS)
     string(REPLACE "|" ";" _fields "${_record}")
-    list(GET _fields 0 _kind)
-    list(GET _fields 1 _resource_type)
-    list(GET _fields 2 _factory_type)
-    list(GET _fields 3 _schema_id)
     list(GET _fields 5 _schema_path)
-    # The manifest is the root used by the runtime validator.
-    if(_kind STREQUAL "manifest")
-        set(_resource_type ResourceManifest)
-    endif()
-    list(APPEND WILLPOWER_SCHEMA_RECORDS
-        "${_resource_type}|${_factory_type}|${_schema_id}|${_schema_path}")
     list(APPEND WILLPOWER_SCHEMA_INPUTS "${_schema_path}")
 endforeach()
 unset(_record)
 unset(_fields)
-unset(_kind)
-unset(_resource_type)
-unset(_factory_type)
-unset(_schema_id)
 unset(_schema_path)
 
 set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR
@@ -79,16 +65,6 @@ install(DIRECTORY "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/"
     COMPONENT Willpower_Application
     PATTERN "generated.stamp" EXCLUDE)
 
-# Focused fixtures continue to exercise runtime catalog behavior independently
-# of the production Resource Manifest schemas and are never exported.
-if(BUILD_TESTING)
-    list(APPEND WILLPOWER_SCHEMA_RECORDS
-        "Infrastructure||https://schemas.willpower.test/infrastructure.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
-        "||https://schemas.willpower.test/infrastructure-types.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure-types.schema.json")
-    list(APPEND WILLPOWER_SCHEMA_INPUTS
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure-types.schema.json")
-endif()
 add_custom_command(
     OUTPUT "${WILLPOWER_EMBEDDED_SCHEMA_HEADER}" "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
     COMMAND "${CMAKE_COMMAND}"
@@ -139,6 +115,7 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/ResourceDefinitionFactory.cpp
     src/resourcesystem/ResourceLocation.cpp
     src/resourcesystem/ResourceManager.cpp
+    src/resourcesystem/ResourceSchemaCatalog.cpp
     src/resourcesystem/ResourceManifestValidator.cpp
     src/resourcesystem/ResourceManifestValidator.h
     src/resourcesystem/ShaderDefaultDefinitionFactory.cpp
@@ -154,7 +131,8 @@ add_library(Willpower.Application SHARED
 
 target_include_directories(Willpower.Application
     PUBLIC include
-    PRIVATE "${WILLPOWER_EMBEDDED_SCHEMA_DIR}")
+    PRIVATE "${WILLPOWER_EMBEDDED_SCHEMA_DIR}"
+            "${WILLPOWER_NLOHMANN_JSON_INCLUDE_DIR}")
 willpower_add_header_filter(Willpower.Application)
 
 target_compile_definitions(Willpower.Application
@@ -189,13 +167,9 @@ if(BUILD_TESTING)
             -P "${PROJECT_SOURCE_DIR}/cmake/VerifyResourceSchemaBundle.cmake")
 
     add_executable(willpower_application_schema_catalog_tests
-        tests/schema_catalog_tests.cpp
-        src/resourcesystem/ResourceManifestValidator.cpp
-        "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}")
+        tests/schema_catalog_tests.cpp)
     target_compile_features(willpower_application_schema_catalog_tests PRIVATE cxx_std_20)
-    target_include_directories(willpower_application_schema_catalog_tests PRIVATE
-        src/resourcesystem "${WILLPOWER_EMBEDDED_SCHEMA_DIR}")
-    target_link_libraries(willpower_application_schema_catalog_tests PRIVATE ext::Utils)
+    target_link_libraries(willpower_application_schema_catalog_tests PRIVATE Willpower.Application)
     willpower_target_defaults(willpower_application_schema_catalog_tests)
     willpower_output_dirs(willpower_application_schema_catalog_tests)
     set_target_properties(willpower_application_schema_catalog_tests PROPERTIES FOLDER Willpower)

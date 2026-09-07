@@ -226,6 +226,13 @@ stable schema ID, and SHA-256 digest. The complete format, offline-resolution ru
 lookup fallback, and compatibility policy are specified in
 [`docs/specifications/resource-schema-bundle.md`](docs/specifications/resource-schema-bundle.md).
 
+C++ clients can use the public
+`willpower/application/resourcesystem/ResourceSchemaCatalog.h` API to start with the
+embedded built-in bundle, merge validated in-memory or filesystem bundles, perform exact
+or default-factory lookup, and export a deterministic merged bundle. Catalog mutation is
+explicit; `snapshot()` returns immutable owned data, so validation or export can proceed
+while other code prepares a later catalog update.
+
 The schemas preserve the loader's compatibility forms:
 
 - `Resource`, `Namespace`, options, dependencies, Definitions, and nested collections

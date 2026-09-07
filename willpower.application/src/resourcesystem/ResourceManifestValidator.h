@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "utils/YamlReader.h"
+#include "willpower/application/resourcesystem/ResourceSchemaCatalog.h"
 
 namespace wp::application::resourcesystem {
 
@@ -12,10 +13,7 @@ namespace wp::application::resourcesystem {
 // becoming part of Willpower.Application's exported ABI.
 class ResourceManifestValidator {
  public:
-  struct SchemaKey {
-    std::string resourceType;
-    std::string factoryType;
-  };
+  using SchemaKey = ResourceSchemaKey;
 
   struct Failure {
     std::string manifestPath;
@@ -29,12 +27,18 @@ class ResourceManifestValidator {
     int column = 0;
   };
 
+  ResourceManifestValidator();
+  explicit ResourceManifestValidator(ResourceSchemaCatalogSnapshot catalog);
+
   [[nodiscard]] bool contains(SchemaKey const& key) const;
   [[nodiscard]] std::vector<Failure> validate(
       utils::YamlReader const& reader, std::string const& manifestPath) const;
   [[nodiscard]] std::vector<Failure> validate(
       utils::YamlReader const& reader, std::string const& manifestPath,
       SchemaKey const& key) const;
+
+ private:
+  ResourceSchemaCatalogSnapshot mCatalog;
 };
 
 }  // namespace wp::application::resourcesystem
