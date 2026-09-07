@@ -29,14 +29,14 @@ Options:
   -h, --help                      Show this help
 
 New work is ordered by priority labels critical/P0, high/P1, medium/P2,
-low/P3, or priority:<number>, and then by issue number. Tickets assigned to the
+low/P3, or priority:<number>, and then by issue number. Priority and difficulty
+namespace labels accept either ':' or '/'. Tickets assigned to the
 current user are resumed first. Issues referenced by another ticket's
 "## Parent" section and issues with open native GitHub blockers are skipped.
 
-Adaptive model and effort accepts exactly one of difficulty:trivial,
-difficulty:small (or :low), difficulty:medium, or difficulty:large (or
-:high/:hard). Pi selects between GPT-5.6 Terra and Sol; Claude selects between
-Sonnet and Opus.
+Adaptive model and effort accepts exactly one supported difficulty value using
+':' or '/', such as difficulty:medium or difficulty/medium. Pi selects between
+GPT-5.6 Terra and Sol; Claude selects between Sonnet and Opus.
 
 If an agent exits successfully without closing its ticket, the loop starts a
 new attempt with the original request and a recovery prompt pointing to the
@@ -167,15 +167,15 @@ priority_of_labels() {
     local labels_json=$1 name number rank=100
     while IFS= read -r name; do
         name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | xargs)
-        if [[ $name =~ ^(priority:[[:space:]]*)?(critical|urgent|p0)$ ]]; then
+        if [[ $name =~ ^(priority[:/][[:space:]]*)?(critical|urgent|p0)$ ]]; then
             number=0
-        elif [[ $name =~ ^(priority:[[:space:]]*)?(high|p1)$ ]]; then
+        elif [[ $name =~ ^(priority[:/][[:space:]]*)?(high|p1)$ ]]; then
             number=1
-        elif [[ $name =~ ^(priority:[[:space:]]*)?(medium|normal|p2)$ ]]; then
+        elif [[ $name =~ ^(priority[:/][[:space:]]*)?(medium|normal|p2)$ ]]; then
             number=2
-        elif [[ $name =~ ^(priority:[[:space:]]*)?(low|p3)$ ]]; then
+        elif [[ $name =~ ^(priority[:/][[:space:]]*)?(low|p3)$ ]]; then
             number=3
-        elif [[ $name =~ ^priority:[[:space:]]*([0-9]+)$ ]]; then
+        elif [[ $name =~ ^priority[:/][[:space:]]*([0-9]+)$ ]]; then
             number=${BASH_REMATCH[1]}
         else
             continue
@@ -227,7 +227,7 @@ select_adaptive() {
     local labels_json=$1 label value values=" " count=0
     while IFS= read -r label; do
         label=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' | xargs)
-        if [[ $label =~ ^difficulty:[[:space:]]*(trivial|small|low|medium|large|high|hard)$ ]]; then
+        if [[ $label =~ ^difficulty[:/][[:space:]]*(trivial|small|low|medium|large|high|hard)$ ]]; then
             value=${BASH_REMATCH[1]}
             if [[ $values != *" $value "* ]]; then
                 values+="$value "
@@ -236,13 +236,15 @@ select_adaptive() {
             fi
         fi
     done < <(jq -r '.[].name' <<<"$labels_json")
-    ((count > 0)) || die "Adaptive model and effort requires one of: difficulty:trivial, difficulty:small, difficulty:low, difficulty:medium, difficulty:large, difficulty:high, or difficulty:hard."
+    ((count > 0)) || die "Adaptive model and effort requires one supported difficulty label using ':' or '/', for example difficulty:medium or difficulty/medium."
     ((count == 1)) || die "Adaptive model and effort found conflicting difficulty labels:${values}."
 
     get_model_pair "$agent"
     case "$difficulty" in
-        trivial|small|low|medium) ticket_model=$smaller_model; ticket_effort=medium ;;
-        large|high|hard) ticket_model=$larger_model; ticket_effort=medium ;;
+        trivial) ticket_model=$smaller_model; ticket_effort=medium ;;
+        small|low) ticket_model=$smaller_model; ticket_effort=high ;;
+        medium) ticket_model=$larger_model; ticket_effort=medium ;;
+        large|high|hard) ticket_model=$larger_model; ticket_effort=high ;;
     esac
 }
 

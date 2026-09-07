@@ -8,7 +8,7 @@ Selects open issues carrying the ready-for-agent label, excludes issues with
 open native GitHub blockers, and resumes tickets already assigned to the
 current user before claiming new work. New work is ordered by priority labels
 (critical/P0, high/P1, medium/P2, low/P3, or priority:<number>) and then issue
-number. Issues referenced by another ticket's "## Parent" section are treated
+number. Priority and difficulty namespace labels accept either `:` or `/`. Issues referenced by another ticket's "## Parent" section are treated
 as specs/maps rather than executable tickets.
 
 The agent is chosen with the mandatory -Agent parameter and runs in
@@ -211,6 +211,23 @@ function Invoke-Gh {
     return ($output -join [Environment]::NewLine)
 }
 
+function Invoke-GitQuiet {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    # Windows PowerShell turns ordinary native stderr (including git's
+    # successful "Switched to..." messages) into error records when stderr is
+    # merged while ErrorActionPreference is Stop. Probe the exit code with
+    # native output suppressed under Continue, then restore the caller's mode.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & git @Arguments *> $null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Get-Priority {
     param([object[]]$Labels)
 
@@ -218,11 +235,11 @@ function Get-Priority {
     foreach ($label in $Labels) {
         $name = ([string]$label.name).ToLowerInvariant().Trim()
         switch -Regex ($name) {
-            '^(priority:\s*)?(critical|urgent|p0)$' { $rank = [Math]::Min($rank, 0); continue }
-            '^(priority:\s*)?(high|p1)$'            { $rank = [Math]::Min($rank, 1); continue }
-            '^(priority:\s*)?(medium|normal|p2)$'  { $rank = [Math]::Min($rank, 2); continue }
-            '^(priority:\s*)?(low|p3)$'            { $rank = [Math]::Min($rank, 3); continue }
-            '^priority:\s*(\d+)$'                  { $rank = [Math]::Min($rank, [int]$Matches[1]); continue }
+            '^(priority[:/]\s*)?(critical|urgent|p0)$' { $rank = [Math]::Min($rank, 0); continue }
+            '^(priority[:/]\s*)?(high|p1)$'            { $rank = [Math]::Min($rank, 1); continue }
+            '^(priority[:/]\s*)?(medium|normal|p2)$'  { $rank = [Math]::Min($rank, 2); continue }
+            '^(priority[:/]\s*)?(low|p3)$'            { $rank = [Math]::Min($rank, 3); continue }
+            '^priority[:/]\s*(\d+)$'                  { $rank = [Math]::Min($rank, [int]$Matches[1]); continue }
         }
     }
     return $rank
@@ -266,13 +283,13 @@ function Get-AdaptiveModelAndEffort {
 
     $difficultyLabels = @($Labels | ForEach-Object {
         $name = ([string]$_.name).ToLowerInvariant().Trim()
-        if ($name -match '^difficulty:\s*(trivial|small|low|medium|large|high|hard)$') {
+        if ($name -match '^difficulty[:/]\s*(trivial|small|low|medium|large|high|hard)$') {
             $Matches[1]
         }
     } | Select-Object -Unique)
 
     if ($difficultyLabels.Count -eq 0) {
-        throw "Adaptive model and effort requires one of: difficulty:trivial, difficulty:small, difficulty:low, difficulty:medium, difficulty:large, difficulty:high, or difficulty:hard."
+        throw "Adaptive model and effort requires one supported difficulty label using ':' or '/', for example difficulty:medium or difficulty/medium."
     }
     if ($difficultyLabels.Count -gt 1) {
         throw "Adaptive model and effort found conflicting difficulty labels: $($difficultyLabels -join ', ')."
@@ -285,13 +302,13 @@ function Get-AdaptiveModelAndEffort {
             return [pscustomobject]@{ Difficulty = "trivial"; Model = $models.Smaller; Effort = "medium" }
         }
         { $_ -in @("small", "low") } {
-            return [pscustomobject]@{ Difficulty = $_; Model = $models.Smaller; Effort = "medium" }
+            return [pscustomobject]@{ Difficulty = $_; Model = $models.Smaller; Effort = "high" }
         }
         "medium" {
-            return [pscustomobject]@{ Difficulty = "medium"; Model = $models.Smaller; Effort = "medium" }
+            return [pscustomobject]@{ Difficulty = "medium"; Model = $models.Larger; Effort = "medium" }
         }
         { $_ -in @("large", "high", "hard") } {
-            return [pscustomobject]@{ Difficulty = $_; Model = $models.Larger; Effort = "medium" }
+            return [pscustomobject]@{ Difficulty = $_; Model = $models.Larger; Effort = "high" }
         }
         default {
             throw "Unsupported difficulty label '$($difficultyLabels[0])'."
@@ -787,18 +804,14 @@ if ($initialTrackedChanges.Count -gt 0) {
 if ($UseBranch) {
     $currentBranch = (& git rev-parse --abbrev-ref HEAD).Trim()
     if ($currentBranch -ne $UseBranch) {
-        & git rev-parse --verify --quiet "refs/heads/$UseBranch" *> $null
-        if ($LASTEXITCODE -eq 0) {
-            & git checkout $UseBranch 2>&1 | Out-Null
+        if ((Invoke-GitQuiet @("rev-parse", "--verify", "--quiet", "refs/heads/$UseBranch")) -eq 0) {
+            $checkoutResult = Invoke-GitQuiet @("checkout", $UseBranch)
+        } elseif ((Invoke-GitQuiet @("ls-remote", "--exit-code", "--heads", "origin", $UseBranch)) -eq 0) {
+            $checkoutResult = Invoke-GitQuiet @("checkout", "-b", $UseBranch, "--track", "origin/$UseBranch")
         } else {
-            & git ls-remote --exit-code --heads origin $UseBranch *> $null
-            if ($LASTEXITCODE -eq 0) {
-                & git checkout -b $UseBranch --track "origin/$UseBranch" 2>&1 | Out-Null
-            } else {
-                & git checkout -b $UseBranch 2>&1 | Out-Null
-            }
+            $checkoutResult = Invoke-GitQuiet @("checkout", "-b", $UseBranch)
         }
-        if ($LASTEXITCODE -ne 0) {
+        if ($checkoutResult -ne 0) {
             throw "Failed to check out branch '$UseBranch'."
         }
         Write-Status "Switched to branch '$UseBranch'."
