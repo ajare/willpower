@@ -435,6 +435,20 @@ function Write-Status {
     }
 }
 
+function Remove-TerminalControlSequences {
+    param([AllowEmptyString()][Parameter(Mandatory = $true)][string]$Text)
+
+    # Agents can emit terminal teardown commands on stderr even in print mode.
+    # Never replay cursor movement, screen switching, or other control codes in
+    # the parent terminal or preserve them in the attempt log.
+    return $Text `
+        -replace '\x1B\][^\x07]*(?:\x07|\x1B\\)', '' `
+        -replace '\x1B[PX^_].*?\x1B\\', '' `
+        -replace '\x1B\[[0-?]*[ -/]*[@-~]', '' `
+        -replace '\x1B[@-_]', '' `
+        -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ''
+}
+
 function Get-NumericProperty {
     param(
         [object]$Object,
@@ -909,16 +923,20 @@ while ($true) {
         try {
             $output = [System.Collections.Generic.List[string]]::new()
             & $Agent @agentArguments 2>&1 |
-                Tee-Object -FilePath $logPath -Append |
                 ForEach-Object {
                     # Emit each line as it arrives instead of handing the host one
                     # screen-sized string after the agent exits. Splitting bare carriage
                     # returns also turns progress-style redraws into scrolling lines.
                     foreach ($line in ([string]$_ -split "`r`n|`n|`r")) {
-                        [void]$output.Add($line)
-                        if (-not $Quiet) {
-                            Write-Host $line
-                        }
+                        Remove-TerminalControlSequences $line
+                    }
+                } |
+                Tee-Object -FilePath $logPath -Append |
+                ForEach-Object {
+                    $line = [string]$_
+                    [void]$output.Add($line)
+                    if (-not $Quiet) {
+                        Write-Host $line
                     }
                 }
             $agentExitCode = $LASTEXITCODE

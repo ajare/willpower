@@ -111,6 +111,28 @@ verbose_status() { $verbose && printf '%s\n' "$*"; return 0; }
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'Warning: %s\n' "$*" >&2; }
 
+strip_terminal_control_sequences() {
+    # Agents can emit terminal teardown commands on stderr even in print mode.
+    # Remove CSI commands and standalone controls before logging or displaying
+    # output so they cannot move the cursor or switch the parent terminal.
+    awk '
+        BEGIN {
+            esc = sprintf("%c", 27)
+            bel = sprintf("%c", 7)
+            backspace = sprintf("%c", 8)
+            carriage_return = sprintf("%c", 13)
+        }
+        {
+            gsub(esc "\\[[0-?]*[ -/]*[@-~]", "")
+            gsub(esc "[@-_]", "")
+            gsub(bel, "")
+            gsub(backspace, "")
+            gsub(carriage_return, "")
+            print
+        }
+    '
+}
+
 for command_name in gh git jq curl; do
     command -v "$command_name" >/dev/null 2>&1 || die "$command_name is required but was not found on PATH."
 done
@@ -474,9 +496,9 @@ while true; do
 
         set +e
         if $quiet; then
-            "$agent" "${agent_args[@]}" 2>&1 | tee -a "$log_path" >/dev/null
+            "$agent" "${agent_args[@]}" 2>&1 | strip_terminal_control_sequences | tee -a "$log_path" >/dev/null
         else
-            "$agent" "${agent_args[@]}" 2>&1 | tee -a "$log_path"
+            "$agent" "${agent_args[@]}" 2>&1 | strip_terminal_control_sequences | tee -a "$log_path"
         fi
         agent_exit=${PIPESTATUS[0]}
         output_text=$(<"$log_path")
