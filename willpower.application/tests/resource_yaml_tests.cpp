@@ -150,6 +150,116 @@ void verifyCommonSchema(fs::path const& root, wp::Logger& logger) {
   throw std::runtime_error("Semantic validation no longer rejects missing source files.");
 }
 
+void verifySourceBackedSchemas(fs::path const& root, wp::Logger& logger) {
+  std::vector<std::string> const types{"TextFile", "XmlFile", "Shader", "AudioBank", "Image"};
+
+  // Each Resource Type is valid as a singleton, infers its name from location,
+  // and may carry an empty default Definition. None of these source paths
+  // exists: scan-time schema validation must not open or decode source assets.
+  for (auto const& type : types) {
+    auto const caseRoot = root / ("valid-" + type);
+    std::string option;
+    if (type == "Image") {
+      option = "    Option:\n      name: mipmaps\n      value: true\n";
+    }
+    writeFile(caseRoot / "Resources.yaml",
+              "Resources:\n  Resource:\n    type: " + type +
+                  "\n    location: missing/" + type + ".asset\n" + option +
+                  "    Definitions:\n      Definition: {}\n");
+    DirectoryResourceLocation location(&logger, caseRoot.string(), "Resources.yaml");
+    location.scan();
+    require(location.getNamespaceRecords().at("").resourceRecords.contains(
+                "missing/" + type + ".asset"),
+            type + " did not infer its Resource name from location.");
+  }
+
+  // Exercise the sequence form together with every Image option. A quoted
+  // compatible boolean is intentionally distinct from the native boolean
+  // exercised above.
+  auto const sequenceRoot = root / "valid-sequence";
+  writeFile(sequenceRoot / "Resources.yaml", R"(Resources:
+  Resource:
+    - type: TextFile
+      location: absent.txt
+    - type: XmlFile
+      location: malformed.xml
+    - type: Shader
+      location: invalid.shader
+    - type: AudioBank
+      location: invalid.bank
+      Definitions:
+        Definition:
+          factory: PluginFactory
+          pluginPayload: accepted
+    - type: Image
+      location: undecodable.image
+      Option:
+        - name: filtering
+          value: linear
+        - name: uv-style
+          value: atlas
+        - name: colour-space
+          value: linear
+        - name: wrapping
+          value: repeat
+        - name: mipmaps
+          value: "NO"
+)");
+  DirectoryResourceLocation sequence(&logger, sequenceRoot.string(), "Resources.yaml");
+  sequence.scan();
+  require(sequence.getNamespaceRecords().at("").resourceRecords.size() == types.size(),
+          "The source-backed Resource sequence did not load every declaration.");
+
+  struct InvalidCase {
+    std::string label;
+    std::string body;
+    std::string expectedPath;
+  };
+  for (auto const& type : types) {
+    std::vector<InvalidCase> cases{
+        {"missing-location", "    name: MissingLocation\n", "/Resources/Resource"},
+        {"unknown-field", "    name: UnknownField\n    location: source.asset\n    unknown: rejected\n",
+         "/Resources/Resource"},
+        {"invalid-option", "    name: InvalidOption\n    location: source.asset\n    Option:\n"
+                           "      name: unsupported\n      value: rejected\n",
+         "/Resources/Resource/Option"},
+        {"null", "    name: NullLocation\n    location: null\n", "/Resources/Resource/location"},
+        {"malformed-definition",
+         "    name: MalformedDefinition\n    location: source.asset\n    Definitions:\n"
+         "      Definition:\n        payload: rejected\n",
+         "/Resources/Resource/Definitions"}};
+    if (type == "Image") {
+      cases.push_back({"unsupported-option-value",
+                       "    name: InvalidFiltering\n    location: source.asset\n    Option:\n"
+                       "      name: filtering\n      value: nearest\n",
+                       "/Resources/Resource/Option"});
+      cases.push_back({"null-option-value",
+                       "    name: NullOption\n    location: source.asset\n    Option:\n"
+                       "      name: mipmaps\n      value: null\n",
+                       "/Resources/Resource/Option"});
+    }
+
+    for (auto const& invalid : cases) {
+      auto const caseRoot = root / ("invalid-" + type + '-' + invalid.label);
+      writeFile(caseRoot / "Resources.yaml",
+                "Resources:\n  Resource:\n    type: " + type + "\n" + invalid.body);
+      DirectoryResourceLocation location(&logger, caseRoot.string(), "Resources.yaml");
+      auto const message = expectInvalidScan(location);
+      require(message.find(invalid.expectedPath) != std::string::npos,
+              type + " diagnostic omitted instance path " + invalid.expectedPath + ": " + message);
+      auto const identity = invalid.body.find("name: ");
+      if (identity != std::string::npos) {
+        auto const begin = identity + 6;
+        auto const end = invalid.body.find('\n', begin);
+        require(message.find(invalid.body.substr(begin, end - begin)) != std::string::npos,
+                type + " diagnostic omitted the Resource identity: " + message);
+      }
+      require(location.getNamespaceRecords().empty(),
+              type + " published records after schema validation failed.");
+    }
+  }
+}
+
 void verifyAtomicRescan(fs::path const& root, wp::Logger& logger) {
   auto const atomicRoot = root / "atomic";
   auto const manifest = atomicRoot / "Resources.yaml";
@@ -211,6 +321,7 @@ int main(int argc, char** argv) {
     wp::Logger logger;
     verifyExistingFixture(fs::absolute(argv[1]), logger);
     verifyCommonSchema(temporaryRoot, logger);
+    verifySourceBackedSchemas(temporaryRoot, logger);
     verifyAtomicRescan(temporaryRoot, logger);
 
     fs::remove_all(temporaryRoot);

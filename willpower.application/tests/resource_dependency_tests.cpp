@@ -46,12 +46,12 @@ void configureDirectoryFactory(ResourceManager& manager, wp::Logger& logger) {
 void testCycle(fs::path const& root, wp::Logger& logger) {
   writeFile(root / "Resources.yaml", R"(Resources:
   Resource:
-    - type: "TextFile"
+    - type: "ImageSet"
       name: "A"
       DependentResources:
         DependentResource:
           ref: "B"
-    - type: "TextFile"
+    - type: "ImageSet"
       name: "B"
       DependentResources:
         DependentResource:
@@ -67,7 +67,7 @@ void testCycle(fs::path const& root, wp::Logger& logger) {
 void testMissingNamespace(fs::path const& root, wp::Logger& logger) {
   writeFile(root / "Resources.yaml", R"(Resources:
   Resource:
-    type: "TextFile"
+    type: "ImageSet"
     name: "Consumer"
     DependentResources:
       DependentResource:
@@ -84,7 +84,7 @@ void testMissingResource(fs::path const& root, wp::Logger& logger) {
   writeFile(root / "existing.txt", "existing");
   writeFile(root / "Resources.yaml", R"(Resources:
   Resource:
-    type: "TextFile"
+    type: "ImageSet"
     name: "Consumer"
     DependentResources:
       DependentResource:
@@ -108,7 +108,7 @@ void testCrossLocation(fs::path const& root, wp::Logger& logger) {
   auto providerLocation = root / "provider";
   writeFile(consumerLocation / "Resources.yaml", R"(Resources:
   Resource:
-    type: "TextFile"
+    type: "ImageSet"
     name: "Consumer"
     DependentResources:
       DependentResource:
