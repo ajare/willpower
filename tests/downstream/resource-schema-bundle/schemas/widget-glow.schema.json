@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.example.test/widget-glow.schema.json",
+  "title": "Widget GlowFactory Definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["factory", "intensity"],
+  "properties": {
+    "factory": { "enum": ["GlowFactory"] },
+    "intensity": { "type": "number", "exclusiveMinimum": 0 }
+  }
+}

@@ -233,6 +233,57 @@ or default-factory lookup, and export a deterministic merged bundle. Catalog mut
 explicit; `snapshot()` returns immutable owned data, so validation or export can proceed
 while other code prepares a later catalog update.
 
+### Application-specific Resource Schema Bundles
+
+Downstream CMake projects can compose their own schemas with the complete built-in
+catalog. `add_subdirectory(<willpower-source>)` loads `ResourceSchemas.cmake`
+automatically. Schema-only consumers can add either `<willpower-source>/cmake` or the
+installed `<prefix>/<datadir>/willpower/cmake` directory to `CMAKE_MODULE_PATH` and call
+`include(ResourceSchemas)`. Declare one default Resource declaration schema and any
+specialized Definition schemas, then create the bundle:
+
+```cmake
+# Needed only when Willpower was not added as a subdirectory:
+# list(APPEND CMAKE_MODULE_PATH "/path/to/willpower/cmake")
+# include(ResourceSchemas)
+
+willpower_declare_resource_schema(
+    RESOURCE_TYPE Widget
+    SCHEMA_ID "https://schemas.example.com/widget.schema.json"
+    SOURCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/schemas/widget.schema.json")
+willpower_declare_resource_schema(
+    RESOURCE_TYPE Widget
+    FACTORY_TYPE GlowFactory
+    SCHEMA_ID "https://schemas.example.com/widget-glow.schema.json"
+    SOURCE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/schemas/widget-glow.schema.json")
+
+willpower_compose_resource_schema_bundle(
+    TARGET my_application_resource_schemas
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/resource-schema-bundle"
+    ROOT_SCHEMA_ID "https://schemas.example.com/resource-manifest.schema.json"
+    INSTALL_DESTINATION "share/my-application/resource-schema-bundle")
+```
+
+`BUILTIN_BUNDLE <directory>` may be passed to the compose function when the installed
+or current build-tree bundle cannot be discovered automatically. The generated target
+is part of the default build, and `<target>_BUNDLE_DIR` is returned to the caller. It
+reruns when a declared schema, declaration metadata, the built-in catalog, or any
+built-in schema changes.
+
+Every declared document must be a JSON object with a matching absolute `$id` and
+`$schema: http://json-schema.org/draft-07/schema#`. A declaration without
+`FACTORY_TYPE` validates the complete Resource declaration. A declaration with
+`FACTORY_TYPE` validates that specialized `Definitions/Definition` object. The
+composed root selects the exact specialized schema, uses generic Definition validation
+for an unregistered factory, and excludes every registered Resource Type from the
+unknown-type fallback. Configuration or generation rejects duplicate keys, conflicting
+schema IDs, unsafe metadata, malformed documents, and references that cannot be
+resolved wholly within the resulting bundle. Output is deterministic and self-contained.
+
+The fixture in [`tests/downstream/resource-schema-bundle`](tests/downstream/resource-schema-bundle)
+defines a custom `Resource` subclass plus default and specialized schemas and validates
+the generated root with the project's Draft 7 validator.
+
 The schemas preserve the loader's compatibility forms:
 
 - `Resource`, `Namespace`, options, dependencies, Definitions, and nested collections

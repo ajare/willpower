@@ -1,3 +1,5 @@
+include(ResourceSchemas)
+
 set(WILLPOWER_EMBEDDED_SCHEMA_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(WILLPOWER_EMBEDDED_SCHEMA_HEADER
     "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.h")
@@ -31,11 +33,15 @@ endforeach()
 unset(_record)
 unset(_fields)
 unset(_schema_path)
+set_property(GLOBAL PROPERTY WILLPOWER_BUILTIN_RESOURCE_SCHEMA_INPUTS
+    "${WILLPOWER_SCHEMA_INPUTS}")
 
 set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR
     "${CMAKE_CURRENT_BINARY_DIR}/resource-schema-bundle")
 set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_STAMP
     "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/generated.stamp")
+set_property(GLOBAL PROPERTY WILLPOWER_BUILTIN_RESOURCE_SCHEMA_BUNDLE_DIR
+    "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}")
 set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE
     "${CMAKE_CURRENT_BINARY_DIR}/ResourceSchemaBundleRecords.cmake")
 file(WRITE "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}" "set(RECORDS\n")
@@ -64,6 +70,12 @@ install(DIRECTORY "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/willpower/resource-schema-bundle"
     COMPONENT Willpower_Application
     PATTERN "generated.stamp" EXCLUDE)
+install(FILES
+    "${PROJECT_SOURCE_DIR}/cmake/ResourceSchemas.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/ComposeResourceSchemaBundle.cmake"
+    "${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/willpower/cmake"
+    COMPONENT Willpower_Application)
 
 add_custom_command(
     OUTPUT "${WILLPOWER_EMBEDDED_SCHEMA_HEADER}" "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
