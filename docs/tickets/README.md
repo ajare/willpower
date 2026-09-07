@@ -1,6 +1,8 @@
-# Tickets — Willpower.Application cross-platform (Linux first)
+# Tickets
 
-Source of truth: [`PLAN.md`](../PLAN.md). Goal: make `Willpower.Application` (and its
+## Willpower.Application cross-platform initiative (Linux first)
+
+Source of truth: [`PLAN.md`](../../PLAN.md). Goal: make `Willpower.Application` (and its
 prerequisite `Willpower.Common`) build and pass tests on Linux (Ubuntu 22.04+, GCC 12+
 and Clang 15+) while keeping the Windows/MSVC build green throughout.
 
@@ -59,3 +61,29 @@ All tickets are published as GitHub issues on [`ajare/willpower`](https://github
 - **Warning flood:** `/W4` → `-Wall -Wextra` will surface new warnings in
   Common/Application on GCC/Clang; budget time to fix (or selectively suppress) without
   changing behaviour (WP-004, WP-011).
+
+---
+
+## Resource Manifest schema-validation initiative
+
+Source of truth: [`resource-manifest-schema-validation.md`](../specifications/resource-manifest-schema-validation.md).
+Goal: validate every YAML Resource Manifest during `ResourceLocation::scan()` and
+`rescan()`, before conversion to `StructuredData` or publication of resource records.
+This work supports, but does not block on, [issue #24](https://github.com/ajare/willpower/issues/24)
+for a Resource Manifest Editor.
+
+| Ticket | Issue | Phase | Priority | Difficulty | Title | Blocked by | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [WP-025](WP-025.md) | [#25](https://github.com/ajare/willpower/issues/25) | Infrastructure | P1 | medium | Add Valijson and an embedded schema catalog | — | open |
+| [WP-026](WP-026.md) | [#26](https://github.com/ajare/willpower/issues/26) | Loader integration | P1 | hard | Validate Resource Manifests atomically during scan/rescan | WP-025 | open |
+| [WP-027](WP-027.md) | [#27](https://github.com/ajare/willpower/issues/27) | Built-in schemas | P1 | medium | Source-backed Resource Type schemas | WP-025, WP-026 | open |
+| [WP-028](WP-028.md) | [#28](https://github.com/ajare/willpower/issues/28) | Built-in schemas | P1 | hard | ImageSet and AnimationSet schemas | WP-025, WP-026 | open |
+| [WP-029](WP-029.md) | [#29](https://github.com/ajare/willpower/issues/29) | Built-in schemas | P1 | hard | Program and Material schemas | WP-025, WP-026 | open |
+| [WP-030](WP-030.md) | [#30](https://github.com/ajare/willpower/issues/30) | Verification & docs | P1 | medium | Regression suite and documentation | WP-026–WP-029 | open |
+
+### Suggested execution order
+
+1. WP-025 establishes raw-YAML validation, embedding, and the schema catalog.
+2. WP-026 integrates common validation and atomic state publication into the loader.
+3. WP-027, WP-028, and WP-029 can then proceed in parallel.
+4. WP-030 is the end-to-end acceptance and documentation gate.

@@ -7,15 +7,19 @@ work remains.
 Selects open issues carrying the ready-for-agent label, excludes issues with
 open native GitHub blockers, and resumes tickets already assigned to the
 current user before claiming new work. New work is ordered by priority labels
-(P0, P1, P2, and so on) and then issue number. The labels may optionally use
-the priority/ namespace. Issues referenced by another ticket's "## Parent"
-section are treated as specs/maps rather than executable tickets.
+(critical/P0, high/P1, medium/P2, low/P3, or priority:<number>) and then issue
+number. Issues referenced by another ticket's "## Parent" section are treated
+as specs/maps rather than executable tickets.
 
 The agent is chosen with the mandatory -Agent parameter and runs in
 non-interactive print mode. Provider failures use capped exponential backoff;
-usage-limit failures poll at ten-minute intervals by default. After each
-completed ticket the loop reports its ISO 8601 start and end timestamps,
-duration, and total token usage across every retry attempt. Where the provider
+usage-limit failures poll at ten-minute intervals by default. If an agent exits
+successfully without closing its ticket, the loop starts another attempt with
+the original request plus a recovery prompt pointing to the previous attempt's
+log. The agent is told to inspect and resolve the issue recorded there rather
+than merely repeating it. After each completed ticket the loop reports its ISO
+8601 start and end timestamps, duration, and total token usage across every
+retry attempt. Where the provider
 exposes it, the loop also reports current-window and weekly usage. Logs and
 sessions are written below the system temporary directory, in pi-ralph-loop or
 claude-ralph-loop according to the agent.
@@ -54,12 +58,11 @@ Selects the model and effort from the ticket's difficulty label. The bigger
 model of the pair handles the harder tickets, and effort rises within each
 model:
 
-  difficulty/trivial            smaller model, medium effort
-  difficulty/easy               smaller model, medium effort
-  difficulty/medium             smaller model, medium effort
-  difficulty/hard               larger model, medium effort
-
-Bare difficulty values are accepted as well.
+  difficulty:trivial            smaller model, medium effort
+  difficulty:small (or :low)    smaller model, high effort
+  difficulty:medium             larger model, medium effort
+  difficulty:large (or :high/:hard)
+                                larger model, high effort
 
 For pi the pair is GPT-5.6 Terra and Sol; for claude it is Sonnet and Opus.
 The script stops if an eligible ticket has no supported difficulty label or
@@ -71,6 +74,15 @@ from the current checkout's origin remote.
 
 .PARAMETER ReadyLabel
 Label used to identify executable tickets. Defaults to ready-for-agent.
+
+.PARAMETER Labels
+Additional labels a ticket must carry, on top of ReadyLabel, to be eligible.
+Repeat the parameter or pass a comma-separated list.
+
+.PARAMETER UseBranch
+Branch to run the loop against. If it exists locally or on the remote it is
+checked out; otherwise it is created from the current HEAD. When omitted, the
+loop runs on whatever branch is already checked out.
 
 .PARAMETER InitialRetryIntervalSeconds
 Initial delay after a retryable provider or server failure. Defaults to 30.
@@ -145,6 +157,13 @@ Shows the next eligible ticket in an explicit repository without claiming or
 running it.
 
 .EXAMPLE
+.\tools\ralph-loop.ps1 -Agent pi -AdaptiveModelAndEffort -Labels "feature:editor-3d-preview" -UseBranch feature/editor-3d-preview
+
+Runs only tickets also labeled feature:editor-3d-preview, on the
+feature/editor-3d-preview branch (created from the current HEAD if it doesn't
+already exist).
+
+.EXAMPLE
 .\tools\ralph-loop.ps1 -InitialRetryIntervalSeconds 15 -MaxRetryIntervalSeconds 300 -UsagePollSeconds 900
 
 Overrides provider-failure backoff and usage-limit polling intervals.
@@ -169,6 +188,8 @@ param(
 
     [string]$Repo = "",
     [string]$ReadyLabel = "ready-for-agent",
+    [string[]]$Labels = @(),
+    [string]$UseBranch = "",
     [int]$InitialRetryIntervalSeconds = 30,
     [int]$MaxRetryIntervalSeconds = 900,
     [int]$UsagePollSeconds = 600,
@@ -196,8 +217,12 @@ function Get-Priority {
     $rank = 100
     foreach ($label in $Labels) {
         $name = ([string]$label.name).ToLowerInvariant().Trim()
-        if ($name -match '^(?:priority[/:]\s*)?p(\d+)$') {
-            $rank = [Math]::Min($rank, [int]$Matches[1])
+        switch -Regex ($name) {
+            '^(priority:\s*)?(critical|urgent|p0)$' { $rank = [Math]::Min($rank, 0); continue }
+            '^(priority:\s*)?(high|p1)$'            { $rank = [Math]::Min($rank, 1); continue }
+            '^(priority:\s*)?(medium|normal|p2)$'  { $rank = [Math]::Min($rank, 2); continue }
+            '^(priority:\s*)?(low|p3)$'            { $rank = [Math]::Min($rank, 3); continue }
+            '^priority:\s*(\d+)$'                  { $rank = [Math]::Min($rank, [int]$Matches[1]); continue }
         }
     }
     return $rank
@@ -241,13 +266,13 @@ function Get-AdaptiveModelAndEffort {
 
     $difficultyLabels = @($Labels | ForEach-Object {
         $name = ([string]$_.name).ToLowerInvariant().Trim()
-        if ($name -match '^(?:difficulty[/:]\s*)?(trivial|easy|medium|hard)$') {
+        if ($name -match '^difficulty:\s*(trivial|small|low|medium|large|high|hard)$') {
             $Matches[1]
         }
     } | Select-Object -Unique)
 
     if ($difficultyLabels.Count -eq 0) {
-        throw "Adaptive model and effort requires one of: difficulty/trivial, difficulty/easy, difficulty/medium, or difficulty/hard."
+        throw "Adaptive model and effort requires one of: difficulty:trivial, difficulty:small, difficulty:low, difficulty:medium, difficulty:large, difficulty:high, or difficulty:hard."
     }
     if ($difficultyLabels.Count -gt 1) {
         throw "Adaptive model and effort found conflicting difficulty labels: $($difficultyLabels -join ', ')."
@@ -259,14 +284,14 @@ function Get-AdaptiveModelAndEffort {
         "trivial" {
             return [pscustomobject]@{ Difficulty = "trivial"; Model = $models.Smaller; Effort = "medium" }
         }
-        "easy" {
-            return [pscustomobject]@{ Difficulty = "easy"; Model = $models.Smaller; Effort = "medium" }
+        { $_ -in @("small", "low") } {
+            return [pscustomobject]@{ Difficulty = $_; Model = $models.Smaller; Effort = "medium" }
         }
         "medium" {
             return [pscustomobject]@{ Difficulty = "medium"; Model = $models.Smaller; Effort = "medium" }
         }
-        "hard" {
-            return [pscustomobject]@{ Difficulty = "hard"; Model = $models.Larger; Effort = "medium" }
+        { $_ -in @("large", "high", "hard") } {
+            return [pscustomobject]@{ Difficulty = $_; Model = $models.Larger; Effort = "medium" }
         }
         default {
             throw "Unsupported difficulty label '$($difficultyLabels[0])'."
@@ -278,14 +303,22 @@ function Get-NextTicket {
     param(
         [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string]$Label,
+        [string[]]$ExtraLabels = @(),
         [Parameter(Mandatory = $true)][string]$CurrentUser
     )
 
-    $json = Invoke-Gh @(
+    $listArguments = @(
         "issue", "list", "--repo", $Repository,
-        "--state", "open", "--label", $Label, "--limit", "100",
+        "--state", "open", "--label", $Label
+    )
+    foreach ($extraLabel in $ExtraLabels) {
+        $listArguments += @("--label", $extraLabel)
+    }
+    $listArguments += @(
+        "--limit", "100",
         "--json", "number,title,body,labels,assignees,url"
     )
+    $json = Invoke-Gh $listArguments
     $issues = $json | ConvertFrom-Json
     if ($issues.Count -eq 0) {
         return $null
@@ -751,6 +784,27 @@ if ($initialTrackedChanges.Count -gt 0) {
     throw "The tracked worktree is not clean. Commit or restore tracked changes before starting the loop."
 }
 
+if ($UseBranch) {
+    $currentBranch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    if ($currentBranch -ne $UseBranch) {
+        & git rev-parse --verify --quiet "refs/heads/$UseBranch" *> $null
+        if ($LASTEXITCODE -eq 0) {
+            & git checkout $UseBranch 2>&1 | Out-Null
+        } else {
+            & git ls-remote --exit-code --heads origin $UseBranch *> $null
+            if ($LASTEXITCODE -eq 0) {
+                & git checkout -b $UseBranch --track "origin/$UseBranch" 2>&1 | Out-Null
+            } else {
+                & git checkout -b $UseBranch 2>&1 | Out-Null
+            }
+        }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to check out branch '$UseBranch'."
+        }
+        Write-Status "Switched to branch '$UseBranch'."
+    }
+}
+
 if (-not $Repo) {
     $Repo = (Invoke-Gh @("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")).Trim()
 }
@@ -759,7 +813,7 @@ $logDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "$Agent-ralph-loop"
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 
 while ($true) {
-    $ticket = Get-NextTicket -Repository $Repo -Label $ReadyLabel -CurrentUser $currentUser
+    $ticket = Get-NextTicket -Repository $Repo -Label $ReadyLabel -ExtraLabels $Labels -CurrentUser $currentUser
     if ($null -eq $ticket) {
         Write-Status "No unblocked, unclaimed '$ReadyLabel' tickets are available."
         break
@@ -799,7 +853,8 @@ while ($true) {
     Write-Status "Ticket #$number started at $($ticketStartedAt.ToString('o'))."
 
     $startingHead = (& git rev-parse HEAD).Trim()
-    $prompt = Get-TicketPrompt -Repository $Repo -Number $number
+    $originalPrompt = Get-TicketPrompt -Repository $Repo -Number $number
+    $prompt = $originalPrompt
     $retryInterval = $InitialRetryIntervalSeconds
     $attempt = 0
 
@@ -857,7 +912,11 @@ while ($true) {
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
         }
-        $outputText = $output -join [Environment]::NewLine
+        $outputText = if (Test-Path $logPath) {
+            Get-Content -Path $logPath -Raw
+        } else {
+            $output -join [Environment]::NewLine
+        }
 
         # A provider can fail after the agent has already committed and closed.
         if (Test-TicketComplete -Repository $Repo -Number $number -StartingHead $startingHead) {
@@ -866,7 +925,25 @@ while ($true) {
         }
 
         if ($agentExitCode -eq 0) {
-            throw "$Agent exited successfully, but #$number was not closed with a new commit and clean tracked worktree. Inspect $logPath."
+            Write-Warning "$Agent exited successfully without completing #$number. Starting a recovery attempt using $logPath."
+            $prompt = @"
+$originalPrompt
+
+## Recovery attempt
+
+A previous agent attempt exited successfully without closing ticket #$number.
+Inspect the previous attempt log at:
+
+$logPath
+
+Determine why that attempt did not complete the original request, then resolve
+the issue recorded in the log and finish the original ticket. Continue from the
+current worktree and repository state. Do not merely repeat the previous
+explanation or stop after describing the blocker; try to resolve it and carry
+the original request through implementation, verification, commit, and issue
+closure.
+"@
+            continue
         }
 
         if (Test-UsageLimitError $outputText) {
