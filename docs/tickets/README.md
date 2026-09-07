@@ -87,3 +87,30 @@ for a Resource Manifest Editor.
 2. WP-026 integrates common validation and atomic state publication into the loader.
 3. WP-027, WP-028, and WP-029 can then proceed in parallel.
 4. WP-030 is the end-to-end acceptance and documentation gate.
+
+---
+
+## Resource schema export initiative
+
+Goal: distribute the built-in Resource Type schemas as a portable Resource Schema Bundle,
+allow downstream applications to compose and export schemas for their own Resource
+subclasses, and make the same catalog available to runtime validation and external tools.
+Static bundles are the interoperability contract; native schema plugins are optional.
+
+| Ticket | Issue | Phase | Priority | Difficulty | Title | Blocked by | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [WP-031](WP-031.md) | [#31](https://github.com/ajare/willpower/issues/31) | Bundle contract | P1 | medium | Define the bundle format and package built-in schemas | — | open |
+| [WP-032](WP-032.md) | [#32](https://github.com/ajare/willpower/issues/32) | Catalog API | P1 | hard | Add a public Resource Schema Catalog API | WP-031 | open |
+| [WP-033](WP-033.md) | [#33](https://github.com/ajare/willpower/issues/33) | Build integration | P1 | hard | Compose downstream application schema bundles | WP-031 | open |
+| [WP-034](WP-034.md) | [#34](https://github.com/ajare/willpower/issues/34) | Runtime integration | P1 | hard | Validate custom Resource Types from the catalog | WP-032 | open |
+| [WP-035](WP-035.md) | [#35](https://github.com/ajare/willpower/issues/35) | Tooling | P1 | medium | Export and compose Resource Schema Bundles | WP-032, WP-033 | open |
+| [WP-036](WP-036.md) | [#36](https://github.com/ajare/willpower/issues/36) | Dynamic discovery | P2 | hard | Add an optional C ABI for schema plugins | WP-031, WP-032 | open |
+| [WP-037](WP-037.md) | [#37](https://github.com/ajare/willpower/issues/37) | Verification & docs | P1 | medium | Integration tests and documentation | WP-033–WP-035 | open |
+
+### Suggested execution order
+
+1. WP-031 fixes the portable bundle contract and exports the built-in catalog.
+2. WP-032 and WP-033 can then implement the public catalog and downstream build integration in parallel.
+3. WP-034 integrates custom schemas into runtime validation; WP-035 adds export tooling after the catalog and composition APIs exist.
+4. WP-037 is the end-to-end acceptance and documentation gate.
+5. WP-036 is optional P2 work and can proceed after WP-032 without blocking static bundle support.

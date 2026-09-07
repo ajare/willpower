@@ -16,8 +16,12 @@ _Avoid_: Entry, item
 The registered kind of a Resource, such as `Image`, which determines its parameters and allowed values.
 _Avoid_: Resource name, factory type
 
+**Resource Schema Bundle**:
+A versioned, language-neutral package containing Resource Type schemas, their local dependencies, and catalog metadata for resource-manifest validation and tooling.
+_Avoid_: Schema dump, Resource plugin
+
 **Resource Type Plugin**:
-A dynamically loaded library that exposes one Resource Type's parameters and allowed values to resource-manifest tooling.
+A dynamically loaded library that exposes one or more Resource Type schemas to resource-manifest tooling as a Resource Schema Bundle.
 _Avoid_: ResourceFactory DLL, factory plugin
 
 **Resource Manifest Editor**:
