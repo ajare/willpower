@@ -2,29 +2,29 @@
 setlocal EnableExtensions DisableDelayedExpansion
 
 set "WITH_MPP_LFS=false"
-set "BUILD_TYPE=Release"
-set "BUILD_DIR=build"
+set "CONFIG=Release"
+set "BUILD_DIR=build-windows"
 
 :parse_args
 if "%~1"=="" goto args_done
-if /i "%~1"=="--with-mpp-lfs" (
+if /i "%~1"=="/with-mpp-lfs" (
     set "WITH_MPP_LFS=true"
     shift
     goto parse_args
 )
-if /i "%~1"=="--build-type" (
+if /i "%~1"=="/config" (
     if "%~2"=="" (
-        set "ERROR_MESSAGE=--build-type requires a value"
+        set "ERROR_MESSAGE=/config requires a value"
         goto fatal
     )
-    set "BUILD_TYPE=%~2"
+    set "CONFIG=%~2"
     shift
     shift
     goto parse_args
 )
-if /i "%~1"=="--build-dir" (
+if /i "%~1"=="/build-dir" (
     if "%~2"=="" (
-        set "ERROR_MESSAGE=--build-dir requires a value"
+        set "ERROR_MESSAGE=/build-dir requires a value"
         goto fatal
     )
     set "BUILD_DIR=%~2"
@@ -32,9 +32,9 @@ if /i "%~1"=="--build-dir" (
     shift
     goto parse_args
 )
-if /i "%~1"=="-h" goto usage_success
-if /i "%~1"=="--help" goto usage_success
-set "ERROR_MESSAGE=unknown option: %~1 (run with --help for usage)"
+if /i "%~1"=="/?" goto usage_success
+if /i "%~1"=="/help" goto usage_success
+set "ERROR_MESSAGE=unknown option: %~1 (run with /? for usage)"
 goto fatal
 
 :args_done
@@ -149,15 +149,15 @@ if exist "%MPP_DIR%\build" (
     goto fatal
 )
 
-echo Configuring %BUILD_TYPE% build in %BUILD_DIR%...
-cmake -S "%ROOT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE="%BUILD_TYPE%"
+echo Configuring %CONFIG% build in %BUILD_DIR%...
+cmake -S "%ROOT_DIR%" -B "%BUILD_DIR%" -DCMAKE_BUILD_TYPE="%CONFIG%"
 if errorlevel 1 (
     set "ERROR_MESSAGE=CMake configuration failed"
     goto fatal
 )
 
 echo Building Willpower and dependencies...
-cmake --build "%BUILD_DIR%" --config "%BUILD_TYPE%" --parallel
+cmake --build "%BUILD_DIR%" --config "%CONFIG%" --parallel
 if errorlevel 1 (
     set "ERROR_MESSAGE=build failed"
     goto fatal
@@ -172,7 +172,7 @@ call :usage
 exit /b 0
 
 :missing_lfs
->&2 echo error: --with-mpp-lfs requires Git LFS, but 'git lfs' is not installed.
+>&2 echo error: /with-mpp-lfs requires Git LFS, but 'git lfs' is not installed.
 >&2 echo.
 >&2 echo Install Git LFS, then run this script again:
 >&2 echo   winget install GitHub.GitLFS
@@ -186,11 +186,11 @@ echo.
 echo Configure and build Willpower and its required dependencies from scratch.
 echo.
 echo Options:
-echo   --with-mpp-lfs       Download MassivePolyPusher's Git LFS files.
-echo   --build-type TYPE    CMake build type ^(default: Release^).
-echo   --build-dir DIR      Build directory, relative to the repository root unless
-echo                        absolute ^(default: build^).
-echo   -h, --help           Show this help.
+echo   /with-mpp-lfs       Download MassivePolyPusher's Git LFS files.
+echo   /config CONFIG      CMake build configuration ^(default: Release^).
+echo   /build-dir DIR      Build directory, relative to the repository root unless
+echo                       absolute ^(default: build-windows^).
+echo(  /?, /help           Show this help.
 echo.
 echo Environment:
 echo   CC, CXX               Select the C and C++ compilers during configuration.

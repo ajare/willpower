@@ -10,9 +10,9 @@ Configure and build Willpower and its required dependencies from scratch.
 
 Options:
   --with-mpp-lfs       Download MassivePolyPusher's Git LFS files.
-  --build-type TYPE    CMake build type (default: Release).
+  --config CONFIG      CMake build configuration (default: Release).
   --build-dir DIR      Build directory, relative to the repository root unless
-                       absolute (default: build).
+                       absolute (default: build-linux).
   -h, --help           Show this help.
 
 Environment:
@@ -29,8 +29,8 @@ fail() {
 }
 
 WITH_MPP_LFS=false
-BUILD_TYPE=Release
-BUILD_DIR=build
+CONFIG=Release
+BUILD_DIR=build-linux
 
 while (($#)); do
     case "$1" in
@@ -38,9 +38,9 @@ while (($#)); do
             WITH_MPP_LFS=true
             shift
             ;;
-        --build-type)
-            (($# >= 2)) || fail "--build-type requires a value"
-            BUILD_TYPE=$2
+        --config)
+            (($# >= 2)) || fail "--config requires a value"
+            CONFIG=$2
             shift 2
             ;;
         --build-dir)
@@ -111,10 +111,10 @@ fi
 printf 'Removing previous build output...\n'
 rm -rf -- "$BUILD_DIR" "$MPP_DIR/build"
 
-printf 'Configuring %s build in %s...\n' "$BUILD_TYPE" "$BUILD_DIR"
-cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+printf 'Configuring %s build in %s...\n' "$CONFIG" "$BUILD_DIR"
+cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CONFIG"
 
 printf 'Building Willpower and dependencies...\n'
-cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" --parallel
+cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel
 
 printf 'Build completed successfully.\n'
