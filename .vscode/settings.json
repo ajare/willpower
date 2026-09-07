@@ -1,0 +1,8 @@
+{
+  "yaml.schemas": {
+    "./willpower.application/schemas/resource-manifest.schema.json": [
+      "**/Resources.yaml",
+      "**/Resources.yml"
+    ]
+  }
+}

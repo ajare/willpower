@@ -81,6 +81,47 @@ void verifyExistingFixture(fs::path const& definition, wp::Logger& logger) {
           "EntityImageSet was not reconstructed from a Resource sequence.");
 }
 
+void verifySyntaxDiagnosticsAndValidationOrder(fs::path const& root, wp::Logger& logger) {
+  auto const malformedRoot = root / "malformed-yaml";
+  writeFile(malformedRoot / "Resources.yaml", "Resources:\n  Resource: [\n");
+  DirectoryResourceLocation malformed(&logger, malformedRoot.string(), "Resources.yaml");
+  auto const malformedMessage = expectInvalidScan(malformed);
+  require(malformedMessage.find("YAML syntax:") != std::string::npos,
+          "Malformed YAML was not reported separately from schema-invalid YAML: " +
+              malformedMessage);
+  require(malformed.getNamespaceRecords().empty(),
+          "Malformed YAML published Resource records during the initial scan.");
+
+  // Both Resources also contain semantic errors (missing source files). The
+  // structural failures must be aggregated first, before filesystem checks or
+  // any Resource creation/loading can observe the declarations.
+  auto const aggregateRoot = root / "aggregate-diagnostics";
+  writeFile(aggregateRoot / "Resources.yaml", R"(Resources:
+  Resource:
+    - type: TextFile
+      name: FirstBroken
+      location: absent-first.txt
+      unexpected: rejected
+    - type: Image
+      name: SecondBroken
+      location: absent-second.png
+      Option:
+        name: filtering
+        value: nearest
+)");
+  DirectoryResourceLocation aggregate(&logger, aggregateRoot.string(), "Resources.yaml");
+  auto const aggregateMessage = expectInvalidScan(aggregate);
+  for (auto const* fragment : {"aggregate-diagnostics", "Resources.yaml", "FirstBroken",
+                               "SecondBroken", "/Resources/Resource/0",
+                               "/Resources/Resource/1", "line ", "column "}) {
+    require(aggregateMessage.find(fragment) != std::string::npos,
+            std::string("Aggregate validation diagnostic omitted '") + fragment +
+                "': " + aggregateMessage);
+  }
+  require(aggregate.getNamespaceRecords().empty(),
+          "An aggregate structural failure published Resource records.");
+}
+
 void verifyCommonSchema(fs::path const& root, wp::Logger& logger) {
   struct InvalidCase {
     std::string yaml;
@@ -1138,6 +1179,7 @@ int main(int argc, char** argv) {
   try {
     wp::Logger logger;
     verifyExistingFixture(fs::absolute(argv[1]), logger);
+    verifySyntaxDiagnosticsAndValidationOrder(temporaryRoot, logger);
     verifyCommonSchema(temporaryRoot, logger);
     verifySourceBackedSchemas(temporaryRoot, logger);
     verifyImageAndAnimationSetSchemas(temporaryRoot, logger);

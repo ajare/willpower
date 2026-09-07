@@ -74,12 +74,12 @@ for a Resource Manifest Editor.
 
 | Ticket | Issue | Phase | Priority | Difficulty | Title | Blocked by | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [WP-025](WP-025.md) | [#25](https://github.com/ajare/willpower/issues/25) | Infrastructure | P1 | medium | Add Valijson and an embedded schema catalog | — | open |
-| [WP-026](WP-026.md) | [#26](https://github.com/ajare/willpower/issues/26) | Loader integration | P1 | hard | Validate Resource Manifests atomically during scan/rescan | WP-025 | open |
-| [WP-027](WP-027.md) | [#27](https://github.com/ajare/willpower/issues/27) | Built-in schemas | P1 | medium | Source-backed Resource Type schemas | WP-025, WP-026 | open |
-| [WP-028](WP-028.md) | [#28](https://github.com/ajare/willpower/issues/28) | Built-in schemas | P1 | hard | ImageSet and AnimationSet schemas | WP-025, WP-026 | open |
-| [WP-029](WP-029.md) | [#29](https://github.com/ajare/willpower/issues/29) | Built-in schemas | P1 | hard | Program and Material schemas | WP-025, WP-026 | open |
-| [WP-030](WP-030.md) | [#30](https://github.com/ajare/willpower/issues/30) | Verification & docs | P1 | medium | Regression suite and documentation | WP-026–WP-029 | open |
+| [WP-025](WP-025.md) | [#25](https://github.com/ajare/willpower/issues/25) | Infrastructure | P1 | medium | Add Valijson and an embedded schema catalog | — | done |
+| [WP-026](WP-026.md) | [#26](https://github.com/ajare/willpower/issues/26) | Loader integration | P1 | hard | Validate Resource Manifests atomically during scan/rescan | WP-025 | done |
+| [WP-027](WP-027.md) | [#27](https://github.com/ajare/willpower/issues/27) | Built-in schemas | P1 | medium | Source-backed Resource Type schemas | WP-025, WP-026 | done |
+| [WP-028](WP-028.md) | [#28](https://github.com/ajare/willpower/issues/28) | Built-in schemas | P1 | hard | ImageSet and AnimationSet schemas | WP-025, WP-026 | done |
+| [WP-029](WP-029.md) | [#29](https://github.com/ajare/willpower/issues/29) | Built-in schemas | P1 | hard | Program and Material schemas | WP-025, WP-026 | done |
+| [WP-030](WP-030.md) | [#30](https://github.com/ajare/willpower/issues/30) | Verification & docs | P1 | medium | Regression suite and documentation | WP-026–WP-029 | done |
 
 ### Suggested execution order
 

@@ -50,7 +50,9 @@ MinSizeRel/
 coverage/
 
 # Editors and operating systems
-.vscode/
+# Keep the shared YAML schema association; ignore all other personal VS Code state.
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo

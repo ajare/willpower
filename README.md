@@ -198,6 +198,54 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 
 FMOD cannot be distributed as a public Git submodule. The paths are given individually rather than as a single root because the Engine API is not always laid out as the SDK installer leaves it — a project that vendors it into its own tree works just as well. Configuring with any required path missing lists exactly which. On Windows, runtime DLLs are staged beside test executables; Linux executables use CMake's build-tree runtime path.
 
+## Resource Manifest validation
+
+`Willpower.Application` validates every YAML Resource Manifest while
+`ResourceLocation::scan()` or `rescan()` loads it. YAML is parsed once and checked before
+it is converted to `StructuredData`, before Resource records are published, and before
+filesystem or cross-Resource checks. A failed initial scan publishes no records; a
+failed rescan retains the last successful records and can be retried after the manifest
+is corrected.
+
+The canonical JSON Schema Draft 7 sources are in
+[`willpower.application/schemas`](willpower.application/schemas). Start with
+[`resource-manifest.schema.json`](willpower.application/schemas/resource-manifest.schema.json),
+which composes the common declaration schema and all nine built-in Resource Type
+schemas. CMake embeds this catalog into `Willpower.Application`; deployed programs do
+not need schema files beside the executable and schema resolution performs no network
+access.
+
+The schemas preserve the loader's compatibility forms:
+
+- `Resource`, `Namespace`, options, dependencies, Definitions, and nested collections
+  accept either one mapping or a non-empty sequence where the loader historically did;
+- numeric and boolean fields accept native YAML scalars and the documented quoted forms;
+- default Definitions are checked against their built-in Resource Type, while a
+  Definition with a non-empty `factory` is checked only as a generic specialized
+  Definition until that factory publishes a schema; and
+- unknown custom Resource Types receive common declaration validation so plugin
+  manifests remain loadable.
+
+Structural validation covers document shape, required and unknown fields, supported
+enums, and scalar syntax/ranges. Semantic validation remains separate and later:
+`validateResourceDefinitions()` and `ResourceManager` check source-file existence,
+duplicate declarations, dependency resolution and cycles, loaded image bounds, and
+references into other Resources. Source asset contents (for example XML, image, shader,
+or audio data) are validated only when the corresponding Resource is created or loaded.
+
+Validation failures throw `ResourceManifestValidationException`. Malformed YAML is
+reported as `YAML syntax`; schema-invalid YAML reports up to 100 failures in deterministic
+document order. Each available diagnostic includes the manifest path, namespace and
+Resource identity, JSON instance path, and one-based YAML line and column. To fix a
+manifest, go to the reported position/path, correct the structural rule, and rerun the
+scan; if structural loading succeeds but semantic validation fails, fix the referenced
+file or Resource relationship instead.
+
+The repository's [VS Code settings](.vscode/settings.json) associate
+`**/Resources.yaml` and `**/Resources.yml` with the canonical root schema when the Red
+Hat YAML extension (or another setting-compatible YAML language server) is installed.
+This editor support adds no production dependency.
+
 ## Tests
 
 Tests are enabled by default. Build and run the suite on Linux with:
