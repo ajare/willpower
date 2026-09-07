@@ -3,34 +3,84 @@ set(WILLPOWER_EMBEDDED_SCHEMA_HEADER
     "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.h")
 set(WILLPOWER_EMBEDDED_SCHEMA_SOURCE
     "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.cpp")
-set(WILLPOWER_SCHEMA_RECORDS
-    "ResourceManifest||https://schemas.willpower.dev/resource-manifest/resource-manifest.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
-    "||https://schemas.willpower.dev/resource-manifest/common.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
-    "||https://schemas.willpower.dev/resource-manifest/resource.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource.schema.json"
-    "TextFile||https://schemas.willpower.dev/resource-manifest/text-file.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/text-file.schema.json"
-    "XmlFile||https://schemas.willpower.dev/resource-manifest/xml-file.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/xml-file.schema.json"
-    "Shader||https://schemas.willpower.dev/resource-manifest/shader.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/shader.schema.json"
-    "AudioBank||https://schemas.willpower.dev/resource-manifest/audio-bank.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/audio-bank.schema.json"
-    "Image||https://schemas.willpower.dev/resource-manifest/image.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image.schema.json"
-    "ImageSet||https://schemas.willpower.dev/resource-manifest/image-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image-set.schema.json"
-    "AnimationSet||https://schemas.willpower.dev/resource-manifest/animation-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json"
-    "Program||https://schemas.willpower.dev/resource-manifest/program.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
-    "Material||https://schemas.willpower.dev/resource-manifest/material.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
-set(WILLPOWER_SCHEMA_INPUTS
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/text-file.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/xml-file.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/shader.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/audio-bank.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/image.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/image-set.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
-# Focused fixtures continue to exercise catalog behavior independently of the
-# production Resource Manifest schemas.
+
+# This is the single catalog of built-in schema metadata. Both the private C++
+# embedding and the distributable, language-neutral bundle are derived from it;
+# the JSON documents remain the only hand-edited schema definitions.
+set(WILLPOWER_BUILTIN_SCHEMA_RECORDS
+    "manifest|||https://schemas.willpower.dev/resource-manifest/resource-manifest.schema.json|resource-manifest.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
+    "dependency|||https://schemas.willpower.dev/resource-manifest/common.schema.json|common.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
+    "dependency|||https://schemas.willpower.dev/resource-manifest/resource.schema.json|resource.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource.schema.json"
+    "resourceType|TextFile||https://schemas.willpower.dev/resource-manifest/text-file.schema.json|text-file.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/text-file.schema.json"
+    "resourceType|XmlFile||https://schemas.willpower.dev/resource-manifest/xml-file.schema.json|xml-file.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/xml-file.schema.json"
+    "resourceType|Shader||https://schemas.willpower.dev/resource-manifest/shader.schema.json|shader.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/shader.schema.json"
+    "resourceType|AudioBank||https://schemas.willpower.dev/resource-manifest/audio-bank.schema.json|audio-bank.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/audio-bank.schema.json"
+    "resourceType|Image||https://schemas.willpower.dev/resource-manifest/image.schema.json|image.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image.schema.json"
+    "resourceType|ImageSet||https://schemas.willpower.dev/resource-manifest/image-set.schema.json|image-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image-set.schema.json"
+    "resourceType|AnimationSet||https://schemas.willpower.dev/resource-manifest/animation-set.schema.json|animation-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json"
+    "resourceType|Program||https://schemas.willpower.dev/resource-manifest/program.schema.json|program.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
+    "resourceType|Material||https://schemas.willpower.dev/resource-manifest/material.schema.json|material.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
+
+set(WILLPOWER_SCHEMA_RECORDS "")
+set(WILLPOWER_SCHEMA_INPUTS "")
+foreach(_record IN LISTS WILLPOWER_BUILTIN_SCHEMA_RECORDS)
+    string(REPLACE "|" ";" _fields "${_record}")
+    list(GET _fields 0 _kind)
+    list(GET _fields 1 _resource_type)
+    list(GET _fields 2 _factory_type)
+    list(GET _fields 3 _schema_id)
+    list(GET _fields 5 _schema_path)
+    # The manifest is the root used by the runtime validator.
+    if(_kind STREQUAL "manifest")
+        set(_resource_type ResourceManifest)
+    endif()
+    list(APPEND WILLPOWER_SCHEMA_RECORDS
+        "${_resource_type}|${_factory_type}|${_schema_id}|${_schema_path}")
+    list(APPEND WILLPOWER_SCHEMA_INPUTS "${_schema_path}")
+endforeach()
+unset(_record)
+unset(_fields)
+unset(_kind)
+unset(_resource_type)
+unset(_factory_type)
+unset(_schema_id)
+unset(_schema_path)
+
+set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/resource-schema-bundle")
+set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_STAMP
+    "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/generated.stamp")
+set(WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE
+    "${CMAKE_CURRENT_BINARY_DIR}/ResourceSchemaBundleRecords.cmake")
+file(WRITE "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}" "set(RECORDS\n")
+foreach(_record IN LISTS WILLPOWER_BUILTIN_SCHEMA_RECORDS)
+    file(APPEND "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}" "  [==[${_record}]==]\n")
+endforeach()
+file(APPEND "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}" ")\n")
+add_custom_command(
+    OUTPUT "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_STAMP}"
+    BYPRODUCTS "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/catalog.json"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DOUTPUT_DIR=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}"
+        "-DOUTPUT_STAMP=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_STAMP}"
+        "-DRECORDS_FILE=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
+            "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}"
+            ${WILLPOWER_SCHEMA_INPUTS}
+    VERBATIM)
+add_custom_target(willpower_resource_schema_bundle ALL
+    DEPENDS "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_STAMP}")
+set_target_properties(willpower_resource_schema_bundle PROPERTIES FOLDER Willpower)
+
+include(GNUInstallDirs)
+install(DIRECTORY "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/willpower/resource-schema-bundle"
+    COMPONENT Willpower_Application
+    PATTERN "generated.stamp" EXCLUDE)
+
+# Focused fixtures continue to exercise runtime catalog behavior independently
+# of the production Resource Manifest schemas and are never exported.
 if(BUILD_TESTING)
     list(APPEND WILLPOWER_SCHEMA_RECORDS
         "Infrastructure||https://schemas.willpower.test/infrastructure.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
@@ -127,8 +177,17 @@ willpower_target_defaults(Willpower.Application)
 willpower_output_dirs(Willpower.Application)
 willpower_enable_sdl_checks(Willpower.Application)
 set_target_properties(Willpower.Application PROPERTIES FOLDER Willpower)
+add_dependencies(Willpower.Application willpower_resource_schema_bundle)
 
 if(BUILD_TESTING)
+    willpower_add_test(NAME willpower_resource_schema_bundle
+        COMMAND "${CMAKE_COMMAND}"
+            "-DBUNDLE_DIR=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}"
+            "-DREGENERATED_DIR=${CMAKE_CURRENT_BINARY_DIR}/resource-schema-bundle-repeated"
+            "-DGENERATOR=${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
+            "-DRECORDS_FILE=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}"
+            -P "${PROJECT_SOURCE_DIR}/cmake/VerifyResourceSchemaBundle.cmake")
+
     add_executable(willpower_application_schema_catalog_tests
         tests/schema_catalog_tests.cpp
         src/resourcesystem/ResourceManifestValidator.cpp

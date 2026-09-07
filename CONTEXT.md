@@ -17,7 +17,7 @@ The registered kind of a Resource, such as `Image`, which determines its paramet
 _Avoid_: Resource name, factory type
 
 **Resource Schema Bundle**:
-A versioned, language-neutral package containing Resource Type schemas, their local dependencies, and catalog metadata for resource-manifest validation and tooling.
+A versioned, language-neutral package containing Resource Type schemas, their local dependencies, and catalog metadata for Resource Manifest validation and tooling. A bundle resolves entirely from its own content; its format and compatibility policy are defined in [`docs/specifications/resource-schema-bundle.md`](docs/specifications/resource-schema-bundle.md).
 _Avoid_: Schema dump, Resource plugin
 
 **Resource Type Plugin**:

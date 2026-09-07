@@ -215,6 +215,17 @@ schemas. CMake embeds this catalog into `Willpower.Application`; deployed progra
 not need schema files beside the executable and schema resolution performs no network
 access.
 
+CMake also generates the language-neutral **Resource Schema Bundle** target
+`willpower_resource_schema_bundle`. Its catalog and self-contained schema documents are
+available in the build tree at
+`<build-tree>/willpower.application/resource-schema-bundle`. `cmake --install` installs
+the bundle to `<prefix>/<datadir>/willpower/resource-schema-bundle` (normally
+`<prefix>/share/willpower/resource-schema-bundle`). External tools begin with
+`catalog.json`; each entry identifies its Resource Type and optional factory, document,
+stable schema ID, and SHA-256 digest. The complete format, offline-resolution rules,
+lookup fallback, and compatibility policy are specified in
+[`docs/specifications/resource-schema-bundle.md`](docs/specifications/resource-schema-bundle.md).
+
 The schemas preserve the loader's compatibility forms:
 
 - `Resource`, `Namespace`, options, dependencies, Definitions, and nested collections
