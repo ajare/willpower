@@ -16,6 +16,13 @@ public:
   }
 };
 
+class ResourceManifestValidationException : public ResourceSystemException {
+public:
+  explicit ResourceManifestValidationException(std::string const& message)
+      : ResourceSystemException(message) {
+  }
+};
+
 class ResourceDependencyException : public ResourceSystemException {
 public:
   explicit ResourceDependencyException(std::string const& message)

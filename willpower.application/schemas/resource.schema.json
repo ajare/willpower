@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.willpower.dev/resource-manifest/resource.schema.json",
+  "title": "Common Resource declaration",
+  "definitions": {
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "value": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/scalar"
+        }
+      }
+    },
+    "optionCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/option" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/option" }
+        }
+      ]
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "factory": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        }
+      }
+    },
+    "definitionCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/definition" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/definition" }
+        }
+      ]
+    },
+    "definitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Definition"],
+      "properties": {
+        "Definition": { "$ref": "#/definitions/definitionCollection" }
+      }
+    },
+    "dependentResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "ref": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "type": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "name": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/resourceName"
+        },
+        "location": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "Option": { "$ref": "#/definitions/optionCollection" },
+        "Definitions": { "$ref": "#/definitions/definitions" }
+      },
+      "oneOf": [
+        {
+          "required": ["ref"],
+          "not": {
+            "anyOf": [
+              { "required": ["type"] },
+              { "required": ["name"] },
+              { "required": ["location"] },
+              { "required": ["Option"] },
+              { "required": ["Definitions"] }
+            ]
+          }
+        },
+        {
+          "required": ["type"],
+          "anyOf": [
+            { "required": ["name"] },
+            { "required": ["location"] }
+          ],
+          "not": { "required": ["ref"] }
+        }
+      ]
+    },
+    "dependentResourceCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/dependentResource" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/dependentResource" }
+        }
+      ]
+    },
+    "dependentResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["DependentResource"],
+      "properties": {
+        "DependentResource": { "$ref": "#/definitions/dependentResourceCollection" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "name": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/resourceName"
+        },
+        "location": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString"
+        },
+        "Option": { "$ref": "#/definitions/optionCollection" },
+        "DependentResources": { "$ref": "#/definitions/dependentResources" },
+        "Definitions": { "$ref": "#/definitions/definitions" }
+      },
+      "anyOf": [
+        { "required": ["name"] },
+        { "required": ["location"] }
+      ]
+    },
+    "resourceCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/resource" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/resource" }
+        }
+      ]
+    }
+  }
+}

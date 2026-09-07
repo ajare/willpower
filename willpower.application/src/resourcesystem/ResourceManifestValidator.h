@@ -21,6 +21,8 @@ class ResourceManifestValidator {
     std::string manifestPath;
     std::string resourceType;
     std::string factoryType;
+    std::string resourceNamespace;
+    std::string resourceName;
     std::string instancePath;
     std::string message;
     int line = 0;
@@ -28,6 +30,8 @@ class ResourceManifestValidator {
   };
 
   [[nodiscard]] bool contains(SchemaKey const& key) const;
+  [[nodiscard]] std::vector<Failure> validate(
+      utils::YamlReader const& reader, std::string const& manifestPath) const;
   [[nodiscard]] std::vector<Failure> validate(
       utils::YamlReader const& reader, std::string const& manifestPath,
       SchemaKey const& key) const;

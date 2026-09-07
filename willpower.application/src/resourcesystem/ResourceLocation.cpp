@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <memory>
+#include <sstream>
 #include <thread>
 
 #include "utils/YamlReader.h"
@@ -9,6 +10,7 @@
 
 #include "willpower/application/resourcesystem/ResourceExceptions.h"
 #include "willpower/application/resourcesystem/ResourceLocation.h"
+#include "ResourceManifestValidator.h"
 #include "willpower/application/resourcesystem/DataStream.h"
 #include "willpower/application/resourcesystem/Resource.h"
 
@@ -23,6 +25,31 @@ StructuredData importStructuredData(utils::StructuredData const& source) {
     result.addEntry(entry.first, importStructuredData(entry.second));
   }
   return result;
+}
+
+std::string validationMessage(
+    std::string const& manifestPath,
+    std::vector<wp::application::resourcesystem::ResourceManifestValidator::Failure> const& failures) {
+  std::ostringstream message;
+  message << "Invalid Resource Manifest '" << manifestPath << "':";
+  for (auto const& failure : failures) {
+    message << "\n  ";
+    if (!failure.resourceName.empty()) {
+      if (!failure.resourceNamespace.empty()) message << failure.resourceNamespace << '/';
+      message << failure.resourceName;
+      if (!failure.resourceType.empty() && failure.resourceType != "ResourceManifest") {
+        message << " [" << failure.resourceType << ']';
+      }
+    } else {
+      message << "Resource Manifest";
+    }
+    message << " at " << (failure.instancePath.empty() ? "/" : failure.instancePath);
+    if (failure.line > 0 && failure.column > 0) {
+      message << " (line " << failure.line << ", column " << failure.column << ')';
+    }
+    message << ": " << failure.message;
+  }
+  return message.str();
 }
 }  // namespace
 
@@ -52,34 +79,49 @@ void ResourceLocation::scan() {
     return;
   }
 
-  // Clear all records
-  mNamespaces.clear();
+  auto const manifestPath = getDefinitionFile();
+  if (!manifestPath.ends_with(".yaml") && !manifestPath.ends_with(".yml")) {
+    throw ResourceSystemException("Resource definition file '" + manifestPath + "' must use YAML.");
+  }
 
-  // Read and parse definition file
+  // Parse once, validate the parser-owned YAML tree, and only then perform the
+  // intentionally lossy StructuredData conversion.
   uint32_t fileSize;
   uint8_t* fileData = readData(mDefinitionFile, &fileSize);
   DataStreamPtr dataPtr(new DataStream(fileData, fileSize));
+  string const document(reinterpret_cast<char const*>(dataPtr->getData()), dataPtr->getSize());
 
-  string const document((char*)dataPtr->getData(), dataPtr->getSize());
-  if (!mDefinitionFile.ends_with(".yaml") && !mDefinitionFile.ends_with(".yml")) {
-    throw ResourceSystemException("Resource definition file '" + mDefinitionFile + "' must use YAML.");
+  unique_ptr<utils::YamlReader> reader;
+  try {
+    reader.reset(utils::YamlReader::fromString(document));
+  } catch (std::exception const& error) {
+    throw ResourceManifestValidationException(
+        "Invalid Resource Manifest '" + manifestPath + "':\n  YAML syntax: " + error.what());
   }
-  unique_ptr<utils::YamlReader> reader(utils::YamlReader::fromString(document));
+
+  ResourceManifestValidator validator;
+  auto const failures = validator.validate(*reader, manifestPath);
+  if (!failures.empty()) {
+    throw ResourceManifestValidationException(validationMessage(manifestPath, failures));
+  }
+
   StructuredData rootData = importStructuredData(reader->readTree());
   DataNode root(rootData);
+  map<string, NamespaceRecord> namespaces;
 
-  // Iterate over namespaces
+  // Build every record in temporary storage. Any parsing or record-level
+  // failure leaves both the previous cache and the dirty flag untouched.
   auto rootNode = &root;
   auto namespaceNode = rootNode->getOptionalChild("Namespace");
   if (namespaceNode) {
     do {
       string namesp = namespaceNode->getProperty("name");
-      scanResourceElement(namespaceNode, namesp);
+      scanResourceElement(namespaceNode, namespaces, namesp);
     } while (namespaceNode->next());
   }
+  scanResourceElement(rootNode, namespaces);
 
-  // Iterate over non-namespaced resources
-  scanResourceElement(rootNode);
+  mNamespaces = std::move(namespaces);
   mScanDirty = false;
 }
 
@@ -120,11 +162,12 @@ ResourceRecordBaseData ResourceLocation::parseResource(DataNode* element, string
   return baseData;
 }
 
-void ResourceLocation::scanResourceElement(DataNode* parent, string namesp) {
+void ResourceLocation::scanResourceElement(
+    DataNode* parent, map<string, NamespaceRecord>& namespaces, string namesp) {
   // Get namespace record
-  auto it = mNamespaces.find(namesp);
-  if (it == mNamespaces.end()) {
-    it = mNamespaces.insert(make_pair(namesp, NamespaceRecord())).first;
+  auto it = namespaces.find(namesp);
+  if (it == namespaces.end()) {
+    it = namespaces.insert(make_pair(namesp, NamespaceRecord())).first;
   }
 
   auto& namespaceRecord = it->second;

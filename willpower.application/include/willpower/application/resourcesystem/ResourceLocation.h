@@ -47,7 +47,9 @@ protected:
 private:
   ResourceRecordBaseData parseResource(wp::DataNode* element, std::string const& namesp, std::string const& file);
 
-  void scanResourceElement(wp::DataNode* parent, std::string namesp = "");
+  void scanResourceElement(wp::DataNode* parent,
+                           std::map<std::string, NamespaceRecord>& namespaces,
+                           std::string namesp = "");
 
   ResourceRecord const& getResourceRecord(std::string const& resource, std::string namesp = "") const;
 

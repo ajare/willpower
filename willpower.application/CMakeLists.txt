@@ -3,11 +3,16 @@ set(WILLPOWER_EMBEDDED_SCHEMA_HEADER
     "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.h")
 set(WILLPOWER_EMBEDDED_SCHEMA_SOURCE
     "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.cpp")
-set(WILLPOWER_SCHEMA_RECORDS "")
-set(WILLPOWER_SCHEMA_INPUTS "")
-# WP-026 and the built-in schema tickets append canonical schemas here. These
-# focused fixtures exercise the catalog infrastructure without implementing
-# those blocked schema definitions early.
+set(WILLPOWER_SCHEMA_RECORDS
+    "ResourceManifest||https://schemas.willpower.dev/resource-manifest/resource-manifest.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
+    "||https://schemas.willpower.dev/resource-manifest/common.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
+    "||https://schemas.willpower.dev/resource-manifest/resource.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource.schema.json")
+set(WILLPOWER_SCHEMA_INPUTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource.schema.json")
+# Focused fixtures continue to exercise catalog behavior independently of the
+# production Resource Manifest schemas.
 if(BUILD_TESTING)
     list(APPEND WILLPOWER_SCHEMA_RECORDS
         "Infrastructure||https://schemas.willpower.test/infrastructure.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
