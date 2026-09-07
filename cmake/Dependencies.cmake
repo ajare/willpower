@@ -1,5 +1,25 @@
 include_guard(GLOBAL)
 include(ExternalProject)
+include(FetchContent)
+
+# Fetch once in the top-level build, then hand the pinned header-only source to
+# Utils' independent build. Utils has the same pinned fallback for standalone
+# MassivePolyPusher builds.
+FetchContent_Declare(willpower_valijson
+    URL "https://github.com/tristanpenman/valijson/archive/refs/tags/v1.1.2.tar.gz"
+    URL_HASH "SHA256=8e3cb09aead72f6f8653c966669cab52ff921ac52cc9d7498cd9387a35acce93"
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_GetProperties(willpower_valijson)
+if(NOT willpower_valijson_POPULATED)
+    if(POLICY CMP0169)
+        cmake_policy(PUSH)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(willpower_valijson)
+    if(POLICY CMP0169)
+        cmake_policy(POP)
+    endif()
+endif()
 
 set(WILLPOWER_EXT_DIR "${PROJECT_SOURCE_DIR}/ext")
 set(WILLPOWER_MPP_SOURCE_DIR "${WILLPOWER_EXT_DIR}/massive-poly-pusher")
@@ -33,6 +53,7 @@ ExternalProject_Add(willpower_mpp_external
     CMAKE_ARGS
         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
         "-DCMAKE_BUILD_TYPE=$<CONFIG>"
+        "-DUTILS_VALIJSON_SOURCE_DIR=${willpower_valijson_SOURCE_DIR}"
     BUILD_COMMAND
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG> --parallel
         --target MassivePolyPusher MppMesh MppHelper MppProgram MppData Utils glew

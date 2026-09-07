@@ -1,4 +1,37 @@
+set(WILLPOWER_EMBEDDED_SCHEMA_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(WILLPOWER_EMBEDDED_SCHEMA_HEADER
+    "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.h")
+set(WILLPOWER_EMBEDDED_SCHEMA_SOURCE
+    "${WILLPOWER_EMBEDDED_SCHEMA_DIR}/EmbeddedResourceManifestSchemas.cpp")
+set(WILLPOWER_SCHEMA_RECORDS "")
+set(WILLPOWER_SCHEMA_INPUTS "")
+# WP-026 and the built-in schema tickets append canonical schemas here. These
+# focused fixtures exercise the catalog infrastructure without implementing
+# those blocked schema definitions early.
+if(BUILD_TESTING)
+    list(APPEND WILLPOWER_SCHEMA_RECORDS
+        "Infrastructure||https://schemas.willpower.test/infrastructure.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
+        "||https://schemas.willpower.test/infrastructure-types.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure-types.schema.json")
+    list(APPEND WILLPOWER_SCHEMA_INPUTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure.schema.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/schemas/infrastructure-types.schema.json")
+endif()
+add_custom_command(
+    OUTPUT "${WILLPOWER_EMBEDDED_SCHEMA_HEADER}" "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DOUTPUT_HEADER=${WILLPOWER_EMBEDDED_SCHEMA_HEADER}"
+        "-DOUTPUT_SOURCE=${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
+        "-DRECORDS=${WILLPOWER_SCHEMA_RECORDS}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/EmbedSchemaCatalog.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/cmake/EmbedSchemaCatalog.cmake" ${WILLPOWER_SCHEMA_INPUTS}
+    VERBATIM)
+set_source_files_properties(
+    "${WILLPOWER_EMBEDDED_SCHEMA_HEADER}" "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
+    PROPERTIES GENERATED TRUE)
+
 add_library(Willpower.Application SHARED
+    "${WILLPOWER_EMBEDDED_SCHEMA_HEADER}"
+    "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}"
     src/ApplicationSettings.cpp
     src/AudioSystem.cpp
     src/InputHelper.cpp
@@ -33,6 +66,8 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/ResourceDefinitionFactory.cpp
     src/resourcesystem/ResourceLocation.cpp
     src/resourcesystem/ResourceManager.cpp
+    src/resourcesystem/ResourceManifestValidator.cpp
+    src/resourcesystem/ResourceManifestValidator.h
     src/resourcesystem/ShaderDefaultDefinitionFactory.cpp
     src/resourcesystem/ShaderResource.cpp
     src/resourcesystem/ShaderResourceDefinitionFactory.cpp
@@ -44,7 +79,9 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/XmlFileResource.cpp
     src/resourcesystem/XmlFileResourceDefinitionFactory.cpp)
 
-target_include_directories(Willpower.Application PUBLIC include)
+target_include_directories(Willpower.Application
+    PUBLIC include
+    PRIVATE "${WILLPOWER_EMBEDDED_SCHEMA_DIR}")
 willpower_add_header_filter(Willpower.Application)
 
 target_compile_definitions(Willpower.Application
@@ -69,6 +106,27 @@ willpower_enable_sdl_checks(Willpower.Application)
 set_target_properties(Willpower.Application PROPERTIES FOLDER Willpower)
 
 if(BUILD_TESTING)
+    add_executable(willpower_application_schema_catalog_tests
+        tests/schema_catalog_tests.cpp
+        src/resourcesystem/ResourceManifestValidator.cpp
+        "${WILLPOWER_EMBEDDED_SCHEMA_SOURCE}")
+    target_compile_features(willpower_application_schema_catalog_tests PRIVATE cxx_std_20)
+    target_include_directories(willpower_application_schema_catalog_tests PRIVATE
+        src/resourcesystem "${WILLPOWER_EMBEDDED_SCHEMA_DIR}")
+    target_link_libraries(willpower_application_schema_catalog_tests PRIVATE ext::Utils)
+    willpower_target_defaults(willpower_application_schema_catalog_tests)
+    willpower_output_dirs(willpower_application_schema_catalog_tests)
+    set_target_properties(willpower_application_schema_catalog_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_schema_catalog_tests)
+    willpower_deploy_vendor_dlls(willpower_application_schema_catalog_tests)
+    willpower_add_test(NAME willpower_application_schema_catalog
+        COMMAND willpower_application_schema_catalog_tests)
+    set(WILLPOWER_SCHEMA_TEST_WORKING_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/schema-test-working-directory")
+    file(MAKE_DIRECTORY "${WILLPOWER_SCHEMA_TEST_WORKING_DIR}")
+    set_tests_properties(willpower_application_schema_catalog PROPERTIES
+        WORKING_DIRECTORY "${WILLPOWER_SCHEMA_TEST_WORKING_DIR}")
+
     add_executable(willpower_application_resource_yaml_tests tests/resource_yaml_tests.cpp)
     target_compile_features(willpower_application_resource_yaml_tests PRIVATE cxx_std_20)
     target_link_libraries(willpower_application_resource_yaml_tests PRIVATE Willpower.Application)
