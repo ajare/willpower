@@ -34,6 +34,8 @@
         { "$ref": "https://schemas.willpower.dev/resource-manifest/shader.schema.json#/definitions/resource" },
         { "$ref": "https://schemas.willpower.dev/resource-manifest/audio-bank.schema.json#/definitions/resource" },
         { "$ref": "https://schemas.willpower.dev/resource-manifest/image.schema.json#/definitions/resource" },
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/image-set.schema.json#/definitions/resource" },
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/animation-set.schema.json#/definitions/resource" },
         {
           "allOf": [
             { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource" },
@@ -41,7 +43,7 @@
               "properties": {
                 "type": {
                   "not": {
-                    "enum": ["TextFile", "XmlFile", "Shader", "AudioBank", "Image"]
+                    "enum": ["TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet", "AnimationSet"]
                   }
                 }
               }

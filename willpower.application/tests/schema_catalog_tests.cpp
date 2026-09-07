@@ -21,7 +21,8 @@ int main() {
     // A future specialized factory key must retain the Resource Type fallback.
     require(validator.contains({"Infrastructure", "CustomFactory"}),
             "Factory-compatible Resource Type lookup did not fall back.");
-    for (auto const* resourceType : {"TextFile", "XmlFile", "Shader", "AudioBank", "Image"}) {
+    for (auto const* resourceType :
+         {"TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet", "AnimationSet"}) {
       require(validator.contains({resourceType, ""}),
               std::string("Built-in schema was not registered for ") + resourceType + '.');
     }

@@ -50,12 +50,22 @@ void testCycle(fs::path const& root, wp::Logger& logger) {
       name: "A"
       DependentResources:
         DependentResource:
+          id: "Image"
           ref: "B"
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: "Pixel", x: 0, y: 0, width: 1, height: 1}
     - type: "ImageSet"
       name: "B"
       DependentResources:
         DependentResource:
+          id: "Image"
           ref: "A"
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: "Pixel", x: 0, y: 0, width: 1, height: 1}
 )");
 
   ResourceManager manager(nullptr, nullptr, nullptr, &logger);
@@ -71,7 +81,12 @@ void testMissingNamespace(fs::path const& root, wp::Logger& logger) {
     name: "Consumer"
     DependentResources:
       DependentResource:
+        id: "Image"
         ref: "Missing/Provider"
+    Definitions:
+      Definition:
+        Images:
+          Image: {name: "Pixel", x: 0, y: 0, width: 1, height: 1}
 )");
 
   ResourceManager manager(nullptr, nullptr, nullptr, &logger);
@@ -88,7 +103,12 @@ void testMissingResource(fs::path const& root, wp::Logger& logger) {
     name: "Consumer"
     DependentResources:
       DependentResource:
+        id: "Image"
         ref: "Shared/Missing"
+    Definitions:
+      Definition:
+        Images:
+          Image: {name: "Pixel", x: 0, y: 0, width: 1, height: 1}
   Namespace:
     name: "Shared"
     Resource:
@@ -112,8 +132,12 @@ void testCrossLocation(fs::path const& root, wp::Logger& logger) {
     name: "Consumer"
     DependentResources:
       DependentResource:
-        id: "Provider"
+        id: "Image"
         ref: "Shared/Provider"
+    Definitions:
+      Definition:
+        Images:
+          Image: {name: "Pixel", x: 0, y: 0, width: 1, height: 1}
 )");
   writeFile(providerLocation / "provider.txt", "provided");
   writeFile(providerLocation / "Resources.yaml", R"(Resources:
@@ -133,7 +157,7 @@ void testCrossLocation(fs::path const& root, wp::Logger& logger) {
 
   auto consumer = manager.getQualifiedResource("Consumer");
   auto provider = manager.getQualifiedResource("Shared/Provider");
-  if (consumer->getDependentResource("Provider") != provider) {
+  if (consumer->getDependentResource("Image") != provider) {
     throw std::runtime_error("Cross-location dependency did not resolve to the provider.");
   }
 }

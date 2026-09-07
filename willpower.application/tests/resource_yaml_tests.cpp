@@ -30,6 +30,15 @@ void writeFile(fs::path const& path, std::string const& contents) {
   if (!stream) throw std::runtime_error("Could not write test fixture: " + path.string());
 }
 
+std::string replaceOnce(std::string source, std::string const& from, std::string const& to) {
+  auto const position = source.find(from);
+  if (position == std::string::npos || source.find(from, position + from.size()) != std::string::npos) {
+    throw std::runtime_error("Test fixture replacement was not unique: " + from);
+  }
+  source.replace(position, from.size(), to);
+  return source;
+}
+
 std::string expectInvalidScan(DirectoryResourceLocation& location, bool rescan = false) {
   try {
     if (rescan) {
@@ -260,6 +269,424 @@ void verifySourceBackedSchemas(fs::path const& root, wp::Logger& logger) {
   }
 }
 
+void verifyImageAndAnimationSetSchemas(fs::path const& root, wp::Logger& logger) {
+  std::string const validImageSet = R"(Resources:
+  Resource:
+    type: ImageSet
+    name: Atlas
+    DependentResources:
+      DependentResource:
+        - id: Image
+          ref: MissingImage
+    Definitions:
+      Definition:
+        - factory: PluginFactory
+          pluginPayload: accepted
+        - Images:
+            Image:
+              name: Icon
+              x: 0
+              y: "1"
+              width: 16
+              height: "16"
+            ImageSet:
+              - name: Walk
+                x: "32"
+                y: 0
+                width: "8"
+                height: 8
+                count: "3"
+                dx: -8
+                dy: "+2"
+              - name: Idle
+                x: 0
+                y: 0
+                width: 8
+                height: 8
+                count: 1
+                dx: 0
+                dy: 0
+)";
+  auto const validImageRoot = root / "valid-ImageSet";
+  writeFile(validImageRoot / "Resources.yaml", validImageSet);
+  DirectoryResourceLocation validImages(&logger, validImageRoot.string(), "Resources.yaml");
+  validImages.scan();
+  require(validImages.getNamespaceRecords().at("").resourceRecords.contains("Atlas"),
+          "A representative ImageSet did not pass scan-time validation.");
+
+  std::string const validAnimationSet = R"(Resources:
+  Resource:
+    type: AnimationSet
+    name: Characters
+    DependentResources:
+      DependentResource:
+        id: Image
+        ref: MissingAtlas
+    Definitions:
+      Definition:
+        - factory: PluginFactory
+          pluginPayload: accepted
+        - Animations:
+            Animation:
+              - name: Walk
+                loopStyle: forwards
+                Frames:
+                  time: "1.5e-1"
+                  xoff: -2
+                  yoff: "+3"
+                  Frame:
+                    - image: MissingWalk0
+                      frame: "1"
+                      time: 0.2
+                      xoff: "-1"
+                      Tags:
+                        Tag:
+                          key: event
+                          value: true
+                    - image: MissingWalk1
+                      Tags:
+                        Tag:
+                          - key: sound
+                            value: step
+                          - key: strength
+                            value: 2
+              - name: Idle
+                loopStyle: once
+                Frames:
+                  Frame:
+                    image: MissingIdle
+                    time: "1"
+              - name: Attack
+                loopStyle: pingpong
+                Frames:
+                  imageset: MissingAttackSet
+                  count: "2"
+                  time: 0.25
+                  xoff: "-3"
+                  yoff: 4
+                  Frame:
+                    - frame: 0
+                      time: ".5"
+                      Tags:
+                        Tag:
+                          key: hit
+                          value: yes
+                    - frame: "1"
+                      xoff: 1
+                      yoff: "-1"
+)";
+  auto const validAnimationRoot = root / "valid-AnimationSet";
+  writeFile(validAnimationRoot / "Resources.yaml", validAnimationSet);
+  DirectoryResourceLocation validAnimations(
+      &logger, validAnimationRoot.string(), "Resources.yaml");
+  validAnimations.scan();
+  require(validAnimations.getNamespaceRecords().at("").resourceRecords.contains("Characters"),
+          "A representative AnimationSet did not pass scan-time validation.");
+
+  std::string const minimalImageSet = R"(Resources:
+  Resource:
+    type: ImageSet
+    name: Atlas
+    DependentResources:
+      DependentResource:
+        id: Image
+        ref: MissingImage
+    Definitions:
+      Definition:
+        Images:
+          Image:
+            name: Icon
+            x: 0
+            y: 0
+            width: 1
+            height: 1
+)";
+  std::string const imageSetEntry = R"(          ImageSet:
+            name: Strip
+            x: 0
+            y: 0
+            width: 1
+            height: 1
+            count: 2
+            dx: 1
+            dy: 0
+)";
+
+  struct InvalidCase {
+    std::string label;
+    std::string yaml;
+    std::string expectedPath;
+  };
+  std::vector<InvalidCase> invalidCases;
+  invalidCases.push_back({"image-set-missing-dependency",
+                          replaceOnce(minimalImageSet,
+                                      "    DependentResources:\n      DependentResource:\n"
+                                      "        id: Image\n        ref: MissingImage\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"image-set-wrong-dependency-id",
+                          replaceOnce(minimalImageSet, "        id: Image\n", "        id: Texture\n"),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"image-set-location",
+                          replaceOnce(minimalImageSet, "    name: Atlas\n", "    name: Atlas\n    location: atlas.png\n"),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"image-set-missing-definition",
+                          replaceOnce(minimalImageSet,
+                                      "    Definitions:\n      Definition:\n        Images:\n"
+                                      "          Image:\n            name: Icon\n            x: 0\n"
+                                      "            y: 0\n            width: 1\n            height: 1\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"image-set-specialized-only",
+                          replaceOnce(minimalImageSet,
+                                      "        Images:\n          Image:\n            name: Icon\n"
+                                      "            x: 0\n            y: 0\n            width: 1\n"
+                                      "            height: 1\n",
+                                      "        factory: PluginFactory\n        pluginPayload: accepted\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-missing-images",
+                          replaceOnce(minimalImageSet,
+                                      "        Images:\n          Image:\n            name: Icon\n"
+                                      "            x: 0\n            y: 0\n            width: 1\n"
+                                      "            height: 1\n",
+                                      "        {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-empty-images",
+                          replaceOnce(minimalImageSet,
+                                      "        Images:\n          Image:\n            name: Icon\n"
+                                      "            x: 0\n            y: 0\n            width: 1\n"
+                                      "            height: 1\n",
+                                      "        Images: {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-missing-field",
+                          replaceOnce(minimalImageSet, "            height: 1\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-empty-name",
+                          replaceOnce(minimalImageSet, "            name: Icon\n", "            name: ''\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-invalid-coordinate",
+                          replaceOnce(minimalImageSet, "            x: 0\n", "            x: '0oops'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-negative-coordinate",
+                          replaceOnce(minimalImageSet, "            y: 0\n", "            y: -1\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-zero-width",
+                          replaceOnce(minimalImageSet, "            width: 1\n", "            width: '0'\n"),
+                          "/Resources/Resource/Definitions"});
+
+  auto const minimalImageSetCollection = replaceOnce(
+      minimalImageSet,
+      "          Image:\n            name: Icon\n            x: 0\n            y: 0\n"
+      "            width: 1\n            height: 1\n",
+      imageSetEntry);
+  invalidCases.push_back({"image-set-entry-missing-name",
+                          replaceOnce(minimalImageSetCollection, "            name: Strip\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-entry-missing-count",
+                          replaceOnce(minimalImageSetCollection, "            count: 2\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-entry-zero-count",
+                          replaceOnce(minimalImageSetCollection, "            count: 2\n", "            count: 0\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-entry-invalid-offset",
+                          replaceOnce(minimalImageSetCollection, "            dx: 1\n", "            dx: '1px'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-entry-missing-offset",
+                          replaceOnce(minimalImageSetCollection, "            dy: 0\n", ""),
+                          "/Resources/Resource/Definitions"});
+
+  std::string const minimalAnimationSet = R"(Resources:
+  Resource:
+    type: AnimationSet
+    name: Animations
+    DependentResources:
+      DependentResource:
+        id: Image
+        ref: MissingAtlas
+    Definitions:
+      Definition:
+        Animations:
+          Animation:
+            name: Idle
+            loopStyle: forwards
+            Frames:
+              Frame:
+                image: MissingImage
+                time: 1
+)";
+  std::string const imageSetFrames = R"(            Frames:
+              imageset: MissingSet
+              count: 2
+              time: 1
+              Frame:
+                frame: 0
+                xoff: -1
+)";
+  invalidCases.push_back({"animation-set-missing-dependency",
+                          replaceOnce(minimalAnimationSet,
+                                      "    DependentResources:\n      DependentResource:\n"
+                                      "        id: Image\n        ref: MissingAtlas\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"animation-set-wrong-dependency-id",
+                          replaceOnce(minimalAnimationSet, "        id: Image\n", "        id: Atlas\n"),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"animation-set-missing-definition",
+                          replaceOnce(minimalAnimationSet,
+                                      "    Definitions:\n      Definition:\n        Animations:\n"
+                                      "          Animation:\n            name: Idle\n"
+                                      "            loopStyle: forwards\n            Frames:\n"
+                                      "              Frame:\n                image: MissingImage\n"
+                                      "                time: 1\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"animation-set-specialized-only",
+                          replaceOnce(minimalAnimationSet,
+                                      "        Animations:\n          Animation:\n            name: Idle\n"
+                                      "            loopStyle: forwards\n            Frames:\n"
+                                      "              Frame:\n                image: MissingImage\n"
+                                      "                time: 1\n",
+                                      "        factory: PluginFactory\n        pluginPayload: accepted\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"animation-missing-wrapper",
+                          replaceOnce(minimalAnimationSet,
+                                      "        Animations:\n          Animation:\n            name: Idle\n"
+                                      "            loopStyle: forwards\n            Frames:\n"
+                                      "              Frame:\n                image: MissingImage\n"
+                                      "                time: 1\n",
+                                      "        Animations: {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"animation-empty-name",
+                          replaceOnce(minimalAnimationSet, "            name: Idle\n", "            name: ''\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"animation-invalid-loop-style",
+                          replaceOnce(minimalAnimationSet, "            loopStyle: forwards\n",
+                                      "            loopStyle: backwards\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"animation-missing-frames",
+                          replaceOnce(minimalAnimationSet,
+                                      "            Frames:\n              Frame:\n"
+                                      "                image: MissingImage\n                time: 1\n",
+                                      ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"explicit-mode-missing-frame",
+                          replaceOnce(minimalAnimationSet,
+                                      "            Frames:\n              Frame:\n"
+                                      "                image: MissingImage\n                time: 1\n",
+                                      "            Frames:\n              time: 1\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"explicit-frame-missing-image",
+                          replaceOnce(minimalAnimationSet, "                image: MissingImage\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"explicit-frame-empty-image",
+                          replaceOnce(minimalAnimationSet, "                image: MissingImage\n",
+                                      "                image: ''\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"explicit-frame-invalid-index",
+                          replaceOnce(minimalAnimationSet, "                image: MissingImage\n",
+                                      "                image: MissingImage\n                frame: 'first'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"explicit-mode-illegal-count",
+                          replaceOnce(minimalAnimationSet, "            Frames:\n",
+                                      "            Frames:\n              count: 1\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"frame-zero-time",
+                          replaceOnce(minimalAnimationSet, "                time: 1\n", "                time: '0'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"frame-invalid-offset",
+                          replaceOnce(minimalAnimationSet, "                time: 1\n",
+                                      "                time: 1\n                yoff: 'down'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"tag-empty-key",
+                          replaceOnce(minimalAnimationSet, "                time: 1\n",
+                                      "                time: 1\n                Tags:\n"
+                                      "                  Tag: {key: '', value: event}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"tag-null-value",
+                          replaceOnce(minimalAnimationSet, "                time: 1\n",
+                                      "                time: 1\n                Tags:\n"
+                                      "                  Tag: {key: event, value: null}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"tags-missing-tag",
+                          replaceOnce(minimalAnimationSet, "                time: 1\n",
+                                      "                time: 1\n                Tags: {}\n"),
+                          "/Resources/Resource/Definitions"});
+
+  auto const minimalImageSetAnimation = replaceOnce(
+      minimalAnimationSet,
+      "            Frames:\n              Frame:\n                image: MissingImage\n"
+      "                time: 1\n",
+      imageSetFrames);
+  invalidCases.push_back({"image-set-mode-missing-reference",
+                          replaceOnce(minimalImageSetAnimation, "              imageset: MissingSet\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-mode-zero-count",
+                          replaceOnce(minimalImageSetAnimation, "              count: 2\n", "              count: '0'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-mode-invalid-time",
+                          replaceOnce(minimalImageSetAnimation, "              time: 1\n", "              time: '1sec'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-override-missing-index",
+                          replaceOnce(minimalImageSetAnimation, "                frame: 0\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"image-set-override-illegal-image",
+                          replaceOnce(minimalImageSetAnimation, "                frame: 0\n",
+                                      "                frame: 0\n                image: MissingImage\n"),
+                          "/Resources/Resource/Definitions"});
+
+  for (auto const& invalid : invalidCases) {
+    auto const caseRoot = root / invalid.label;
+    writeFile(caseRoot / "Resources.yaml", invalid.yaml);
+    DirectoryResourceLocation location(&logger, caseRoot.string(), "Resources.yaml");
+    auto const message = expectInvalidScan(location);
+    require(message.find(invalid.expectedPath) != std::string::npos,
+            invalid.label + " diagnostic omitted " + invalid.expectedPath + ": " + message);
+    require(location.getNamespaceRecords().empty(),
+            invalid.label + " published records after schema validation failed.");
+  }
+
+  // Bounds, names in the dependent ImageSet, duplicate names, and complete
+  // materialized-frame timing depend on loaded Resource data. Keep accepting
+  // those declarations here so their existing creation-time checks own them.
+  auto semanticOnlyImageSet = replaceOnce(
+      minimalImageSet,
+      "          Image:\n            name: Icon\n            x: 0\n            y: 0\n"
+      "            width: 1\n            height: 1\n",
+      "          Image:\n            - name: Icon\n              x: 999999\n"
+      "              y: 0\n              width: 1\n              height: 1\n"
+      "            - name: Icon\n              x: 0\n              y: 0\n"
+      "              width: 1\n              height: 1\n");
+  auto const semanticImageRoot = root / "semantic-only-image-set";
+  writeFile(semanticImageRoot / "Resources.yaml", semanticOnlyImageSet);
+  DirectoryResourceLocation semanticImages(
+      &logger, semanticImageRoot.string(), "Resources.yaml");
+  semanticImages.scan();
+
+  std::string const semanticOnlyAnimation = R"(Resources:
+  Resource:
+    type: AnimationSet
+    name: Animations
+    DependentResources:
+      DependentResource: {id: Image, ref: MissingAtlas}
+    Definitions:
+      Definition:
+        Animations:
+          Animation:
+            - name: Duplicate
+              Frames:
+                Frame:
+                  image: MissingImage
+            - name: Duplicate
+              Frames:
+                imageset: MissingImageSet
+)";
+  auto const semanticAnimationRoot = root / "semantic-only-animation-set";
+  writeFile(semanticAnimationRoot / "Resources.yaml", semanticOnlyAnimation);
+  DirectoryResourceLocation semanticAnimations(
+      &logger, semanticAnimationRoot.string(), "Resources.yaml");
+  semanticAnimations.scan();
+}
+
 void verifyAtomicRescan(fs::path const& root, wp::Logger& logger) {
   auto const atomicRoot = root / "atomic";
   auto const manifest = atomicRoot / "Resources.yaml";
@@ -322,6 +749,7 @@ int main(int argc, char** argv) {
     verifyExistingFixture(fs::absolute(argv[1]), logger);
     verifyCommonSchema(temporaryRoot, logger);
     verifySourceBackedSchemas(temporaryRoot, logger);
+    verifyImageAndAnimationSetSchemas(temporaryRoot, logger);
     verifyAtomicRescan(temporaryRoot, logger);
 
     fs::remove_all(temporaryRoot);
