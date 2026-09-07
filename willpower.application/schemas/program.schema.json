@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.willpower.dev/resource-manifest/program.schema.json",
+  "title": "Program Resource",
+  "$ref": "#/definitions/resource",
+  "definitions": {
+    "primitive": {
+      "type": "string",
+      "pattern": "^(?:[Pp][Oo][Ii][Nn][Tt][Ss]|[Ll][Ii][Nn][Ee][Ss]|[Tt][Rr][Ii][Aa][Nn][Gg][Ll][Ee][Ss])$"
+    },
+    "storage": {
+      "type": "string",
+      "pattern": "^(?:[Ss][Tt][Aa][Tt][Ii][Cc]|[Dd][Yy][Nn][Aa][Mm][Ii][Cc])$"
+    },
+    "component": {
+      "type": "string",
+      "pattern": "^(?:[Pp][Oo][Ss][Ii][Tt][Ii][Oo][Nn][234]|[Nn][Oo][Rr][Mm][Aa][Ll][34]|[Tt][Ee][Xx][Cc][Oo][Oo][Rr][Dd][234]|[Cc][Oo][Ll][Oo][Uu][Rr][134]|[Uu][Ss][Ee][Rr][1234])$"
+    },
+    "dataType": {
+      "type": "string",
+      "pattern": "^(?:[Ff][Ll][Oo][Aa][Tt](?:16|32)|[Ii][Nn][Tt](?:8|16|32)|[Uu][Ii][Nn][Tt](?:8|16|32))$"
+    },
+    "attribs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "textures": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/unsignedInteger"
+        },
+        "diffuse": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        },
+        "colours": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        },
+        "atlas": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        },
+        "rotation": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "type"],
+      "properties": {
+        "data": { "$ref": "#/definitions/component" },
+        "type": { "$ref": "#/definitions/dataType" },
+        "normalised": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        }
+      }
+    },
+    "channelCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/channel" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/channel" }
+        }
+      ]
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Channel"],
+      "properties": {
+        "Channel": { "$ref": "#/definitions/channelCollection" }
+      }
+    },
+    "buffer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Channels"],
+      "properties": {
+        "Channels": { "$ref": "#/definitions/channels" }
+      }
+    },
+    "bufferCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/buffer" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/buffer" }
+        }
+      ]
+    },
+    "buffers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Buffer"],
+      "properties": {
+        "Buffer": { "$ref": "#/definitions/bufferCollection" }
+      }
+    },
+    "meshSpecification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primitive", "indexed", "storage", "Buffers"],
+      "properties": {
+        "primitive": { "$ref": "#/definitions/primitive" },
+        "indexed": {
+          "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+        },
+        "storage": { "$ref": "#/definitions/storage" },
+        "Buffers": { "$ref": "#/definitions/buffers" }
+      }
+    },
+    "defaultDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attribs", "MeshSpecification"],
+      "properties": {
+        "Attribs": { "$ref": "#/definitions/attribs" },
+        "MeshSpecification": { "$ref": "#/definitions/meshSpecification" }
+      }
+    },
+    "specializedDefinition": {
+      "allOf": [
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/definition" },
+        { "required": ["factory"] }
+      ]
+    },
+    "definition": {
+      "oneOf": [
+        { "$ref": "#/definitions/defaultDefinition" },
+        { "$ref": "#/definitions/specializedDefinition" }
+      ]
+    },
+    "definitionCollection": {
+      "oneOf": [
+        { "$ref": "#/definitions/defaultDefinition" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/definition" },
+          "contains": { "$ref": "#/definitions/defaultDefinition" }
+        }
+      ]
+    },
+    "definitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Definition"],
+      "properties": {
+        "Definition": { "$ref": "#/definitions/definitionCollection" }
+      }
+    },
+    "vertexDependency": {
+      "allOf": [
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/dependentResource" },
+        {
+          "required": ["id"],
+          "properties": { "id": { "enum": ["Vertex"] } }
+        }
+      ]
+    },
+    "fragmentDependency": {
+      "allOf": [
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/dependentResource" },
+        {
+          "required": ["id"],
+          "properties": { "id": { "enum": ["Fragment"] } }
+        }
+      ]
+    },
+    "shaderDependency": {
+      "oneOf": [
+        { "$ref": "#/definitions/vertexDependency" },
+        { "$ref": "#/definitions/fragmentDependency" }
+      ]
+    },
+    "shaderDependencyCollection": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/definitions/shaderDependency" },
+      "allOf": [
+        { "contains": { "$ref": "#/definitions/vertexDependency" } },
+        { "contains": { "$ref": "#/definitions/fragmentDependency" } }
+      ]
+    },
+    "dependentResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["DependentResource"],
+      "properties": {
+        "DependentResource": { "$ref": "#/definitions/shaderDependencyCollection" }
+      }
+    },
+    "resource": {
+      "allOf": [
+        { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource" },
+        {
+          "required": ["name", "DependentResources", "Definitions"],
+          "properties": {
+            "type": { "enum": ["Program"] },
+            "DependentResources": { "$ref": "#/definitions/dependentResources" },
+            "Definitions": { "$ref": "#/definitions/definitions" }
+          },
+          "not": {
+            "anyOf": [
+              { "required": ["location"] },
+              { "required": ["Option"] }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

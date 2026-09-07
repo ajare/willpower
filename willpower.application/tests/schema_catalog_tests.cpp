@@ -22,7 +22,8 @@ int main() {
     require(validator.contains({"Infrastructure", "CustomFactory"}),
             "Factory-compatible Resource Type lookup did not fall back.");
     for (auto const* resourceType :
-         {"TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet", "AnimationSet"}) {
+         {"TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet", "AnimationSet",
+          "Program", "Material"}) {
       require(validator.contains({resourceType, ""}),
               std::string("Built-in schema was not registered for ") + resourceType + '.');
     }

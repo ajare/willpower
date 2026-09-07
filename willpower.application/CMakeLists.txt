@@ -13,7 +13,9 @@ set(WILLPOWER_SCHEMA_RECORDS
     "AudioBank||https://schemas.willpower.dev/resource-manifest/audio-bank.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/audio-bank.schema.json"
     "Image||https://schemas.willpower.dev/resource-manifest/image.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image.schema.json"
     "ImageSet||https://schemas.willpower.dev/resource-manifest/image-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/image-set.schema.json"
-    "AnimationSet||https://schemas.willpower.dev/resource-manifest/animation-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json")
+    "AnimationSet||https://schemas.willpower.dev/resource-manifest/animation-set.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json"
+    "Program||https://schemas.willpower.dev/resource-manifest/program.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
+    "Material||https://schemas.willpower.dev/resource-manifest/material.schema.json|${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
 set(WILLPOWER_SCHEMA_INPUTS
     "${CMAKE_CURRENT_SOURCE_DIR}/schemas/resource-manifest.schema.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/schemas/common.schema.json"
@@ -24,7 +26,9 @@ set(WILLPOWER_SCHEMA_INPUTS
     "${CMAKE_CURRENT_SOURCE_DIR}/schemas/audio-bank.schema.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/schemas/image.schema.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/schemas/image-set.schema.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json")
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/animation-set.schema.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/program.schema.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/schemas/material.schema.json")
 # Focused fixtures continue to exercise catalog behavior independently of the
 # production Resource Manifest schemas.
 if(BUILD_TESTING)

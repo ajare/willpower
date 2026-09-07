@@ -687,6 +687,397 @@ void verifyImageAndAnimationSetSchemas(fs::path const& root, wp::Logger& logger)
   semanticAnimations.scan();
 }
 
+void verifyProgramAndMaterialSchemas(fs::path const& root, wp::Logger& logger) {
+  // The Program exercises every component and data-type enum, both collection
+  // shapes, every attribute kind, and deliberately mixed-case renderer enums.
+  // The Material exercises both texture variants, including an omitted and an
+  // explicitly empty value for default textures.
+  std::string const validManifest = R"(Resources:
+  Resource:
+    - type: Program
+      name: MainProgram
+      DependentResources:
+        DependentResource:
+          - id: Vertex
+            ref: MissingVertexShader
+          - id: Fragment
+            ref: MissingFragmentShader
+      Definitions:
+        Definition:
+          - factory: PluginFactory
+            pluginPayload: accepted
+          - Attribs:
+              textures: "2"
+              diffuse: true
+              colours: "YES"
+              atlas: "0"
+              rotation: "false"
+            MeshSpecification:
+              primitive: tRiAnGlEs
+              indexed: "NO"
+              storage: dYnAmIc
+              Buffers:
+                Buffer:
+                  - Channels:
+                      Channel:
+                        - {data: position2, type: float16, normalised: true}
+                        - {data: POSITION3, type: FLOAT32, normalised: "0"}
+                        - {data: Position4, type: int8}
+                        - {data: normal3, type: INT16}
+                        - {data: NORMAL4, type: int32}
+                        - {data: texcoord2, type: UINT8}
+                        - {data: TEXCOORD3, type: uint16}
+                        - {data: TexCoord4, type: UINT32}
+                  - Channels:
+                      Channel:
+                        - {data: colour1, type: float16}
+                        - {data: COLOUR3, type: FLOAT32}
+                        - {data: Colour4, type: int8}
+                        - {data: user1, type: INT16}
+                        - {data: USER2, type: int32}
+                        - {data: User3, type: UINT8}
+                        - {data: user4, type: uint16}
+    - type: Program
+      name: PointProgram
+      DependentResources:
+        DependentResource:
+          - {id: Vertex, ref: MissingVertexShader}
+          - {id: Fragment, ref: MissingFragmentShader}
+      Definitions:
+        Definition:
+          Attribs: {}
+          MeshSpecification:
+            primitive: PoInTs
+            indexed: false
+            storage: STATIC
+            Buffers:
+              Buffer:
+                Channels:
+                  Channel: {data: POSITION2, type: FLOAT32}
+    - type: Program
+      name: LineProgram
+      DependentResources:
+        DependentResource:
+          - {id: Fragment, ref: MissingFragmentShader}
+          - {id: Vertex, ref: MissingVertexShader}
+      Definitions:
+        Definition:
+          Attribs: {}
+          MeshSpecification:
+            primitive: lines
+            indexed: "1"
+            storage: static
+            Buffers:
+              Buffer:
+                Channels:
+                  Channel: {data: USER4, type: UINT32, normalised: "yes"}
+    - type: Material
+      name: MainMaterial
+      DependentResources:
+        DependentResource:
+          - {id: Program, ref: MainProgram}
+          - {id: DiffuseImage, ref: MissingImage}
+      Definitions:
+        Definition:
+          - factory: PluginFactory
+            pluginPayload: accepted
+          - Textures:
+              Texture:
+                - {sampler: Diffuse, type: resource, value: DiffuseImage}
+                - {sampler: Generated, type: default}
+                - {sampler: Optional, type: default, value: ''}
+    - type: Material
+      name: EmptyMaterial
+      DependentResources:
+        DependentResource: {id: Program, ref: MainProgram}
+      Definitions:
+        Definition:
+          Textures: {}
+)";
+  auto const validRoot = root / "valid-program-material";
+  writeFile(validRoot / "Resources.yaml", validManifest);
+  DirectoryResourceLocation valid(&logger, validRoot.string(), "Resources.yaml");
+  valid.scan();
+  auto const& validRecords = valid.getNamespaceRecords().at("").resourceRecords;
+  require(validRecords.contains("MainProgram") && validRecords.contains("MainMaterial") &&
+              validRecords.contains("EmptyMaterial"),
+          "Representative Program and Material declarations did not pass scan-time validation.");
+
+  std::string const minimalProgram = R"(Resources:
+  Resource:
+    type: Program
+    name: ProgramUnderTest
+    DependentResources:
+      DependentResource:
+        - {id: Vertex, ref: MissingVertex}
+        - {id: Fragment, ref: MissingFragment}
+    Definitions:
+      Definition:
+        Attribs:
+          textures: 1
+          diffuse: true
+        MeshSpecification:
+          primitive: TRIANGLES
+          indexed: false
+          storage: STATIC
+          Buffers:
+            Buffer:
+              Channels:
+                Channel:
+                  data: POSITION3
+                  type: FLOAT32
+                  normalised: false
+)";
+
+  struct InvalidCase {
+    std::string label;
+    std::string yaml;
+    std::string expectedPath;
+  };
+  std::vector<InvalidCase> invalidCases;
+  invalidCases.push_back({"program-missing-dependencies",
+                          replaceOnce(minimalProgram,
+                                      "    DependentResources:\n      DependentResource:\n"
+                                      "        - {id: Vertex, ref: MissingVertex}\n"
+                                      "        - {id: Fragment, ref: MissingFragment}\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"program-missing-vertex",
+                          replaceOnce(minimalProgram,
+                                      "        - {id: Vertex, ref: MissingVertex}\n", ""),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"program-missing-fragment",
+                          replaceOnce(minimalProgram,
+                                      "        - {id: Fragment, ref: MissingFragment}\n", ""),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"program-unknown-dependency",
+                          replaceOnce(minimalProgram, "id: Fragment", "id: Geometry"),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"program-location",
+                          replaceOnce(minimalProgram, "    name: ProgramUnderTest\n",
+                                      "    name: ProgramUnderTest\n    location: program.bin\n"),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"program-option",
+                          replaceOnce(minimalProgram, "    name: ProgramUnderTest\n",
+                                      "    name: ProgramUnderTest\n    Option: {name: unsupported, value: true}\n"),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"program-missing-definition",
+                          replaceOnce(minimalProgram,
+                                      "    Definitions:\n      Definition:\n        Attribs:\n"
+                                      "          textures: 1\n          diffuse: true\n"
+                                      "        MeshSpecification:\n          primitive: TRIANGLES\n"
+                                      "          indexed: false\n          storage: STATIC\n"
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"program-specialized-only",
+                          replaceOnce(minimalProgram,
+                                      "        Attribs:\n          textures: 1\n          diffuse: true\n"
+                                      "        MeshSpecification:\n          primitive: TRIANGLES\n"
+                                      "          indexed: false\n          storage: STATIC\n"
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      "        factory: PluginFactory\n        pluginPayload: accepted\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-missing-attribs",
+                          replaceOnce(minimalProgram,
+                                      "        Attribs:\n          textures: 1\n          diffuse: true\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-unknown-attrib",
+                          replaceOnce(minimalProgram, "          diffuse: true\n",
+                                      "          diffuse: true\n          unknown: false\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-malformed-textures",
+                          replaceOnce(minimalProgram, "          textures: 1\n",
+                                      "          textures: '1 texture'\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-negative-textures",
+                          replaceOnce(minimalProgram, "          textures: 1\n",
+                                      "          textures: -1\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-malformed-attrib-boolean",
+                          replaceOnce(minimalProgram, "          diffuse: true\n",
+                                      "          diffuse: sometimes\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-missing-mesh",
+                          replaceOnce(minimalProgram,
+                                      "        MeshSpecification:\n          primitive: TRIANGLES\n"
+                                      "          indexed: false\n          storage: STATIC\n"
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-invalid-primitive",
+                          replaceOnce(minimalProgram, "          primitive: TRIANGLES\n",
+                                      "          primitive: QUADS\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-malformed-indexed",
+                          replaceOnce(minimalProgram, "          indexed: false\n",
+                                      "          indexed: truthy\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-invalid-storage",
+                          replaceOnce(minimalProgram, "          storage: STATIC\n",
+                                      "          storage: STREAM\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-missing-buffers",
+                          replaceOnce(minimalProgram,
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-empty-buffers",
+                          replaceOnce(minimalProgram,
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      "          Buffers: {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-empty-buffer-array",
+                          replaceOnce(minimalProgram,
+                                      "          Buffers:\n            Buffer:\n              Channels:\n"
+                                      "                Channel:\n                  data: POSITION3\n"
+                                      "                  type: FLOAT32\n                  normalised: false\n",
+                                      "          Buffers: {Buffer: []}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-empty-channels",
+                          replaceOnce(minimalProgram,
+                                      "              Channels:\n                Channel:\n"
+                                      "                  data: POSITION3\n                  type: FLOAT32\n"
+                                      "                  normalised: false\n",
+                                      "              Channels: {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-empty-channel-array",
+                          replaceOnce(minimalProgram,
+                                      "              Channels:\n                Channel:\n"
+                                      "                  data: POSITION3\n                  type: FLOAT32\n"
+                                      "                  normalised: false\n",
+                                      "              Channels: {Channel: []}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-invalid-component",
+                          replaceOnce(minimalProgram, "                  data: POSITION3\n",
+                                      "                  data: TANGENT3\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-invalid-data-type",
+                          replaceOnce(minimalProgram, "                  type: FLOAT32\n",
+                                      "                  type: FLOAT64\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-malformed-normalised",
+                          replaceOnce(minimalProgram, "                  normalised: false\n",
+                                      "                  normalised: maybe\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"program-unknown-channel-field",
+                          replaceOnce(minimalProgram, "                  normalised: false\n",
+                                      "                  normalised: false\n                  stride: 4\n"),
+                          "/Resources/Resource/Definitions"});
+
+  std::string const minimalMaterial = R"(Resources:
+  Resource:
+    type: Material
+    name: MaterialUnderTest
+    DependentResources:
+      DependentResource:
+        - {id: Program, ref: MissingProgram}
+        - {id: TextureImage, ref: MissingImage}
+    Definitions:
+      Definition:
+        Textures:
+          Texture:
+            sampler: Diffuse
+            type: resource
+            value: TextureImage
+)";
+  invalidCases.push_back({"material-missing-dependencies",
+                          replaceOnce(minimalMaterial,
+                                      "    DependentResources:\n      DependentResource:\n"
+                                      "        - {id: Program, ref: MissingProgram}\n"
+                                      "        - {id: TextureImage, ref: MissingImage}\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"material-missing-program",
+                          replaceOnce(minimalMaterial,
+                                      "        - {id: Program, ref: MissingProgram}\n", ""),
+                          "/Resources/Resource/DependentResources"});
+  invalidCases.push_back({"material-location",
+                          replaceOnce(minimalMaterial, "    name: MaterialUnderTest\n",
+                                      "    name: MaterialUnderTest\n    location: material.bin\n"),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"material-missing-definition",
+                          replaceOnce(minimalMaterial,
+                                      "    Definitions:\n      Definition:\n        Textures:\n"
+                                      "          Texture:\n            sampler: Diffuse\n"
+                                      "            type: resource\n            value: TextureImage\n",
+                                      ""),
+                          "/Resources/Resource"});
+  invalidCases.push_back({"material-missing-textures",
+                          replaceOnce(minimalMaterial,
+                                      "        Textures:\n          Texture:\n            sampler: Diffuse\n"
+                                      "            type: resource\n            value: TextureImage\n",
+                                      "        {}\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-empty-texture-array",
+                          replaceOnce(minimalMaterial,
+                                      "          Texture:\n            sampler: Diffuse\n"
+                                      "            type: resource\n            value: TextureImage\n",
+                                      "          Texture: []\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-missing-sampler",
+                          replaceOnce(minimalMaterial, "            sampler: Diffuse\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-empty-sampler",
+                          replaceOnce(minimalMaterial, "            sampler: Diffuse\n",
+                                      "            sampler: ''\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-invalid-texture-type",
+                          replaceOnce(minimalMaterial, "            type: resource\n",
+                                      "            type: procedural\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-resource-missing-value",
+                          replaceOnce(minimalMaterial, "            value: TextureImage\n", ""),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-resource-empty-value",
+                          replaceOnce(minimalMaterial, "            value: TextureImage\n",
+                                      "            value: ''\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-resource-null-value",
+                          replaceOnce(minimalMaterial, "            value: TextureImage\n",
+                                      "            value: null\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-default-nonempty-value",
+                          replaceOnce(minimalMaterial, "            type: resource\n",
+                                      "            type: default\n"),
+                          "/Resources/Resource/Definitions"});
+  invalidCases.push_back({"material-unknown-texture-field",
+                          replaceOnce(minimalMaterial, "            value: TextureImage\n",
+                                      "            value: TextureImage\n            unit: 0\n"),
+                          "/Resources/Resource/Definitions"});
+
+  for (auto const& invalid : invalidCases) {
+    auto const caseRoot = root / invalid.label;
+    writeFile(caseRoot / "Resources.yaml", invalid.yaml);
+    DirectoryResourceLocation location(&logger, caseRoot.string(), "Resources.yaml");
+    auto const message = expectInvalidScan(location);
+    require(message.find(invalid.expectedPath) != std::string::npos,
+            invalid.label + " diagnostic omitted " + invalid.expectedPath + ": " + message);
+    require(location.getNamespaceRecords().empty(),
+            invalid.label + " published records after schema validation failed.");
+  }
+
+  // A resource texture's value and the actual types/existence of dependencies
+  // are cross-Resource facts. Structural validation must leave those checks to
+  // the existing ResourceManager/create/load path.
+  auto const semanticRoot = root / "semantic-only-material";
+  writeFile(semanticRoot / "Resources.yaml", replaceOnce(
+      minimalMaterial, "            value: TextureImage\n",
+      "            value: UndeclaredTextureDependency\n"));
+  DirectoryResourceLocation semantic(&logger, semanticRoot.string(), "Resources.yaml");
+  semantic.scan();
+}
+
 void verifyAtomicRescan(fs::path const& root, wp::Logger& logger) {
   auto const atomicRoot = root / "atomic";
   auto const manifest = atomicRoot / "Resources.yaml";
@@ -750,6 +1141,7 @@ int main(int argc, char** argv) {
     verifyCommonSchema(temporaryRoot, logger);
     verifySourceBackedSchemas(temporaryRoot, logger);
     verifyImageAndAnimationSetSchemas(temporaryRoot, logger);
+    verifyProgramAndMaterialSchemas(temporaryRoot, logger);
     verifyAtomicRescan(temporaryRoot, logger);
 
     fs::remove_all(temporaryRoot);
