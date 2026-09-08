@@ -6,9 +6,11 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -161,6 +163,12 @@ void setCollection(YAML::Node parent, char const* key,
   }
 }
 
+std::vector<YAML::Node> standardDependencyItems(YAML::Node const& resource) {
+  auto dependentResources = resource["DependentResources"];
+  if (!dependentResources || !dependentResources.IsMap()) return {};
+  return collectionItems(dependentResources["DependentResource"]);
+}
+
 // YAML::Node assignment mutates the aliased node rather than behaving like a
 // value assignment. Rebuild vectors when changing their shape so std::vector's
 // shifting assignments cannot duplicate or overwrite neighboring nodes.
@@ -260,7 +268,74 @@ struct ResourceIdentity {
   std::string name;
 
   bool operator==(ResourceIdentity const&) const = default;
+  bool operator<(ResourceIdentity const& other) const {
+    return std::tie(resourceNamespace, name) <
+           std::tie(other.resourceNamespace, other.name);
+  }
 };
+
+std::string qualifiedIdentity(ResourceIdentity const& identity) {
+  return identity.resourceNamespace.empty()
+             ? identity.name
+             : identity.resourceNamespace + "/" + identity.name;
+}
+
+struct ResourceDeclaration {
+  ResourceIdentity identity;
+  std::string resourceType;
+  bool inlineResource = false;
+  ResourceIdentity owner;
+  std::size_t dependencyIndex = 0;
+};
+
+std::vector<ResourceDeclaration> resourceDeclarations(YAML::Node const& root) {
+  std::vector<ResourceDeclaration> result;
+  auto append = [&](std::string const& resourceNamespace,
+                    YAML::Node const& collection) {
+    for (auto const& resource : collectionItems(collection)) {
+      ResourceIdentity const owner{resourceNamespace, resourceIdentity(resource)};
+      result.push_back({owner, scalar(resource, "type")});
+      auto dependencies = standardDependencyItems(resource);
+      for (std::size_t index = 0; index < dependencies.size(); ++index) {
+        auto const& dependency = dependencies[index];
+        if (scalar(dependency, "ref").empty() &&
+            !scalar(dependency, "type").empty()) {
+          result.push_back({{resourceNamespace, resourceIdentity(dependency)},
+                            scalar(dependency, "type"), true, owner, index});
+        }
+      }
+    }
+  };
+  auto resourcesRoot = root["Resources"];
+  append({}, resourcesRoot["Resource"]);
+  for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
+    append(scalar(item, "name"), item["Resource"]);
+  }
+  return result;
+}
+
+std::vector<std::string> standardAllowedTypes(std::string const& ownerType,
+                                               std::string const& dependencyId) {
+  if (ownerType == "ImageSet" && dependencyId == "Image") return {"Image"};
+  if (ownerType == "AnimationSet" && dependencyId == "Image") {
+    return {"ImageSet"};
+  }
+  if (ownerType == "Program" &&
+      (dependencyId == "Vertex" || dependencyId == "Fragment")) {
+    return {"Shader"};
+  }
+  if (ownerType == "Material") {
+    return dependencyId == "Program" ? std::vector<std::string>{"Program"}
+                                     : std::vector<std::string>{"Image"};
+  }
+  return {};
+}
+
+bool allowedResourceType(std::vector<std::string> const& allowed,
+                         std::string const& type) {
+  return allowed.empty() ||
+         std::find(allowed.begin(), allowed.end(), type) != allowed.end();
+}
 
 ResourceIdentity parseReference(std::string const& reference,
                                 std::string const& ownerNamespace) {
@@ -298,6 +373,47 @@ void forEachStandardReference(YAML::Node const& root, Visitor visitor) {
   for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
     visitCollection(scalar(item, "name"), item["Resource"]);
   }
+}
+
+bool dependencyPathExists(YAML::Node const& root,
+                          ResourceIdentity const& start,
+                          ResourceIdentity const& target) {
+  std::map<ResourceIdentity, std::vector<ResourceIdentity>> edges;
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source,
+                ResourceIdentity const& referenced) {
+        edges[source].push_back(referenced);
+      });
+  for (auto const& declaration : resourceDeclarations(root)) {
+    if (declaration.inlineResource) {
+      edges[declaration.owner].push_back(declaration.identity);
+    }
+  }
+
+  std::set<ResourceIdentity> visited;
+  std::vector<ResourceIdentity> work{start};
+  while (!work.empty()) {
+    auto current = std::move(work.back());
+    work.pop_back();
+    if (current == target) return true;
+    if (!visited.insert(current).second) continue;
+    auto found = edges.find(current);
+    if (found != edges.end()) {
+      work.insert(work.end(), found->second.begin(), found->second.end());
+    }
+  }
+  return false;
+}
+
+std::vector<ResourceDeclaration> matchingDeclarations(
+    std::vector<ResourceDeclaration> const& declarations,
+    ResourceIdentity const& identity) {
+  std::vector<ResourceDeclaration> result;
+  std::copy_if(declarations.begin(), declarations.end(),
+               std::back_inserter(result), [&](auto const& declaration) {
+                 return declaration.identity == identity;
+               });
+  return result;
 }
 
 template <typename Transform>
@@ -353,18 +469,6 @@ std::size_t resourceCount(ResourceCollection const& collection,
       [&](YAML::Node const& resource) {
         return resourceIdentity(resource) == name;
       }));
-}
-
-bool hasIncomingReference(YAML::Node const& root,
-                          ResourceIdentity const& target,
-                          std::function<bool(ResourceIdentity const&)> sourceIsRemoved) {
-  bool incoming = false;
-  forEachStandardReference(
-      root, [&](ResourceIdentity const& source,
-                ResourceIdentity const& referenced) {
-        if (referenced == target && !sourceIsRemoved(source)) incoming = true;
-      });
-  return incoming;
 }
 
 bool equalPathComponent(fs::path const& left, fs::path const& right) {
@@ -726,6 +830,246 @@ std::vector<ResourceSummary> ManifestWorkspace::resources() const {
   for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
     append(scalar(item, "name"), item["Resource"]);
   }
+  return result;
+}
+
+std::vector<InlineResourceSummary> ManifestWorkspace::inlineResources(
+    std::string const& ownerNamespace, std::string const& ownerName) const {
+  std::vector<InlineResourceSummary> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) return result;
+  auto resource = collection->resources[*findResourceIndex(*collection, ownerName)];
+  auto dependencies = standardDependencyItems(resource);
+  for (std::size_t index = 0; index < dependencies.size(); ++index) {
+    auto const& dependency = dependencies[index];
+    if (!scalar(dependency, "ref").empty() || scalar(dependency, "type").empty()) {
+      continue;
+    }
+    InlineResourceSummary summary;
+    summary.resourceNamespace = ownerNamespace;
+    summary.ownerName = ownerName;
+    summary.dependencyIndex = index;
+    summary.dependencyId = scalar(dependency, "id");
+    summary.resourceType = scalar(dependency, "type");
+    summary.name = scalar(dependency, "name");
+    summary.explicitName = !summary.name.empty();
+    summary.location = scalar(dependency, "location");
+    for (auto const& option : collectionItems(dependency["Option"])) {
+      summary.options.emplace_back(scalar(option, "name"),
+                                   scalar(option, "value"));
+    }
+    if (summary.name.empty()) summary.name = summary.location;
+    summary.editable = resourceForm(summary.resourceType) != nullptr;
+    result.push_back(std::move(summary));
+  }
+  return result;
+}
+
+std::vector<ResourceReferenceSelector> ManifestWorkspace::resourceReferences(
+    std::string const& ownerNamespace, std::string const& ownerName) const {
+  std::vector<ResourceReferenceSelector> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) return result;
+  auto resource = collection->resources[*findResourceIndex(*collection, ownerName)];
+  auto const ownerType = scalar(resource, "type");
+  ResourceIdentity const owner{ownerNamespace, ownerName};
+  auto dependencies = standardDependencyItems(resource);
+  auto declarations = resourceDeclarations(root);
+
+  for (std::size_t index = 0; index < dependencies.size(); ++index) {
+    auto const& dependency = dependencies[index];
+    auto const reference = scalar(dependency, "ref");
+    if (reference.empty()) continue;
+
+    ResourceReferenceSelector selector;
+    selector.ownerNamespace = ownerNamespace;
+    selector.ownerName = ownerName;
+    selector.dependencyIndex = index;
+    selector.dependencyId = scalar(dependency, "id");
+    selector.reference = reference;
+    selector.allowedResourceTypes =
+        standardAllowedTypes(ownerType, selector.dependencyId);
+    auto const selectedIdentity = parseReference(reference, ownerNamespace);
+
+    for (auto const& declaration : declarations) {
+      if (declaration.inlineResource || declaration.identity == owner ||
+          !allowedResourceType(selector.allowedResourceTypes,
+                               declaration.resourceType) ||
+          !validResourceName(declaration.identity.name)) {
+        continue;
+      }
+      if (std::any_of(selector.choices.begin(), selector.choices.end(),
+                      [&](auto const& choice) {
+                        return choice.resourceNamespace ==
+                                   declaration.identity.resourceNamespace &&
+                               choice.name == declaration.identity.name;
+                      })) {
+        continue;
+      }
+      ResourceReferenceChoice choice;
+      choice.resourceNamespace = declaration.identity.resourceNamespace;
+      choice.name = declaration.identity.name;
+      choice.resourceType = declaration.resourceType;
+      choice.qualifiedIdentity = qualifiedIdentity(declaration.identity);
+      choice.selected = declaration.identity == selectedIdentity;
+      auto const candidateMatches =
+          matchingDeclarations(declarations, declaration.identity);
+      choice.disabled = candidateMatches.size() != 1U ||
+                        dependencyPathExists(root, declaration.identity, owner);
+      if (candidateMatches.size() != 1U) {
+        choice.reason = "ambiguous Resource identity";
+      } else if (choice.disabled) {
+        choice.reason = "would create a dependency cycle";
+      }
+      selector.choices.push_back(std::move(choice));
+    }
+
+    auto selected = std::find_if(
+        selector.choices.begin(), selector.choices.end(),
+        [](ResourceReferenceChoice const& choice) { return choice.selected; });
+    auto matches = matchingDeclarations(declarations, selectedIdentity);
+    bool const selectedIsUsable =
+        matches.size() == 1U && matches.front().identity != owner &&
+        allowedResourceType(selector.allowedResourceTypes,
+                            matches.front().resourceType);
+    if (selected == selector.choices.end()) {
+      ResourceReferenceChoice legacy;
+      legacy.resourceNamespace = selectedIdentity.resourceNamespace;
+      legacy.name = selectedIdentity.name;
+      legacy.qualifiedIdentity = qualifiedIdentity(selectedIdentity);
+      legacy.selected = true;
+      legacy.disabled = true;
+      if (matches.size() == 1U) {
+        legacy.resourceType = matches.front().resourceType;
+        legacy.inlineResource = matches.front().inlineResource;
+        if (matches.front().inlineResource) {
+          legacy.reason = "existing inline Resource reference";
+        } else if (matches.front().identity == owner) {
+          legacy.reason = "self-reference";
+        } else {
+          legacy.reason = "incompatible Resource Type";
+        }
+      } else {
+        legacy.missing = true;
+        legacy.reason = matches.empty() ? "missing Resource"
+                                        : "ambiguous Resource identity";
+        selector.missing = true;
+      }
+      selector.choices.insert(selector.choices.begin(), std::move(legacy));
+    } else if (!selectedIsUsable) {
+      selected->disabled = true;
+      if (matches.size() != 1U) {
+        selected->reason = "ambiguous Resource identity";
+        selector.missing = true;
+      } else if (matches.front().identity == owner) {
+        selected->reason = "self-reference";
+      } else {
+        selected->reason = "incompatible Resource Type";
+      }
+    }
+
+    auto previewRoot = YAML::Clone(root);
+    auto previewCollection = findResourceCollection(previewRoot, ownerNamespace);
+    auto previewResource =
+        previewCollection->resources[*findResourceIndex(*previewCollection, ownerName)];
+    auto previewDependencies = standardDependencyItems(previewResource);
+    eraseCollectionItem(previewDependencies, index);
+    if (previewDependencies.empty()) {
+      previewResource.remove("DependentResources");
+    } else {
+      setCollection(previewResource["DependentResources"], "DependentResource",
+                    previewDependencies);
+    }
+    previewCollection->resources[*findResourceIndex(*previewCollection, ownerName)] =
+        previewResource;
+    publishCollection(previewRoot, *previewCollection);
+    auto previewDocument = ResourceManifestDocument::parse(
+        emitYaml(previewRoot), "Resource reference clear preview");
+    selector.clearable = previewDocument.validate(mCatalog).valid();
+    result.push_back(std::move(selector));
+  }
+  return result;
+}
+
+std::vector<DependencyDiagnostic> ManifestWorkspace::dependencyDiagnostics() const {
+  std::vector<DependencyDiagnostic> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto declarations = resourceDeclarations(root);
+  for (auto const& resource : resources()) {
+    ResourceIdentity const owner{resource.resourceNamespace, resource.name};
+    for (auto const& selector :
+         resourceReferences(resource.resourceNamespace, resource.name)) {
+      auto target = parseReference(selector.reference, resource.resourceNamespace);
+      auto matches = matchingDeclarations(declarations, target);
+      if (matches.size() != 1U) {
+        result.push_back({resource.resourceNamespace, resource.name,
+                          selector.dependencyIndex,
+                          "Reference '" + selector.reference + "' from '" +
+                              qualifiedIdentity(owner) + "' is " +
+                              (matches.empty() ? "missing." : "ambiguous.")});
+      } else if (matches.front().identity == owner) {
+        result.push_back({resource.resourceNamespace, resource.name,
+                          selector.dependencyIndex,
+                          "Resource '" + qualifiedIdentity(owner) +
+                              "' references itself."});
+      } else if (!allowedResourceType(selector.allowedResourceTypes,
+                                      matches.front().resourceType)) {
+        result.push_back({resource.resourceNamespace, resource.name,
+                          selector.dependencyIndex,
+                          "Reference '" + selector.reference + "' from '" +
+                              qualifiedIdentity(owner) +
+                              "' has an incompatible Resource Type."});
+      } else if (dependencyPathExists(root, target, owner)) {
+        result.push_back({resource.resourceNamespace, resource.name,
+                          selector.dependencyIndex,
+                          "Reference from '" + qualifiedIdentity(owner) +
+                              "' to '" + qualifiedIdentity(target) +
+                              "' participates in a dependency cycle."});
+      }
+    }
+  }
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source, ResourceIdentity const& target) {
+        auto matches = matchingDeclarations(declarations, target);
+        if (matches.size() != 1U) return;
+        bool const sourceIsRemovedWithTarget =
+            source == target ||
+            (matches.front().inlineResource && source == matches.front().owner);
+        if (!sourceIsRemovedWithTarget) {
+          result.push_back({target.resourceNamespace, target.name, 0,
+                            "Resource '" + qualifiedIdentity(target) +
+                                "' is referenced by '" +
+                                qualifiedIdentity(source) +
+                                "'; deletion is blocked.",
+                            false});
+        }
+      });
+  return result;
+}
+
+std::vector<std::string> ManifestWorkspace::incomingReferences(
+    std::string const& resourceNamespace, std::string const& name) const {
+  std::vector<std::string> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  ResourceIdentity const target{resourceNamespace, name};
+  auto matches = matchingDeclarations(resourceDeclarations(root), target);
+  std::optional<ResourceIdentity> inlineOwner;
+  if (matches.size() == 1U && matches.front().inlineResource) {
+    inlineOwner = matches.front().owner;
+  }
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source, ResourceIdentity const& referenced) {
+        if (referenced == target && source != target &&
+            (!inlineOwner || source != *inlineOwner)) {
+          result.push_back(qualifiedIdentity(source));
+        }
+      });
   return result;
 }
 
@@ -1123,8 +1467,35 @@ bool ManifestWorkspace::moveResource(
 
   ResourceIdentity const oldIdentity{sourceNamespace, name};
   ResourceIdentity const newIdentity{targetNamespace, name};
+  std::vector<ResourceIdentity> inlineIdentities;
+  auto sourceResource = source->resources[*findResourceIndex(*source, name)];
+  for (auto const& dependency : standardDependencyItems(sourceResource)) {
+    if (scalar(dependency, "ref").empty() &&
+        !scalar(dependency, "type").empty()) {
+      inlineIdentities.push_back({sourceNamespace, resourceIdentity(dependency)});
+    }
+  }
+  auto declarations = resourceDeclarations(root);
+  for (auto const& identity : inlineIdentities) {
+    ResourceIdentity const movedInline{targetNamespace, identity.name};
+    if (std::any_of(declarations.begin(), declarations.end(),
+                    [&](auto const& declaration) {
+                      return declaration.identity == movedInline &&
+                             !(declaration.inlineResource &&
+                               declaration.owner == oldIdentity);
+                    })) {
+      setFailure("Moving the Resource would collide with an owned inline Resource.");
+      return false;
+    }
+  }
   rewriteStandardReferences(root, [&](ResourceIdentity identity) {
-    return identity == oldIdentity ? newIdentity : identity;
+    if (identity == oldIdentity) return newIdentity;
+    auto inlineIdentity = std::find(inlineIdentities.begin(),
+                                    inlineIdentities.end(), identity);
+    if (inlineIdentity != inlineIdentities.end()) {
+      return ResourceIdentity{targetNamespace, identity.name};
+    }
+    return identity;
   });
 
   source = findResourceCollection(root, sourceNamespace);
@@ -1272,6 +1643,322 @@ bool ManifestWorkspace::setResourceOption(
       continuous);
 }
 
+bool ManifestWorkspace::setResourceReference(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::size_t dependencyIndex,
+    std::optional<std::pair<std::string, std::string>> target) {
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) {
+    setFailure("Reference owner was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  auto dependencies =
+      standardDependencyItems(resource);
+  if (dependencyIndex >= dependencies.size() ||
+      scalar(dependencies[dependencyIndex], "ref").empty()) {
+    setFailure("The selected standard Resource reference was not found.");
+    return false;
+  }
+
+  auto selectors = resourceReferences(ownerNamespace, ownerName);
+  auto selector = std::find_if(selectors.begin(), selectors.end(),
+                               [&](auto const& item) {
+                                 return item.dependencyIndex == dependencyIndex;
+                               });
+  if (selector == selectors.end()) {
+    setFailure("The selected standard Resource reference was not available.");
+    return false;
+  }
+  if (!target) {
+    if (!selector->clearable) {
+      setFailure("This Resource reference is required and cannot be cleared.");
+      return false;
+    }
+    eraseCollectionItem(dependencies, dependencyIndex);
+    if (dependencies.empty()) {
+      resource.remove("DependentResources");
+    } else {
+      setCollection(resource["DependentResources"], "DependentResource",
+                    dependencies);
+    }
+  } else {
+    auto choice = std::find_if(
+        selector->choices.begin(), selector->choices.end(),
+        [&](ResourceReferenceChoice const& item) {
+          return item.resourceNamespace == target->first &&
+                 item.name == target->second;
+        });
+    if (choice == selector->choices.end() || choice->disabled ||
+        choice->inlineResource || choice->missing) {
+      setFailure("The selected Resource is not a compatible, cycle-safe target.");
+      return false;
+    }
+
+    auto targetCollection = findResourceCollection(root, target->first);
+    if (!targetCollection || resourceCount(*targetCollection, target->second) != 1U) {
+      setFailure("The selected Resource target was not found uniquely.");
+      return false;
+    }
+    auto targetIndex = *findResourceIndex(*targetCollection, target->second);
+    if (scalar(targetCollection->resources[targetIndex], "name").empty()) {
+      if (!validResourceName(target->second)) {
+        setFailure("An inferred Resource name must be made explicit before it can be referenced.");
+        return false;
+      }
+      targetCollection->resources[targetIndex]["name"] = target->second;
+      publishCollection(root, *targetCollection);
+      collection = findResourceCollection(root, ownerNamespace);
+      ownerIndex = *findResourceIndex(*collection, ownerName);
+      resource = collection->resources[ownerIndex];
+      dependencies = standardDependencyItems(resource);
+    }
+    dependencies[dependencyIndex]["ref"] = formatReference(
+        {target->first, target->second}, ownerNamespace);
+    setCollection(resource["DependentResources"], "DependentResource",
+                  dependencies);
+  }
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Select Resource dependency", emitYaml(root));
+}
+
+bool ManifestWorkspace::renameInlineResource(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::size_t dependencyIndex, std::string newName, bool continuous) {
+  if (!validResourceName(newName)) {
+    setFailure("An inline Resource name is required and cannot contain '/'.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) {
+    setFailure("Inline Resource owner was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  auto dependencies =
+      standardDependencyItems(resource);
+  if (dependencyIndex >= dependencies.size() ||
+      !scalar(dependencies[dependencyIndex], "ref").empty() ||
+      scalar(dependencies[dependencyIndex], "type").empty()) {
+    setFailure("Inline Resource was not found.");
+    return false;
+  }
+  auto oldName = resourceIdentity(dependencies[dependencyIndex]);
+  ResourceIdentity const oldIdentity{ownerNamespace, oldName};
+  ResourceIdentity const newIdentity{ownerNamespace, newName};
+  auto declarations = resourceDeclarations(root);
+  if (newIdentity != oldIdentity &&
+      std::any_of(declarations.begin(), declarations.end(),
+                  [&](auto const& declaration) {
+                    return declaration.identity == newIdentity;
+                  })) {
+    setFailure("Inline Resource names must be unique within their namespace.");
+    return false;
+  }
+  if (newIdentity == oldIdentity &&
+      scalar(dependencies[dependencyIndex], "name") == newName) {
+    return true;
+  }
+
+  rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+    return identity == oldIdentity ? newIdentity : identity;
+  });
+  collection = findResourceCollection(root, ownerNamespace);
+  ownerIndex = *findResourceIndex(*collection, ownerName);
+  resource = collection->resources[ownerIndex];
+  dependencies =
+      standardDependencyItems(resource);
+  dependencies[dependencyIndex]["name"] = newName;
+  setCollection(resource["DependentResources"], "DependentResource",
+                dependencies);
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand(
+      "Rename inline Resource", emitYaml(root),
+      "inline-name:" + ownerNamespace + ":" + ownerName + ":" +
+          std::to_string(dependencyIndex),
+      continuous);
+}
+
+bool ManifestWorkspace::setInlineResourceFile(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::size_t dependencyIndex, fs::path const& selectedFile,
+    bool continuous) {
+  auto relative = portableSelectedFile(selectedFile);
+  if (!relative) return false;
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) {
+    setFailure("Inline Resource owner was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  auto dependencies =
+      standardDependencyItems(resource);
+  if (dependencyIndex >= dependencies.size() ||
+      !scalar(dependencies[dependencyIndex], "ref").empty()) {
+    setFailure("Inline Resource was not found.");
+    return false;
+  }
+  auto const* form = resourceForm(scalar(dependencies[dependencyIndex], "type"));
+  if (!form || form->fileProperty != "location") {
+    setFailure("Inline Resource Type has no editable file property.");
+    return false;
+  }
+  dependencies[dependencyIndex][form->fileProperty] = *relative;
+  setCollection(resource["DependentResources"], "DependentResource",
+                dependencies);
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand(
+      "Select inline Resource file", emitYaml(root),
+      "inline-file:" + ownerNamespace + ":" + ownerName + ":" +
+          std::to_string(dependencyIndex),
+      continuous);
+}
+
+bool ManifestWorkspace::setInlineResourceOption(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::size_t dependencyIndex, std::string const& optionName,
+    std::optional<std::string> value, bool continuous) {
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  if (!collection || resourceCount(*collection, ownerName) != 1U) {
+    setFailure("Inline Resource owner was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  auto dependencies =
+      standardDependencyItems(resource);
+  if (dependencyIndex >= dependencies.size() ||
+      !scalar(dependencies[dependencyIndex], "ref").empty()) {
+    setFailure("Inline Resource was not found.");
+    return false;
+  }
+  auto dependency = dependencies[dependencyIndex];
+  auto const* form = resourceForm(scalar(dependency, "type"));
+  ResourceOptionForm const* optionForm = nullptr;
+  if (form) {
+    auto found = std::find_if(form->options.begin(), form->options.end(),
+                              [&](auto const& option) {
+                                return option.name == optionName;
+                              });
+    if (found != form->options.end()) optionForm = &*found;
+  }
+  if (!optionForm ||
+      (value && !optionForm->boolean &&
+       std::find(optionForm->values.begin(), optionForm->values.end(), *value) ==
+           optionForm->values.end()) ||
+      (value && optionForm->boolean && *value != "true" && *value != "false")) {
+    setFailure("Inline Resource option value is not permitted by its schema.");
+    return false;
+  }
+  auto options = collectionItems(dependency["Option"]);
+  auto found = std::find_if(options.begin(), options.end(), [&](auto const& option) {
+    return scalar(option, "name") == optionName;
+  });
+  if (!value) {
+    if (found == options.end()) return true;
+    eraseCollectionItem(options, static_cast<std::size_t>(found - options.begin()));
+  } else if (found == options.end()) {
+    YAML::Node option(YAML::NodeType::Map);
+    option["name"] = optionName;
+    option["value"] = *value;
+    options.push_back(std::move(option));
+  } else {
+    (*found)["value"] = *value;
+  }
+  setCollection(dependency, "Option", options);
+  dependencies[dependencyIndex] = dependency;
+  setCollection(resource["DependentResources"], "DependentResource",
+                dependencies);
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand(
+      "Edit inline Resource option", emitYaml(root),
+      "inline-option:" + ownerNamespace + ":" + ownerName + ":" +
+          std::to_string(dependencyIndex) + ":" + optionName,
+      continuous);
+}
+
+bool ManifestWorkspace::promoteInlineResource(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::size_t dependencyIndex, std::string const& targetNamespace) {
+  auto root = YAML::Load(canonicalYaml());
+  if (!targetNamespace.empty() && namespaceCount(root, targetNamespace) != 1U) {
+    setFailure("Promotion target namespace was not found uniquely.");
+    return false;
+  }
+  auto collection = findResourceCollection(root, ownerNamespace);
+  auto targetCollection = findResourceCollection(root, targetNamespace);
+  if (!collection || !targetCollection ||
+      resourceCount(*collection, ownerName) != 1U) {
+    setFailure("Inline Resource owner or promotion namespace was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  auto dependencies =
+      standardDependencyItems(resource);
+  if (dependencyIndex >= dependencies.size() ||
+      !scalar(dependencies[dependencyIndex], "ref").empty() ||
+      scalar(dependencies[dependencyIndex], "type").empty()) {
+    setFailure("Inline Resource was not found.");
+    return false;
+  }
+  auto promoted = YAML::Clone(dependencies[dependencyIndex]);
+  auto const dependencyId = scalar(promoted, "id");
+  promoted.remove("id");
+  auto const name = resourceIdentity(promoted);
+  if (!validResourceName(name)) {
+    setFailure("Inline Resource must have an explicit valid name before promotion.");
+    return false;
+  }
+  ResourceIdentity const oldIdentity{ownerNamespace, name};
+  ResourceIdentity const newIdentity{targetNamespace, name};
+  auto declarations = resourceDeclarations(root);
+  auto collisions = matchingDeclarations(declarations, newIdentity);
+  bool const onlyPromotedInline =
+      collisions.size() == 1U && collisions.front().inlineResource &&
+      collisions.front().owner == ResourceIdentity{ownerNamespace, ownerName} &&
+      collisions.front().dependencyIndex == dependencyIndex;
+  if (!collisions.empty() && !onlyPromotedInline) {
+    setFailure("Promotion would create a duplicate Resource identity.");
+    return false;
+  }
+
+  if (oldIdentity != newIdentity) {
+    rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+      return identity == oldIdentity ? newIdentity : identity;
+    });
+  }
+  collection = findResourceCollection(root, ownerNamespace);
+  ownerIndex = *findResourceIndex(*collection, ownerName);
+  resource = collection->resources[ownerIndex];
+  dependencies =
+      standardDependencyItems(resource);
+  YAML::Node reference(YAML::NodeType::Map);
+  if (!dependencyId.empty()) reference["id"] = dependencyId;
+  reference["ref"] = formatReference(newIdentity, ownerNamespace);
+  dependencies[dependencyIndex] = reference;
+  setCollection(resource["DependentResources"], "DependentResource",
+                dependencies);
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+
+  targetCollection = findResourceCollection(root, targetNamespace);
+  targetCollection->resources.push_back(promoted);
+  publishCollection(root, *targetCollection);
+  return executeYamlCommand("Promote inline Resource", emitYaml(root));
+}
+
 bool ManifestWorkspace::deleteResource(std::string const& resourceNamespace,
                                        std::string const& name) {
   auto root = YAML::Load(canonicalYaml());
@@ -1293,11 +1980,36 @@ bool ManifestWorkspace::deleteResource(std::string const& resourceNamespace,
   }
   auto index = findResourceIndex(*collection, name);
   ResourceIdentity const target{resourceNamespace, name};
-  if (hasIncomingReference(
-          root, target,
-          [&](ResourceIdentity const& source) { return source == target; })) {
-    setFailure("Resource '" + name +
-               "' cannot be deleted while another Resource references it.");
+  std::vector<ResourceIdentity> removed{target};
+  for (auto const& dependency :
+       standardDependencyItems(collection->resources[*index])) {
+    if (scalar(dependency, "ref").empty() &&
+        !scalar(dependency, "type").empty()) {
+      removed.push_back({resourceNamespace, resourceIdentity(dependency)});
+    }
+  }
+  std::vector<std::string> incoming;
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source, ResourceIdentity const& referenced) {
+        bool const targetRemoved =
+            std::find(removed.begin(), removed.end(), referenced) != removed.end();
+        bool const sourceRemoved =
+            std::find(removed.begin(), removed.end(), source) != removed.end();
+        if (targetRemoved && !sourceRemoved) {
+          incoming.push_back(qualifiedIdentity(source) + " -> " +
+                             qualifiedIdentity(referenced));
+        }
+      });
+  if (!incoming.empty()) {
+    std::ostringstream message;
+    message << "Resource '" << qualifiedIdentity(target)
+            << "' cannot be deleted; known incoming reference(s): ";
+    for (std::size_t incomingIndex = 0; incomingIndex < incoming.size();
+         ++incomingIndex) {
+      if (incomingIndex != 0U) message << ", ";
+      message << incoming[incomingIndex];
+    }
+    setFailure(message.str());
     return false;
   }
 
@@ -1956,6 +2668,246 @@ bool runOrganizationTests(std::string* failure) {
       return fail("A nested namespace was accepted.");
     }
 
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runDependencyAuthoringTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-dependency-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  try {
+    fs::create_directories(root / "base");
+    std::ofstream(root / "base" / "image.png", std::ios::binary) << "image";
+    std::ofstream(root / "base" / "replacement.png", std::ios::binary)
+        << "replacement";
+    std::ofstream(root / "base" / "shader.vert") << "shader";
+    auto manifest = root / "dependencies.yaml";
+    std::ofstream(manifest) << R"(Resources:
+  Resource:
+    - {type: Image, name: RootImage, location: image.png}
+    - {type: Shader, name: RootShader, location: shader.vert}
+    - type: ImageSet
+      name: Atlas
+      DependentResources:
+        DependentResource: {id: Image, ref: MissingImage}
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: Pixel, x: 0, y: 0, width: 1, height: 1}
+    - type: Custom
+      name: CycleA
+      DependentResources:
+        DependentResource: {ref: CycleB}
+    - type: Custom
+      name: CycleB
+      DependentResources:
+        DependentResource: {ref: MissingCycleTarget}
+    - type: Custom
+      name: Optional
+      DependentResources:
+        DependentResource: {ref: MissingOptional}
+    - type: Custom
+      name: InlineOwner
+      DependentResources:
+        DependentResource:
+          id: Texture
+          type: Image
+          name: InlineImage
+          location: image.png
+    - type: Custom
+      name: InlineObserver
+      DependentResources:
+        DependentResource: {ref: InlineImage}
+  Namespace:
+    name: Assets
+    Resource: {type: Image, name: SharedImage, location: image.png}
+)";
+
+    ManifestWorkspace workspace;
+    if (!workspace.open(manifest)) {
+      return fail("Could not open dependency fixture: " +
+                  workspace.operationDiagnostic());
+    }
+
+    auto atlasSelectors = workspace.resourceReferences({}, "Atlas");
+    if (atlasSelectors.size() != 1U || !atlasSelectors.front().missing ||
+        atlasSelectors.front().clearable ||
+        atlasSelectors.front().allowedResourceTypes !=
+            std::vector<std::string>{"Image"}) {
+      return fail("Required missing Image dependency metadata was not preserved.");
+    }
+    auto const& atlasChoices = atlasSelectors.front().choices;
+    auto shared = std::find_if(atlasChoices.begin(), atlasChoices.end(),
+                               [](auto const& choice) {
+                                 return choice.qualifiedIdentity ==
+                                        "Assets/SharedImage";
+                               });
+    if (shared == atlasChoices.end() || shared->disabled ||
+        std::any_of(atlasChoices.begin(), atlasChoices.end(),
+                    [](auto const& choice) {
+                      return choice.resourceType == "Shader";
+                    })) {
+      return fail("Reference choices were not qualified and filtered by Resource Type.");
+    }
+    if (!workspace.setResourceReference(
+            {}, "Atlas", atlasSelectors.front().dependencyIndex,
+            std::pair{std::string("Assets"), std::string("SharedImage")}) ||
+        workspace.canonicalYaml().find("Assets/SharedImage") ==
+            std::string::npos) {
+      return fail("A compatible qualified Resource selection was not committed.");
+    }
+
+    auto cycleSelectors = workspace.resourceReferences({}, "CycleB");
+    if (cycleSelectors.empty()) {
+      return fail("Cycle fixture did not expose its Resource selector.");
+    }
+    auto cycleChoice = std::find_if(
+        cycleSelectors.front().choices.begin(),
+        cycleSelectors.front().choices.end(), [](auto const& choice) {
+          return choice.name == "CycleA";
+        });
+    if (cycleChoice == cycleSelectors.front().choices.end() ||
+        !cycleChoice->disabled ||
+        cycleChoice->reason.find("cycle") == std::string::npos) {
+      return fail("A cycle-producing choice was not present and disabled.");
+    }
+    if (std::any_of(cycleSelectors.front().choices.begin(),
+                    cycleSelectors.front().choices.end(),
+                    [](auto const& choice) {
+                      return choice.name == "CycleB";
+                    })) {
+      return fail("A Resource selector offered its owner as a new target.");
+    }
+    if (workspace.setResourceReference(
+            {}, "CycleB", cycleSelectors.front().dependencyIndex,
+            std::pair{std::string{}, std::string("CycleA")})) {
+      return fail("A cycle-producing Resource selection was accepted.");
+    }
+
+    auto optionalSelectors = workspace.resourceReferences({}, "Optional");
+    if (optionalSelectors.size() != 1U || !optionalSelectors.front().missing ||
+        !optionalSelectors.front().clearable ||
+        !workspace.setResourceReference({}, "Optional",
+                                        optionalSelectors.front().dependencyIndex,
+                                        {})) {
+      return fail("An unresolved optional reference could not be displayed and cleared.");
+    }
+    if (!workspace.resourceReferences({}, "Optional").empty()) {
+      return fail("Clearing an optional reference did not remove its dependency entry.");
+    }
+
+    auto inlineResources = workspace.inlineResources({}, "InlineOwner");
+    if (inlineResources.size() != 1U ||
+        inlineResources.front().name != "InlineImage" ||
+        inlineResources.front().resourceType != "Image" ||
+        !inlineResources.front().editable) {
+      return fail("Inline Resource was not exposed beneath its owner for editing.");
+    }
+    auto observerSelectors = workspace.resourceReferences({}, "InlineObserver");
+    if (observerSelectors.size() != 1U ||
+        observerSelectors.front().choices.empty() ||
+        !observerSelectors.front().choices.front().inlineResource ||
+        !observerSelectors.front().choices.front().selected) {
+      return fail("An existing reference to an inline Resource was not represented.");
+    }
+    auto ownerSelectors = workspace.resourceReferences({}, "CycleB");
+    if (std::any_of(ownerSelectors.front().choices.begin(),
+                    ownerSelectors.front().choices.end(),
+                    [](auto const& choice) {
+                      return choice.name == "InlineImage";
+                    })) {
+      return fail("A new Resource selector offered an inline Resource target.");
+    }
+    if (workspace.moveResource({}, "InlineImage", "Assets")) {
+      return fail("An inline Resource could be moved independently.");
+    }
+
+    auto beforeInlineEdit = workspace.canonicalYaml();
+    if (!workspace.renameInlineResource({}, "InlineOwner",
+                                        inlineResources.front().dependencyIndex,
+                                        "RenamedInline") ||
+        workspace.canonicalYaml().find("ref: \"RenamedInline\"") ==
+            std::string::npos ||
+        !workspace.setInlineResourceFile(
+            {}, "InlineOwner", inlineResources.front().dependencyIndex,
+            root / "base" / "replacement.png") ||
+        !workspace.setInlineResourceOption(
+            {}, "InlineOwner", inlineResources.front().dependencyIndex,
+            "filtering", "linear")) {
+      return fail("Inline Resource rename or property editing failed: " +
+                  workspace.operationDiagnostic());
+    }
+    auto editedInline = workspace.canonicalYaml();
+    if (editedInline == beforeInlineEdit ||
+        editedInline.find("replacement.png") == std::string::npos ||
+        editedInline.find("filtering") == std::string::npos) {
+      return fail("Inline Resource edits were not serialized.");
+    }
+    auto incoming = workspace.incomingReferences({}, "RenamedInline");
+    auto diagnostics = workspace.dependencyDiagnostics();
+    if (incoming != std::vector<std::string>{"InlineObserver"} ||
+        std::none_of(diagnostics.begin(), diagnostics.end(),
+                     [](auto const& diagnostic) {
+                       return !diagnostic.error &&
+                              diagnostic.message.find("InlineObserver") !=
+                                  std::string::npos;
+                     }) ||
+        workspace.deleteResource({}, "InlineOwner") ||
+        workspace.operationDiagnostic().find("InlineObserver") ==
+            std::string::npos) {
+      return fail("Known incoming references were not listed or did not block deletion.");
+    }
+
+    auto beforePromotion = workspace.canonicalYaml();
+    if (!workspace.promoteInlineResource(
+            {}, "InlineOwner", inlineResources.front().dependencyIndex,
+            "Assets") ||
+        workspace.inlineResources({}, "InlineOwner").size() != 0U) {
+      return fail("Inline Resource promotion failed: " +
+                  workspace.operationDiagnostic());
+    }
+    auto promoted = workspace.canonicalYaml();
+    auto promotedResources = workspace.resources();
+    if (promoted.find("id: \"Texture\"") == std::string::npos ||
+        promoted.find("ref: \"Assets/RenamedInline\"") == std::string::npos ||
+        std::none_of(promotedResources.begin(), promotedResources.end(),
+                     [](auto const& resource) {
+                       return resource.resourceNamespace == "Assets" &&
+                              resource.name == "RenamedInline" &&
+                              resource.resourceType == "Image";
+                     }) ||
+        !workspace.undo() || workspace.canonicalYaml() != beforePromotion ||
+        !workspace.redo() || workspace.canonicalYaml() != promoted) {
+      return fail("Promotion was not one undoable Resource-and-reference command.");
+    }
+    auto afterPromotionSelectors =
+        workspace.resourceReferences({}, "InlineObserver");
+    if (afterPromotionSelectors.empty() ||
+        std::none_of(afterPromotionSelectors.front().choices.begin(),
+                     afterPromotionSelectors.front().choices.end(),
+                     [](auto const& choice) {
+                       return choice.resourceNamespace == "Assets" &&
+                              choice.name == "RenamedInline" &&
+                              !choice.inlineResource && choice.selected;
+                     })) {
+      return fail("A promoted Resource did not become a normal selector target.");
+    }
     return true;
   } catch (std::exception const& exception) {
     return fail(exception.what());

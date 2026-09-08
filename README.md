@@ -259,8 +259,11 @@ atomic replacement. It authors the five source-backed built-in Resource Types th
 catalogued forms, native annotated file selectors, contained portable paths, and
 undoable create/edit/rename/delete commands. Its flat namespace tree supports draft
 namespaces, Resource reordering and drag moves, protected bulk deletion, and transactional
-standard dependency-reference rewrites. The normal build and install include the
-required deployment INI and runtime dependencies. See the
+standard dependency-reference rewrites. Standard dependency selectors filter compatible
+qualified targets, prevent cycles, preserve missing legacy selections, and diagnose
+incoming references. Owned inline Resources appear beneath their owner for editing or
+one-command promotion and are never offered as new shared targets. The normal build and
+install include the required deployment INI and runtime dependencies. See the
 [Resource Manifest Editor desktop shell guide](docs/resource-manifest-editor.md) for
 startup logging and status codes, document commands, deployment, and smoke tests.
 

@@ -88,6 +88,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --document-tests\n"
             "  resource-manager --authoring-tests\n"
             "  resource-manager --organization-tests\n"
+            "  resource-manager --dependency-tests\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -393,6 +394,8 @@ class NativeDialog {
     std::optional<fs::path> path;
     std::string error;
     bool draftFile = false;
+    bool inlineResource = false;
+    std::size_t dependencyIndex = 0;
     std::string resourceNamespace;
     std::string resourceName;
   };
@@ -434,13 +437,17 @@ class NativeDialog {
   void beginResourceFile(resource_manager::ResourceForm const& form,
                          SDL_Window* owner, bool draft,
                          std::string resourceNamespace = {},
-                         std::string resourceName = {}) {
+                         std::string resourceName = {},
+                         bool inlineResource = false,
+                         std::size_t dependencyIndex = 0) {
     {
       std::lock_guard lock(mState->mutex);
       if (mState->pending) return;
       mState->pending = true;
       mState->purpose = Purpose::resourceFile;
       mState->draftFile = draft;
+      mState->inlineResource = inlineResource;
+      mState->dependencyIndex = dependencyIndex;
       mState->resourceNamespace = std::move(resourceNamespace);
       mState->resourceName = std::move(resourceName);
       mState->result.reset();
@@ -474,6 +481,8 @@ class NativeDialog {
     bool pending = false;
     Purpose purpose = Purpose::none;
     bool draftFile = false;
+    bool inlineResource = false;
+    std::size_t dependencyIndex = 0;
     std::string resourceNamespace;
     std::string resourceName;
     std::optional<Result> result;
@@ -487,6 +496,8 @@ class NativeDialog {
       std::lock_guard lock((*holder)->mutex);
       result.purpose = (*holder)->purpose;
       result.draftFile = (*holder)->draftFile;
+      result.inlineResource = (*holder)->inlineResource;
+      result.dependencyIndex = (*holder)->dependencyIndex;
       result.resourceNamespace = (*holder)->resourceNamespace;
       result.resourceName = (*holder)->resourceName;
     }
@@ -525,6 +536,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   static bool selectedNamespaceIsDraft = false;
   static std::string editingIdentity;
   static std::string editingNamespace;
+  static bool selectedInline = false;
+  static std::string selectedInlineOwner;
+  static std::size_t selectedInlineIndex = 0;
   static std::array<char, 256> nameBuffer{};
   static std::array<char, 256> namespaceBuffer{};
   static std::array<char, 256> draftNameBuffer{};
@@ -723,6 +737,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               selectedName = sourceName;
               selectedNamespaceNode = false;
               selectedNamespaceIsDraft = false;
+              selectedInline = false;
               editingIdentity.clear();
             }
           }
@@ -749,6 +764,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           selectedName.clear();
           selectedNamespaceNode = true;
           selectedNamespaceIsDraft = item.draft;
+          selectedInline = false;
           editingIdentity.clear();
           editingNamespace.clear();
         }
@@ -758,7 +774,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           std::size_t resourceIndex = 0;
           for (auto const& resource : resources) {
             if (resource.resourceNamespace != item.name) continue;
-            bool const selected = !selectedNamespaceNode &&
+            bool const selected = !selectedNamespaceNode && !selectedInline &&
                                   selectedNamespace == item.name &&
                                   selectedName == resource.name;
             auto itemLabel =
@@ -768,6 +784,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               selectedName = resource.name;
               selectedNamespaceNode = false;
               selectedNamespaceIsDraft = false;
+              selectedInline = false;
               editingIdentity.clear();
               editingNamespace.clear();
             }
@@ -779,6 +796,34 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               ImGui::EndDragDropSource();
             }
             acceptResourceDrop(item.name, resourceIndex);
+            ImGui::Indent();
+            for (auto const& inlineResource :
+                 workspace.inlineResources(item.name, resource.name)) {
+              ImGui::PushID(static_cast<int>(inlineResource.dependencyIndex));
+              auto inlineLabel = inlineResource.name + " [" +
+                                 inlineResource.resourceType + "] (inline)";
+              bool const inlineSelected =
+                  selectedInline && selectedNamespace == item.name &&
+                  selectedInlineOwner == resource.name &&
+                  selectedInlineIndex == inlineResource.dependencyIndex;
+              if (ImGui::Selectable(inlineLabel.c_str(), inlineSelected)) {
+                selectedNamespace = item.name;
+                selectedName = inlineResource.name;
+                selectedInlineOwner = resource.name;
+                selectedInlineIndex = inlineResource.dependencyIndex;
+                selectedNamespaceNode = false;
+                selectedNamespaceIsDraft = false;
+                selectedInline = true;
+                editingIdentity.clear();
+                editingNamespace.clear();
+              }
+              if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Owned by %s; promote before moving independently.",
+                                  resource.name.c_str());
+              }
+              ImGui::PopID();
+            }
+            ImGui::Unindent();
             ++resourceIndex;
           }
           ImGui::TreePop();
@@ -858,8 +903,17 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           });
       auto selected = std::find_if(
           resources.begin(), resources.end(), [&](auto const& resource) {
-            return resource.resourceNamespace == selectedNamespace &&
+            return !selectedInline &&
+                   resource.resourceNamespace == selectedNamespace &&
                    resource.name == selectedName;
+          });
+      auto selectedOwnerInlineResources = workspace.inlineResources(
+          selectedNamespace, selectedInlineOwner);
+      auto selectedInlineResource = std::find_if(
+          selectedOwnerInlineResources.begin(), selectedOwnerInlineResources.end(),
+          [&](auto const& resource) {
+            return selectedInline &&
+                   resource.dependencyIndex == selectedInlineIndex;
           });
       if (selectedNamespaceNode && selectedNamespaceSummary != namespaces.end()) {
         auto const& item = *selectedNamespaceSummary;
@@ -913,6 +967,95 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           if (ImGui::Button(form.resourceType.c_str()) &&
               workspace.beginDraft(form.resourceType, item.name)) {
             setBuffer(draftNameBuffer, {});
+          }
+        }
+      } else if (selectedInlineResource != selectedOwnerInlineResources.end()) {
+        auto const& inlineResource = *selectedInlineResource;
+        ImGui::Text("Inline Resource Type: %s", inlineResource.resourceType.c_str());
+        ImGui::Text("Owner: %s", inlineResource.ownerName.c_str());
+        ImGui::TextDisabled(
+            "Inline Resources are owned here and cannot be moved independently.");
+        auto identity = inlineResource.resourceNamespace + "\n" +
+                        inlineResource.ownerName + "\n" +
+                        std::to_string(inlineResource.dependencyIndex);
+        if (editingIdentity != identity) {
+          editingIdentity = identity;
+          setBuffer(nameBuffer, inlineResource.name);
+        }
+        bool commitName = ImGui::InputText(
+            "Name", nameBuffer.data(), nameBuffer.size(),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+        commitName |= ImGui::IsItemDeactivatedAfterEdit();
+        if (commitName &&
+            std::string(nameBuffer.data()) != inlineResource.name) {
+          auto newName = std::string(nameBuffer.data());
+          if (workspace.renameInlineResource(
+                  inlineResource.resourceNamespace, inlineResource.ownerName,
+                  inlineResource.dependencyIndex, newName)) {
+            selectedName = std::move(newName);
+            editingIdentity.clear();
+          } else {
+            setBuffer(nameBuffer, inlineResource.name);
+          }
+        }
+        if (!inlineResource.editable) {
+          ImGui::TextDisabled("This inline Resource payload is read-only.");
+        } else {
+          ImGui::Text("Source file: %s", inlineResource.location.c_str());
+          if (ImGui::Button("Select source file...") && !dialog.busy()) {
+            if (auto const* form =
+                    workspace.resourceForm(inlineResource.resourceType)) {
+              dialog.beginResourceFile(
+                  *form, window, false, inlineResource.resourceNamespace,
+                  inlineResource.ownerName, true,
+                  inlineResource.dependencyIndex);
+            }
+          }
+          if (auto const* form = workspace.resourceForm(inlineResource.resourceType)) {
+            for (auto const& option : form->options) {
+              auto value = std::find_if(
+                  inlineResource.options.begin(), inlineResource.options.end(),
+                  [&](auto const& optionValue) {
+                    return optionValue.first == option.name;
+                  });
+              std::string current = value == inlineResource.options.end()
+                                        ? std::string{}
+                                        : value->second;
+              auto label = option.name + "##inline";
+              auto const* preview = current.empty() ? "Not set" : current.c_str();
+              if (ImGui::BeginCombo(label.c_str(), preview)) {
+                if (ImGui::Selectable("Not set", current.empty())) {
+                  workspace.setInlineResourceOption(
+                      inlineResource.resourceNamespace, inlineResource.ownerName,
+                      inlineResource.dependencyIndex, option.name, {});
+                }
+                auto drawChoice = [&](std::string const& choice) {
+                  if (ImGui::Selectable(choice.c_str(), current == choice)) {
+                    workspace.setInlineResourceOption(
+                        inlineResource.resourceNamespace, inlineResource.ownerName,
+                        inlineResource.dependencyIndex, option.name, choice);
+                  }
+                };
+                for (auto const& choice : option.values) drawChoice(choice);
+                if (option.boolean) {
+                  drawChoice("true");
+                  drawChoice("false");
+                }
+                ImGui::EndCombo();
+              }
+            }
+          }
+        }
+        if (ImGui::Button("Promote to namespace")) {
+          auto promotedName = inlineResource.name;
+          if (workspace.promoteInlineResource(
+                  inlineResource.resourceNamespace, inlineResource.ownerName,
+                  inlineResource.dependencyIndex,
+                  inlineResource.resourceNamespace)) {
+            selectedName = std::move(promotedName);
+            selectedInline = false;
+            selectedInlineOwner.clear();
+            editingIdentity.clear();
           }
         }
       } else if (selected != resources.end()) {
@@ -979,6 +1122,62 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
             }
           }
         }
+        auto referenceSelectors = workspace.resourceReferences(
+            selected->resourceNamespace, selected->name);
+        if (!referenceSelectors.empty()) {
+          ImGui::Separator();
+          ImGui::TextUnformatted("Resource dependencies");
+          for (auto const& selector : referenceSelectors) {
+            ImGui::PushID(static_cast<int>(selector.dependencyIndex));
+            auto current = std::find_if(
+                selector.choices.begin(), selector.choices.end(),
+                [](auto const& choice) { return choice.selected; });
+            std::string preview = current == selector.choices.end()
+                                      ? selector.reference
+                                      : current->qualifiedIdentity;
+            if (current != selector.choices.end() && current->missing) {
+              preview += " (missing)";
+            } else if (current != selector.choices.end() &&
+                       current->inlineResource) {
+              preview += " (inline)";
+            }
+            auto label = selector.dependencyId.empty()
+                             ? std::string("Dependency")
+                             : selector.dependencyId;
+            if (ImGui::BeginCombo(label.c_str(), preview.c_str())) {
+              for (auto const& choice : selector.choices) {
+                auto choiceLabel = choice.qualifiedIdentity;
+                if (!choice.resourceType.empty()) {
+                  choiceLabel += " [" + choice.resourceType + "]";
+                }
+                if (choice.missing) choiceLabel += " (missing)";
+                if (choice.inlineResource) choiceLabel += " (inline)";
+                ImGui::BeginDisabled(choice.disabled);
+                if (ImGui::Selectable(choiceLabel.c_str(), choice.selected)) {
+                  workspace.setResourceReference(
+                      selector.ownerNamespace, selector.ownerName,
+                      selector.dependencyIndex,
+                      std::pair{choice.resourceNamespace, choice.name});
+                }
+                ImGui::EndDisabled();
+                if (choice.disabled && ImGui::IsItemHovered() &&
+                    !choice.reason.empty()) {
+                  ImGui::SetTooltip("%s", choice.reason.c_str());
+                }
+              }
+              ImGui::EndCombo();
+            }
+            if (selector.clearable) {
+              ImGui::SameLine();
+              if (ImGui::SmallButton("Clear")) {
+                workspace.setResourceReference(
+                    selector.ownerNamespace, selector.ownerName,
+                    selector.dependencyIndex, {});
+              }
+            }
+            ImGui::PopID();
+          }
+        }
         if (ImGui::Button("Delete Resource..."))
           ImGui::OpenPopup("Confirm Resource deletion");
         if (ImGui::BeginPopupModal("Confirm Resource deletion", nullptr,
@@ -1028,15 +1227,21 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     ImGui::EndChild();
     ImGui::BeginChild("Diagnostics", ImVec2(0.0f, 0.0f), true);
     ImGui::TextUnformatted("Diagnostics");
+    bool hasDiagnostics = false;
     if (!workspace.operationDiagnostic().empty()) {
       ImGui::TextWrapped("%s", workspace.operationDiagnostic().c_str());
-    } else if (!workspace.structuralDiagnostics().empty()) {
-      for (auto const& diagnostic : workspace.structuralDiagnostics()) {
-        ImGui::BulletText("%s", diagnostic.message.c_str());
-      }
-    } else {
-      ImGui::TextDisabled("No errors.");
+      hasDiagnostics = true;
     }
+    for (auto const& diagnostic : workspace.structuralDiagnostics()) {
+      ImGui::BulletText("%s", diagnostic.message.c_str());
+      hasDiagnostics = true;
+    }
+    for (auto const& diagnostic : workspace.dependencyDiagnostics()) {
+      ImGui::BulletText("%s%s", diagnostic.error ? "Error: " : "Info: ",
+                        diagnostic.message.c_str());
+      hasDiagnostics = true;
+    }
+    if (!hasDiagnostics) ImGui::TextDisabled("No errors.");
     ImGui::EndChild();
   }
   ImGui::End();
@@ -1175,11 +1380,17 @@ int runDesktop(DesktopArguments arguments) {
               completed = workspace.saveAs(*result->path);
               break;
             case NativeDialog::Purpose::resourceFile:
-              completed = result->draftFile
-                              ? workspace.selectDraftFile(*result->path)
-                              : workspace.setResourceFile(
-                                    result->resourceNamespace,
-                                    result->resourceName, *result->path);
+              if (result->draftFile) {
+                completed = workspace.selectDraftFile(*result->path);
+              } else if (result->inlineResource) {
+                completed = workspace.setInlineResourceFile(
+                    result->resourceNamespace, result->resourceName,
+                    result->dependencyIndex, *result->path);
+              } else {
+                completed = workspace.setResourceFile(
+                    result->resourceNamespace, result->resourceName,
+                    *result->path);
+              }
               break;
             case NativeDialog::Purpose::none:
               break;
@@ -1319,6 +1530,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor organization tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--dependency-tests") {
+      std::string failure;
+      if (!resource_manager::runDependencyAuthoringTests(&failure)) {
+        std::cerr << "Resource Manifest Editor dependency tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor dependency tests passed.\n";
       return success;
     }
 

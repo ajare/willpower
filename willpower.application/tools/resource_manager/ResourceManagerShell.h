@@ -52,6 +52,44 @@ struct ResourceSummary {
   bool editable = false;
 };
 
+struct InlineResourceSummary : ResourceSummary {
+  std::string ownerName;
+  std::size_t dependencyIndex = 0;
+  std::string dependencyId;
+};
+
+struct ResourceReferenceChoice {
+  std::string resourceNamespace;
+  std::string name;
+  std::string resourceType;
+  std::string qualifiedIdentity;
+  bool selected = false;
+  bool disabled = false;
+  bool missing = false;
+  bool inlineResource = false;
+  std::string reason;
+};
+
+struct ResourceReferenceSelector {
+  std::string ownerNamespace;
+  std::string ownerName;
+  std::size_t dependencyIndex = 0;
+  std::string dependencyId;
+  std::string reference;
+  std::vector<std::string> allowedResourceTypes;
+  std::vector<ResourceReferenceChoice> choices;
+  bool clearable = false;
+  bool missing = false;
+};
+
+struct DependencyDiagnostic {
+  std::string resourceNamespace;
+  std::string resourceName;
+  std::size_t dependencyIndex = 0;
+  std::string message;
+  bool error = true;
+};
+
 struct NamespaceDraft {
   std::string name;
   std::string validationMessage;
@@ -90,6 +128,13 @@ class ManifestWorkspace {
       std::string const& resourceType) const noexcept;
   [[nodiscard]] std::vector<NamespaceSummary> namespaces() const;
   [[nodiscard]] std::vector<ResourceSummary> resources() const;
+  [[nodiscard]] std::vector<InlineResourceSummary> inlineResources(
+      std::string const& ownerNamespace, std::string const& ownerName) const;
+  [[nodiscard]] std::vector<ResourceReferenceSelector> resourceReferences(
+      std::string const& ownerNamespace, std::string const& ownerName) const;
+  [[nodiscard]] std::vector<DependencyDiagnostic> dependencyDiagnostics() const;
+  [[nodiscard]] std::vector<std::string> incomingReferences(
+      std::string const& resourceNamespace, std::string const& name) const;
 
   // A named namespace stays outside the document and command history until
   // its first Resource is committed or moved into it.
@@ -133,6 +178,29 @@ class ManifestWorkspace {
                          std::string const& optionName,
                          std::optional<std::string> value,
                          bool continuous = false);
+  bool setResourceReference(std::string const& ownerNamespace,
+                            std::string const& ownerName,
+                            std::size_t dependencyIndex,
+                            std::optional<std::pair<std::string, std::string>> target);
+  bool renameInlineResource(std::string const& ownerNamespace,
+                            std::string const& ownerName,
+                            std::size_t dependencyIndex, std::string newName,
+                            bool continuous = false);
+  bool setInlineResourceFile(std::string const& ownerNamespace,
+                             std::string const& ownerName,
+                             std::size_t dependencyIndex,
+                             std::filesystem::path const& selectedFile,
+                             bool continuous = false);
+  bool setInlineResourceOption(std::string const& ownerNamespace,
+                               std::string const& ownerName,
+                               std::size_t dependencyIndex,
+                               std::string const& optionName,
+                               std::optional<std::string> value,
+                               bool continuous = false);
+  bool promoteInlineResource(std::string const& ownerNamespace,
+                             std::string const& ownerName,
+                             std::size_t dependencyIndex,
+                             std::string const& targetNamespace);
   bool deleteResource(std::string const& resourceNamespace,
                       std::string const& name);
 
@@ -173,5 +241,6 @@ class ManifestWorkspace {
 bool runDocumentTests(std::string* failure);
 bool runAuthoringTests(std::string* failure);
 bool runOrganizationTests(std::string* failure);
+bool runDependencyAuthoringTests(std::string* failure);
 
 }  // namespace resource_manager

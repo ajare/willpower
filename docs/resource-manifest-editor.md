@@ -98,6 +98,27 @@ namespace deletion has a separate confirmation, is undoable, and is blocked when
 standard reference arrives from outside that namespace. The default namespace cannot be
 renamed or deleted.
 
+## Dependencies and inline Resources
+
+Standard `DependentResources/DependentResource/ref` properties are edited with Resource
+selectors rather than text fields. Choices show namespace-qualified identities and are
+filtered to the built-in dependency's allowed Resource Type. The owner is omitted and a
+choice is disabled when selecting it would close a dependency cycle. Existing missing,
+type-incompatible, self, or inline targets remain visible as disabled selections so they
+can be understood and replaced. A dependency can be cleared only when removing its entry
+leaves the Resource structurally valid.
+
+Dependency diagnostics identify missing, ambiguous, incompatible, self, and cyclic
+references. They also list known incoming references that block deletion. Selectors never
+offer an inline Resource as a new target.
+
+An inline dependent Resource is displayed below its syntactic owner with an inline marker.
+Its name and supported file-backed properties can be edited, but it has no independent
+move or delete action. Promotion copies the declaration to the selected namespace level
+and replaces the owned declaration with a correctly qualified `ref` in one undoable
+command. Existing references to the inline identity continue to be represented before
+promotion and become ordinary selector targets afterwards.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -107,6 +128,7 @@ The headless validation command remains documented in
 resource-manager --document-tests
 resource-manager --authoring-tests
 resource-manager --organization-tests
+resource-manager --dependency-tests
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
@@ -116,7 +138,9 @@ file-backed built-ins, drafts, native-selector metadata, path containment, canon
 relative output, and create/property/rename/delete undo and redo.
 `--organization-tests` covers namespace drafts, duplicate identities, default-namespace
 protection, ordering, moves, standard-reference rewrites, deletion rules, and compound
-undo/redo. `--smoke-test` executes New,
+undo/redo. `--dependency-tests` covers allowed-type filtering, qualified identities,
+cycle prevention, missing and incoming references, inline editing, selector visibility,
+and atomic promotion. `--smoke-test` executes New,
 Save, and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.
