@@ -134,3 +134,5 @@ work build on the same validation contract.
 | [WP-044](WP-044.md) | [#44](https://github.com/ajare/willpower/issues/44) | Advanced authoring | P1 | hard | Author Program, Material, and specialized Definitions | WP-043 | done |
 | [WP-045](WP-045.md) | [#45](https://github.com/ajare/willpower/issues/45) | Schema deployment | P1 | hard | Load and reload application Resource Schema Bundles | WP-041, WP-044 | done |
 | [WP-046](WP-046.md) | [#46](https://github.com/ajare/willpower/issues/46) | Semantic repair | P1 | hard | Repair semantic errors and enforce save validity | WP-042, WP-045 | done |
+| WP-047 | [#47](https://github.com/ajare/willpower/issues/47) | Resilience | P1 | hard | Protect work from conflicts and crashes | WP-046 | done |
+| [WP-048](WP-048.md) | [#48](https://github.com/ajare/willpower/issues/48) | Production acceptance | P1 | medium | Harden, verify, document, and ship | WP-046, WP-047 | done |

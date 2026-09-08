@@ -66,7 +66,18 @@ bool safeDocumentPath(std::string const& value) {
   return true;
 }
 
-std::string readFile(std::filesystem::path const& path) {
+std::string readFile(std::filesystem::path const& path,
+                     std::size_t maximumBytes =
+                         ResourceSchemaCatalogLimits::maximumDocumentBytes) {
+  std::error_code error;
+  auto const size = std::filesystem::file_size(path, error);
+  if (error || size > maximumBytes) {
+    throw ResourceSchemaCatalogException(
+        "Resource Schema Bundle file '" + path.string() +
+        (error ? "' could not be sized: " + error.message()
+               : "' exceeds the defensive limit of " +
+                     std::to_string(maximumBytes) + " bytes."));
+  }
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     throw ResourceSchemaCatalogException("Cannot read Resource Schema Bundle file '" +
@@ -79,6 +90,35 @@ std::string readFile(std::filesystem::path const& path) {
                                          path.string() + "'.");
   }
   return contents.str();
+}
+
+void enforceBundleLimits(ResourceSchemaBundle const& bundle,
+                         std::string const& label) {
+  if (bundle.catalogJson.size() >
+      ResourceSchemaCatalogLimits::maximumCatalogBytes) {
+    throw ResourceSchemaCatalogException(
+        label + ": catalog exceeds the defensive content limit.");
+  }
+  if (bundle.documents.size() > ResourceSchemaCatalogLimits::maximumDocuments) {
+    throw ResourceSchemaCatalogException(
+        label + ": schema document count exceeds the defensive limit.");
+  }
+  std::size_t aggregate = bundle.catalogJson.size();
+  for (auto const& document : bundle.documents) {
+    if (document.contents.size() >
+        ResourceSchemaCatalogLimits::maximumDocumentBytes) {
+      throw ResourceSchemaCatalogException(
+          label + ": schema document '" + document.document +
+          "' exceeds the defensive content limit.");
+    }
+    if (aggregate > ResourceSchemaCatalogLimits::maximumAggregateBytes ||
+        document.contents.size() >
+            ResourceSchemaCatalogLimits::maximumAggregateBytes - aggregate) {
+      throw ResourceSchemaCatalogException(
+          label + ": aggregate schema content exceeds the defensive limit.");
+    }
+    aggregate += document.contents.size();
+  }
 }
 
 void writeFile(std::filesystem::path const& path, std::string const& contents) {
@@ -300,6 +340,20 @@ void visitReferences(Json const& value, std::vector<std::string>& references) {
 }
 
 void validateReferenceClosure(std::vector<ResourceSchema> const& entries) {
+  std::set<std::string> schemaIds;
+  std::size_t aggregate = 0;
+  for (auto const& entry : entries) {
+    if (!schemaIds.insert(entry.schemaId).second) continue;
+    if (schemaIds.size() > ResourceSchemaCatalogLimits::maximumDocuments ||
+        aggregate > ResourceSchemaCatalogLimits::maximumAggregateBytes ||
+        entry.contents.size() >
+            ResourceSchemaCatalogLimits::maximumAggregateBytes - aggregate) {
+      throw ResourceSchemaCatalogException(
+          "Resource Schema Catalog exceeds its defensive aggregate limits.");
+    }
+    aggregate += entry.contents.size();
+  }
+
   std::map<std::string, Json> documents;
   for (auto const& entry : entries) {
     if (documents.contains(entry.schemaId)) continue;
@@ -340,6 +394,7 @@ void validateReferenceClosure(std::vector<ResourceSchema> const& entries) {
 
 std::vector<ResourceSchema> parseBundle(ResourceSchemaBundle const& bundle,
                                         std::string const& label) {
+  enforceBundleLimits(bundle, label);
   auto const catalog = parseJson(bundle.catalogJson, label + " catalog");
   requireExactFields(catalog, {"bundleFormatVersion", "resourceManifestSchemaVersion", "schemas"},
                      label + " catalog");
@@ -834,7 +889,8 @@ ResourceSchemaBundle ResourceSchemaCatalog::readBundle(
                                          catalogPath.string() + "'.");
   }
   ResourceSchemaBundle bundle;
-  bundle.catalogJson = readFile(catalogPath);
+  bundle.catalogJson = readFile(
+      catalogPath, ResourceSchemaCatalogLimits::maximumCatalogBytes);
   auto const catalog = parseJson(bundle.catalogJson, "Resource Schema Bundle catalog '" +
                                                          catalogPath.string() + "'");
   if (!catalog.is_object() || !catalog.contains("schemas") || !catalog.at("schemas").is_array()) {
@@ -860,7 +916,13 @@ ResourceSchemaBundle ResourceSchemaCatalog::readBundle(
       throw ResourceSchemaCatalogException("Missing or non-regular schema document '" +
                                            fullPath.string() + "'.");
     }
+    if (bundle.documents.size() >=
+        ResourceSchemaCatalogLimits::maximumDocuments) {
+      throw ResourceSchemaCatalogException(
+          "Resource Schema Bundle document count exceeds the defensive limit.");
+    }
     bundle.documents.push_back({path, readFile(fullPath)});
+    enforceBundleLimits(bundle, "Resource Schema Bundle");
   }
   return bundle;
 }

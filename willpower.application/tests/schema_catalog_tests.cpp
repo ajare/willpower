@@ -13,6 +13,7 @@ using wp::application::resourcesystem::ResourceSchemaBundle;
 using wp::application::resourcesystem::ResourceSchemaBundleDocument;
 using wp::application::resourcesystem::ResourceSchemaCatalog;
 using wp::application::resourcesystem::ResourceSchemaCatalogException;
+using wp::application::resourcesystem::ResourceSchemaCatalogLimits;
 using wp::application::resourcesystem::ResourceSchemaKind;
 
 constexpr char widgetSchema[] =
@@ -219,6 +220,11 @@ int main() {
     missingDocument.documents.clear();
     requireFailure([&] { ResourceSchemaCatalog invalid(missingDocument); },
                    "missing schema document");
+    auto oversizedDocument = widgetBundle();
+    oversizedDocument.documents.front().contents.assign(
+        ResourceSchemaCatalogLimits::maximumDocumentBytes + 1U, 'x');
+    requireFailure([&] { ResourceSchemaCatalog invalid(oversizedDocument); },
+                   "defensive content limit");
     auto unresolved = bundle(
         {entry("Broken", "", "https://example.test/broken.schema.json",
                "schemas/broken.schema.json",

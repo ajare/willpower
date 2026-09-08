@@ -119,7 +119,8 @@ enum class SemanticDiagnosticKind {
   missingFile,
   pathContainment,
   invalidFileTarget,
-  unvalidatedData
+  unvalidatedData,
+  defensiveLimit
 };
 
 struct SemanticDiagnostic {
@@ -282,6 +283,8 @@ class ManifestWorkspace {
 
   bool createNew(std::filesystem::path const& baseDirectory);
   bool open(std::filesystem::path const& manifestPath);
+  bool open(std::filesystem::path const& manifestPath,
+            std::filesystem::path const& baseDirectory);
   bool save();
   bool saveAs(std::filesystem::path const& manifestPath);
   // Save refuses to replace a source whose content changed since the last
@@ -325,6 +328,8 @@ class ManifestWorkspace {
   [[nodiscard]] std::string canonicalYaml() const;
 
   [[nodiscard]] std::vector<ResourceForm> const& resourceForms() const noexcept;
+  [[nodiscard]] wp::application::resourcesystem::ResourceSchemaCatalogSnapshot const&
+  schemaCatalog() const noexcept { return mCatalog; }
   [[nodiscard]] ResourceForm const* resourceForm(
       std::string const& resourceType) const noexcept;
   [[nodiscard]] std::vector<NamespaceSummary> namespaces() const;
@@ -465,6 +470,8 @@ class ManifestWorkspace {
   void endContinuousEdit();
 
  private:
+  bool openWithBase(std::filesystem::path const& manifestPath,
+                    std::optional<std::filesystem::path> baseDirectory);
   bool saveTo(std::filesystem::path const& manifestPath, bool allowOverwrite = false);
   void documentChanged();
   std::filesystem::path recoveryPath() const;

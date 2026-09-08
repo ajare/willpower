@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <span>
@@ -43,6 +44,15 @@ struct ResourceSchemaBundleDocument {
 struct ResourceSchemaBundle {
   std::string catalogJson;
   std::vector<ResourceSchemaBundleDocument> documents;
+};
+
+// Hard security boundaries for untrusted, entirely local schema bundles.
+// Network resolution is never attempted by the catalog.
+struct ResourceSchemaCatalogLimits {
+  static constexpr std::size_t maximumCatalogBytes = 1U * 1024U * 1024U;
+  static constexpr std::size_t maximumDocumentBytes = 4U * 1024U * 1024U;
+  static constexpr std::size_t maximumAggregateBytes = 16U * 1024U * 1024U;
+  static constexpr std::size_t maximumDocuments = 4096U;
 };
 
 class ResourceSchemaCatalogException : public std::runtime_error {

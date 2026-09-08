@@ -44,6 +44,7 @@ constexpr int success = 0;
 constexpr int usageFailure = 2;
 constexpr int configurationFailure = 3;
 constexpr int validationFailure = 4;
+constexpr int semanticFailure = 5;
 constexpr int filesystemFailure = 6;
 constexpr int serializationFailure = 7;
 constexpr int guiFailure = 8;
@@ -90,7 +91,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --resilience-tests\n"
             "  resource-manager --verify-schemas [--ini FILE]\n"
             "  resource-manager --validate FILE --base-directory DIR "
-            "[--canonical-output FILE|-]\n"
+            "[--canonical-output FILE|-] [--semantic]\n"
             "  resource-manager --help\n";
 }
 
@@ -137,6 +138,7 @@ struct ValidationArguments {
   fs::path baseDirectory;
   fs::path canonicalOutput;
   bool outputCanonical = false;
+  bool semantic = false;
 };
 
 bool parseValidationArguments(int argc, char const* const* argv,
@@ -158,6 +160,8 @@ bool parseValidationArguments(int argc, char const* const* argv,
     } else if (argument == "--canonical-output" && !result.outputCanonical) {
       result.outputCanonical = true;
       if (!takeValue(result.canonicalOutput)) return false;
+    } else if (argument == "--semantic" && !result.semantic) {
+      result.semantic = true;
     } else {
       return false;
     }
@@ -187,6 +191,32 @@ int validateManifest(ValidationArguments const& arguments) {
     return validation.status == ResourceManifestValidationStatus::filesystemError
                ? filesystemFailure
                : validationFailure;
+  }
+
+  if (arguments.semantic) {
+    ManifestWorkspace workspace(catalog);
+    if (!workspace.open(arguments.manifest, arguments.baseDirectory)) {
+      std::cerr << workspace.operationDiagnostic() << '\n';
+      return filesystemFailure;
+    }
+    bool containmentFailure = false;
+    bool hasSemanticFailure = false;
+    for (auto const& diagnostic : workspace.semanticDiagnostics()) {
+      if (diagnostic.severity !=
+          resource_manager::SemanticDiagnosticSeverity::error)
+        continue;
+      hasSemanticFailure = true;
+      containmentFailure |=
+          diagnostic.kind ==
+          resource_manager::SemanticDiagnosticKind::pathContainment;
+      std::cerr << displayPath(arguments.manifest)
+                << ": semantic validation at "
+                << (diagnostic.instancePath.empty() ? "/"
+                                                    : diagnostic.instancePath)
+                << ": " << diagnostic.message << '\n';
+    }
+    if (hasSemanticFailure)
+      return containmentFailure ? filesystemFailure : semanticFailure;
   }
 
   if (arguments.outputCanonical) {
@@ -514,6 +544,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   enum class PendingDestructive { none, createNew, open, exit };
   static PendingDestructive pendingDestructive = PendingDestructive::none;
   static bool confirmOverwrite = false;
+  static bool showAbout = false;
   auto setBuffer = [](auto& buffer, std::string const& value) {
     buffer.fill('\0');
     auto const length = (std::min)(value.size(), buffer.size() - 1U);
@@ -581,6 +612,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Schemas")) {
+      if (ImGui::MenuItem("Catalog information...")) showAbout = true;
       if (ImGui::MenuItem("Reload configuration and bundles")) {
         if (workspace.reloadSchemas(deploymentIni)) {
           logger.info("Reloaded Resource Schema configuration: " +
@@ -591,13 +623,41 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       }
       ImGui::EndMenu();
     }
-    for (auto const* menu : {"View", "Help"}) {
-      if (ImGui::BeginMenu(menu)) {
-        ImGui::TextDisabled("No commands available.");
-        ImGui::EndMenu();
-      }
+    if (ImGui::BeginMenu("View")) {
+      ImGui::TextDisabled("The editor and diagnostics remain in one persistent workspace.");
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+      if (ImGui::MenuItem("About Resource Manifest Editor...")) showAbout = true;
+      ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
+  }
+
+  if (showAbout) ImGui::OpenPopup("About Resource Manifest Editor");
+  if (ImGui::BeginPopupModal("About Resource Manifest Editor", &showAbout,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    auto const& entries = workspace.schemaCatalog().entries();
+    auto const resourceTypes = std::count_if(
+        entries.begin(), entries.end(), [](auto const& entry) {
+          return entry.kind == ResourceSchemaKind::resourceType &&
+                 entry.factoryType.empty();
+        });
+    ImGui::TextUnformatted("Resource Manifest Editor");
+    ImGui::Separator();
+    ImGui::Text("Active catalog: %zu schemas, %zu Resource Types",
+                entries.size(), static_cast<std::size_t>(resourceTypes));
+    ImGui::TextWrapped(
+        "Schema Bundle 1.0 / Resource Manifest 1.0 / editor annotations 1.0");
+    ImGui::TextWrapped(
+        "Local catalog references only; filesystem and network schema resolution are disabled.");
+    ImGui::Text("Limits: manifest 64 MiB, YAML depth 128, nodes 1000000,");
+    ImGui::Text("diagnostics 100, schema content 16 MiB, traversal 1000000.");
+    if (ImGui::Button("Close")) {
+      showAbout = false;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
   }
 
   if (ImGui::BeginViewportSideBar(
@@ -761,9 +821,15 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     result.editorDrawn = true;
     if (workspace.hasNewerRecovery()) {
       ImGui::TextWrapped("Newer recovery data is available for this Resource Manifest.");
-      if (ImGui::Button("Recover")) workspace.recover();
+      if (ImGui::Button("Recover")) {
+        if (workspace.recover()) logger.info("Recovered Resource Manifest work.");
+        else report(logger, workspace.operationDiagnostic());
+      }
       ImGui::SameLine();
-      if (ImGui::Button("Discard recovery")) workspace.discardRecovery();
+      if (ImGui::Button("Discard recovery")) {
+        if (workspace.discardRecovery()) logger.info("Discarded Resource Manifest recovery data.");
+        else report(logger, workspace.operationDiagnostic());
+      }
       ImGui::Separator();
     }
     auto externalState = workspace.externalChangeState();
@@ -915,6 +981,28 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               selectedInline = false;
               editingIdentity.clear();
               editingNamespace.clear();
+            }
+            if (ImGui::BeginPopupContextItem()) {
+              if (ImGui::MenuItem("Inspect")) {
+                selectedNamespace = item.name;
+                selectedName = resource.name;
+                selectedResourcePath = resource.instancePath;
+                selectedNamespaceNode = false;
+                selectedInline = false;
+              }
+              ImGui::BeginDisabled(resourceIndex == 0U);
+              if (ImGui::MenuItem("Move up") &&
+                  !workspace.reorderResource(item.name, resource.name,
+                                             resourceIndex - 1U))
+                report(logger, workspace.operationDiagnostic());
+              ImGui::EndDisabled();
+              ImGui::BeginDisabled(resourceIndex + 1U >= item.resourceCount);
+              if (ImGui::MenuItem("Move down") &&
+                  !workspace.reorderResource(item.name, resource.name,
+                                             resourceIndex + 1U))
+                report(logger, workspace.operationDiagnostic());
+              ImGui::EndDisabled();
+              ImGui::EndPopup();
             }
             if (ImGui::BeginDragDropSource()) {
               auto packed = item.name + "\n" + resource.name;
@@ -1836,6 +1924,9 @@ int runDesktop(DesktopArguments arguments) {
   try {
     configuration = loadConfiguration(arguments.iniPath);
     logger.info("Loaded deployment INI: " + displayPath(arguments.iniPath));
+    logger.info("Loaded Resource Schema Catalog with " +
+                std::to_string(configuration.catalog.entries().size()) +
+                " entries.");
   } catch (std::exception const& exception) {
     report(logger, "Resource Manifest Editor configuration failure: " +
                        std::string(exception.what()));

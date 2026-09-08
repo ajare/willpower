@@ -33,6 +33,7 @@ resource-manager --validate Resources.yaml --base-directory assets \
   --canonical-output canonical.yaml
 resource-manager --validate Resources.yaml --base-directory assets \
   --canonical-output -
+resource-manager --validate Resources.yaml --base-directory assets --semantic
 ```
 
 Deployment schemas can be checked separately without opening SDL or a document:
@@ -49,10 +50,12 @@ network retrieval, and this command does not load Resource Type Plugins or appli
 code.
 
 Both the Resource Manifest and base directory are mandatory. `.yaml` and `.yml` are
-accepted case-insensitively. The base directory must exist and be a directory, but this
-structural command does not load source assets or perform the semantic checks reserved
-for later editor work. `--canonical-output` validates, serializes, reparses, and validates
-the canonical bytes before writing them; `-` writes only those bytes to standard output.
+accepted case-insensitively. The base directory must exist and be a directory. By
+default the command is structural for backward-compatible automation. `--semantic`
+also applies the editor's name, dependency, annotated-reference, annotated-file, and
+canonical path-containment checks. `--canonical-output` validates, serializes, reparses,
+and validates the canonical bytes before writing them; `-` writes only those bytes to
+standard output.
 
 Diagnostics use distinct `YAML syntax`, `structural validation`, `defensive limit`, and
 `filesystem` labels. Stable process exit codes are:
@@ -62,9 +65,11 @@ Diagnostics use distinct `YAML syntax`, `structural validation`, `defensive limi
 | 0 | valid Resource Manifest (and successful canonical round-trip when requested) |
 | 2 | command-line usage or unsupported manifest extension |
 | 4 | YAML syntax, structural validation, or manifest defensive-limit failure |
-| 6 | Resource Manifest or base-directory filesystem failure |
-| 7 | canonical serialization/output failure |
-| 9 | internal round-trip failure |
+| 5 | semantic validation failure (`--semantic`) |
+| 6 | path-containment, Resource Manifest, or base-directory filesystem failure |
+| 7 | canonical serialization/output or desktop logging failure |
+| 8 | desktop platform, renderer, or GUI initialization failure |
+| 9 | internal round-trip, smoke, or headless test failure |
 
 YAML and structural failures intentionally share process code 4, as specified by the
 Resource Manifest Editor command-line contract, while retaining distinct public API

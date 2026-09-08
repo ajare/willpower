@@ -31,7 +31,10 @@ libraries, factories, or network references.
 
 The complete candidate must contain exactly one manifest schema and pass bundle
 metadata, version, path, hash, schema-ID, collision, closed-reference, and
-[editor-annotation](specifications/resource-schema-editor-annotations.md) checks. The
+[editor-annotation](specifications/resource-schema-editor-annotations.md) checks.
+`[ResourceManifestEditor]` accepts exactly one `formatVersion=1`, at most one
+`baseBundle`, and any number of ordered `bundle` keys; unknown keys, duplicate singleton
+keys, malformed lines, and missing values are configuration errors. The
 built-in `resource-manager.ini` omits `baseBundle` and therefore uses embedded built-ins.
 An optional `[mpp]` section uses the rendering settings accepted by MassivePolyPusher.
 The installed INI supplies conservative defaults.
@@ -43,6 +46,12 @@ failure to standard error and returns `7`. A missing or invalid deployment INI i
 reported to the log and standard error and returns `3`. GUI/platform initialization
 failure returns `8`. `WILLPOWER_RESOURCE_MANAGER_PREFERENCE_DIR` overrides the
 preference directory for unattended deployment tests.
+
+Log messages cover startup and shutdown, deployment configuration and catalog loading,
+validation/operation failures, document create/open/save, recovery decisions, schema
+reload, smoke progress, and fatal GUI failures. Diagnostics intentionally contain paths
+and validation details, so deployments should protect the preference directory as user
+application data.
 
 `--startup-check` validates logging and the INI without initializing SDL video:
 
@@ -125,7 +134,9 @@ document order. Named namespaces are flat, unique, non-empty, and cannot contain
 created until the user authors or moves its first Resource into it.
 
 Namespace and Resource names can be edited in the inspector. Resources can be dragged
-onto another Resource to reorder them or onto a namespace to move them. These operations
+onto another Resource to reorder them or onto a namespace to move them. Their tree
+context menu exposes inspect and enabled move-up/move-down actions using the same
+validated undoable commands. These operations
 reject ambiguous duplicate identities and destination collisions. Moving an inferred-name
 Resource materializes an explicit name when that name is valid.
 
@@ -238,6 +249,27 @@ widgets additionally constrain new selections before preview. Selecting a diagno
 expands its namespace and Resource and focuses the named or nested property when its
 instance path identifies one.
 
+## Security boundary and automation statuses
+
+Resource Manifests are limited to 64 MiB, YAML depth 128, 1,000,000 nodes, and 100
+structural diagnostics. Semantic diagnostics are limited to 100 and dependency graph
+search to 1,000,000 traversal steps. A schema catalog is limited to a 1 MiB catalog,
+4 MiB per schema document, 16 MiB aggregate catalog content, and 4,096 documents.
+Schema references resolve only against the immutable in-memory catalog. Bundle document
+paths must remain local and safe; neither manifests nor schemas trigger network
+resolution. Annotated asset paths are canonicalized and must remain under the selected
+base directory, including through symlinks and junctions.
+
+The stable executable statuses are `0` success, `2` usage, `3` configuration, `4`
+structural/YAML/manifest-limit validation, `5` semantic validation, `6` path containment
+or filesystem, `7` saving/output/logging, `8` GUI initialization, and `9` internal or
+test failure. Linux GUI smoke may return `77` only when no display exists. See
+[the CLI reference](resource-manifest-tools.md) for command-specific details.
+
+**Help > About Resource Manifest Editor** and **Schemas > Catalog information** show the
+active schema and Resource Type counts, supported contract versions, local-only
+resolution policy, and defensive limits without leaving the persistent editor surface.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -257,8 +289,8 @@ resource-manager --verify-schemas --ini /installed/bin/resource-manager.ini
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
-`--document-tests` covers empty New, valid and rejected Open, canonical atomic Save, and
-YAML-extension enforcement without initializing SDL. `--authoring-tests` covers all five
+`--document-tests` covers empty New, valid and rejected Open, canonical atomic Save,
+reload, and YAML-extension enforcement without initializing SDL. `--authoring-tests` covers all five
 file-backed built-ins, drafts, native-selector metadata, path containment, canonical
 relative output, and create/property/rename/delete undo and redo.
 `--organization-tests` covers namespace drafts, duplicate identities, default-namespace

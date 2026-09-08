@@ -1336,11 +1336,13 @@ std::vector<SemanticDiagnostic> semanticDiagnosticsFor(
   std::vector<SemanticResource> declarations;
   collectSemanticDocument(root, namespaces, declarations);
 
+  constexpr std::size_t maximumSemanticDiagnostics = 100U;
   auto add = [&](SemanticDiagnosticKind kind, SemanticResource const& resource,
                  std::string instancePath, std::string message,
                  std::string subject,
                  SemanticDiagnosticSeverity severity =
                      SemanticDiagnosticSeverity::error) {
+    if (result.size() >= maximumSemanticDiagnostics) return;
     result.push_back({severity,
                       kind,
                       resource.identity.resourceNamespace,
@@ -1592,10 +1594,15 @@ std::vector<SemanticDiagnostic> semanticDiagnosticsFor(
     }
   }
 
-  auto reaches = [&](ResourceIdentity start, ResourceIdentity target) {
+  constexpr std::size_t maximumDependencyTraversal = 1'000'000U;
+  std::size_t dependencyTraversal = 0;
+  bool traversalLimitReported = false;
+  auto reaches = [&](ResourceIdentity start,
+                     ResourceIdentity target) -> std::optional<bool> {
     std::set<ResourceIdentity> visited;
     std::vector<ResourceIdentity> pending{std::move(start)};
     while (!pending.empty()) {
+      if (++dependencyTraversal > maximumDependencyTraversal) return {};
       auto current = std::move(pending.back());
       pending.pop_back();
       if (current == target) return true;
@@ -1607,7 +1614,18 @@ std::vector<SemanticDiagnostic> semanticDiagnosticsFor(
     return false;
   };
   for (auto const& edge : edges) {
-    if (!reaches(edge.target, edge.owner)) continue;
+    auto const reachable = reaches(edge.target, edge.owner);
+    if (!reachable) {
+      if (!traversalLimitReported) {
+        add(SemanticDiagnosticKind::defensiveLimit, *edge.resource,
+            edge.resource->path, "Dependency traversal exceeds the defensive limit of " +
+                                     std::to_string(maximumDependencyTraversal) + " steps.",
+            "dependency-traversal-limit");
+        traversalLimitReported = true;
+      }
+      break;
+    }
+    if (!*reachable) continue;
     auto path = edge.resource->path +
                 "/DependentResources/DependentResource/" +
                 std::to_string(edge.dependencyIndex) + "/ref";
@@ -1979,6 +1997,16 @@ bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
 }
 
 bool ManifestWorkspace::open(fs::path const& manifestPath) {
+  return openWithBase(manifestPath, {});
+}
+
+bool ManifestWorkspace::open(fs::path const& manifestPath,
+                             fs::path const& baseDirectory) {
+  return openWithBase(manifestPath, baseDirectory);
+}
+
+bool ManifestWorkspace::openWithBase(fs::path const& manifestPath,
+                                     std::optional<fs::path> baseDirectory) {
   if (!hasYamlExtension(manifestPath)) {
     setFailure("Resource Manifest must use a .yaml or .yml extension.");
     return false;
@@ -2003,9 +2031,11 @@ bool ManifestWorkspace::open(fs::path const& manifestPath) {
   }
   fs::path canonicalBase;
   std::string failure;
-  auto associatedBase = mPreferences.directory().empty()
-                            ? std::optional<fs::path>{}
-                            : mPreferences.baseDirectoryFor(canonicalPath);
+  auto associatedBase = baseDirectory
+                            ? baseDirectory
+                            : (mPreferences.directory().empty()
+                                   ? std::optional<fs::path>{}
+                                   : mPreferences.baseDirectoryFor(canonicalPath));
   auto requestedBase = associatedBase ? *associatedBase : canonicalPath.parent_path();
   if (!accessibleDirectory(requestedBase, canonicalBase, failure)) {
     // A stale association must not make an otherwise valid manifest unopenable.

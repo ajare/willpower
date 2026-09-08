@@ -82,3 +82,20 @@ run_tool(6 base_stdout base_stderr
 if(NOT base_stderr MATCHES "base directory")
   message(FATAL_ERROR "Missing base-directory diagnostic was not reported: ${base_stderr}")
 endif()
+
+file(WRITE "${WORK_DIR}/semantic.yaml"
+  "Resources:\n  Resource:\n    type: TextFile\n    name: Missing\n    location: missing.txt\n")
+run_tool(5 semantic_stdout semantic_stderr
+  --validate "${WORK_DIR}/semantic.yaml" --base-directory "${WORK_DIR}/base" --semantic)
+if(NOT semantic_stderr MATCHES "semantic validation" OR
+   NOT semantic_stderr MATCHES "does not exist")
+  message(FATAL_ERROR "Semantic validation status was not reported: ${semantic_stderr}")
+endif()
+
+file(WRITE "${WORK_DIR}/containment.yaml"
+  "Resources:\n  Resource:\n    type: TextFile\n    name: Escape\n    location: ../outside.txt\n")
+run_tool(6 containment_stdout containment_stderr
+  --validate "${WORK_DIR}/containment.yaml" --base-directory "${WORK_DIR}/base" --semantic)
+if(NOT containment_stderr MATCHES "outside the canonical base")
+  message(FATAL_ERROR "Path-containment status was not reported: ${containment_stderr}")
+endif()
