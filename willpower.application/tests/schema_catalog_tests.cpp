@@ -53,10 +53,12 @@ std::string entry(std::string const& resourceType, std::string const& factoryTyp
 
 ResourceSchemaBundle bundle(std::vector<std::string> entries,
                             std::vector<ResourceSchemaBundleDocument> documents,
-                            std::string const& bundleVersion = "1.0") {
+                            std::string const& bundleVersion = "1.0",
+                            std::string const& manifestVersion = "1.0") {
   ResourceSchemaBundle result;
   result.catalogJson = "{\n  \"bundleFormatVersion\": \"" + bundleVersion +
-                       "\",\n  \"resourceManifestSchemaVersion\": \"1.0\",\n  \"schemas\": [\n";
+                       "\",\n  \"resourceManifestSchemaVersion\": \"" + manifestVersion +
+                       "\",\n  \"schemas\": [\n";
   for (std::size_t index = 0; index < entries.size(); ++index) {
     result.catalogJson += entries[index] + (index + 1U == entries.size() ? "\n" : ",\n");
   }
@@ -202,6 +204,13 @@ int main() {
     badVersion.catalogJson.replace(badVersion.catalogJson.find("1.0"), 3U, "2.0");
     requireFailure([&] { ResourceSchemaCatalog invalid(badVersion); },
                    "unsupported bundleFormatVersion '2.0'");
+    auto badManifestVersion = bundle(
+        {entry("Widget", "", "https://example.test/widget.schema.json",
+               "schemas/widget.schema.json",
+               "b9587adebb058d2a488e76f48b50949fa5926a5f5d821d109dff308b7bdc3dc6")},
+        {{"schemas/widget.schema.json", widgetSchema}}, "1.0", "2.0");
+    requireFailure([&] { ResourceSchemaCatalog invalid(badManifestVersion); },
+                   "unsupported resourceManifestSchemaVersion '2.0'");
     auto badHash = widgetBundle();
     auto const hashPosition = badHash.catalogJson.find("b9587");
     badHash.catalogJson[hashPosition] = '0';

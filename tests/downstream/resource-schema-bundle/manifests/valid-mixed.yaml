@@ -1,0 +1,30 @@
+Resources:
+  Resource:
+    - type: Widget
+      name: DefaultWidget
+      Definitions:
+        Definition:
+          size: 4
+    - type: FutureResource
+      name: ForwardCompatible
+      Definitions:
+        Definition:
+          applicationPayload: retained
+  Namespace:
+    - name: Ui
+      Resource:
+        type: Widget
+        name: GlowWidget
+        Definitions:
+          Definition:
+            factory: GlowFactory
+            intensity: 1.5
+    - name: Panels
+      Resource:
+        - type: Widget
+          name: FirstPanel
+          Definitions:
+            Definition:
+              - size: 2
+              - factory: FutureFactory
+                applicationPayload: retained

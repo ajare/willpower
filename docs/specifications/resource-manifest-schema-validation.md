@@ -15,7 +15,7 @@ Validation has two layers:
 1. A **Resource Manifest schema** validates the document envelope and common declarations.
 2. A **Resource Type schema** validates each complete `Resource` declaration, including its options, dependencies, and default `Definition` payload where applicable.
 
-The canonical schemas are JSON files. They are embedded in `Willpower.Application` at build time, so runtime validation does not depend on locating separately deployed schema files. The same source files remain available to editors, CI, and the future Resource Manifest Editor.
+The canonical schemas are JSON files. They are embedded in `Willpower.Application` at build time, so runtime validation does not depend on locating separately deployed schema files. Editors, CI, and the future Resource Manifest Editor consume a Resource Schema Bundle so application-owned schemas are available alongside these built-ins.
 
 Existing semantic validation remains responsible for facts that JSON Schema cannot establish, such as file existence, dependency resolution, cycles, image bounds, and references into another resource's loaded data.
 
@@ -337,7 +337,7 @@ The existing `resource_yaml_tests`, resource definition tests, and fixtures must
 
 ## 11. Documentation and tooling
 
-README documentation shall describe load-time validation and how to interpret failures. The repository shall include a YAML language-server association for `Resources.yaml` where practical, pointing to the canonical manifest schema. Type-specific completion may initially be limited by the two-stage runtime dispatch; schemas must nevertheless be directly consumable by the future Resource Manifest Editor.
+README documentation shall describe load-time validation and how to interpret failures. The repository shall include a YAML language-server association for `Resources.yaml` where practical, pointing to an exported application root schema. The Resource Manifest Editor shall consume the complete Resource Schema Bundle starting at `catalog.json`, resolve only catalogued documents, and must not load application code to discover Resource Types.
 
 ## 12. Acceptance criteria
 

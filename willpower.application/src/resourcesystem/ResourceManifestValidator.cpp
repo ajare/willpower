@@ -142,8 +142,11 @@ Json dispatchManifestSchema(ResourceSchemaCatalogSnapshot const& catalog,
   }
 
   auto const resourceCollection = collection(Json{{"oneOf", resourceBranches}});
+  // The object type keeps the singleton branch from also matching a Namespace
+  // sequence (object-only keywords are otherwise ignored for arrays), which
+  // would make collection(oneOf) reject valid sequences as ambiguous.
   auto const namespaceDispatch =
-      Json{{"properties", {{"Resource", resourceCollection}}}};
+      Json{{"type", "object"}, {"properties", {{"Resource", resourceCollection}}}};
   return Json{
       {"$schema", "http://json-schema.org/draft-07/schema#"},
       {"type", "object"},

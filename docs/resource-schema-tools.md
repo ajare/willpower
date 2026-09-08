@@ -1,5 +1,9 @@
 # Resource Schema Bundle tooling
 
+See [Application Resource Schema integration](resource-schema-integration.md) for the
+end-to-end authoring, CMake/runtime registration, editor, compatibility, and security
+workflow.
+
 `willpower-resource-schemas` inspects, verifies, merges, and exports Resource Schema
 Bundles without reading Willpower's schema source directory. It starts with the twelve
 schemas embedded in `Willpower.Application` (the manifest, two dependencies, and nine

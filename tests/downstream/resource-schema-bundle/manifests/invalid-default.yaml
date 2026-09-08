@@ -1,0 +1,7 @@
+Resources:
+  Resource:
+    type: Widget
+    name: InvalidDefault
+    Definitions:
+      Definition:
+        size: 0

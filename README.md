@@ -239,7 +239,10 @@ root schema for YAML language servers, including downstream Resource Types. Appl
 can link their schema-registration code to the reusable `runResourceSchemaExporter`
 entry point without initializing runtime services. See
 [`docs/resource-schema-tools.md`](docs/resource-schema-tools.md) for command syntax,
-exit codes, a downstream exporter target, and reproducible CI/editor examples.
+exit codes, a downstream exporter target, and reproducible CI/editor examples. The
+complete [application integration guide](docs/resource-schema-integration.md) covers
+schema authoring, CMake and runtime registration, installed-package use, export,
+compatibility, and security boundaries.
 
 Each `ResourceManager` owns a catalog initialized with those built-in schemas. Call
 `addResourceSchemaBundle()` with an in-memory bundle or bundle directory before the first
@@ -327,10 +330,13 @@ manifest, go to the reported position/path, correct the structural rule, and rer
 scan; if structural loading succeeds but semantic validation fails, fix the referenced
 file or Resource relationship instead.
 
-The repository's [VS Code settings](.vscode/settings.json) associate
-`**/Resources.yaml` and `**/Resources.yml` with the canonical root schema when the Red
-Hat YAML extension (or another setting-compatible YAML language server) is installed.
-This editor support adds no production dependency.
+The repository's [VS Code settings](.vscode/settings.json) show how to associate
+`**/Resources.yaml` and `**/Resources.yml` with an exported application root when the
+Red Hat YAML extension (or another setting-compatible YAML language server) is
+installed. Generate `build/editor-resource-schemas/resource-manifest.schema.json` with
+an application exporter first. The Resource Manifest Editor should consume the whole
+application bundle starting at `catalog.json`, rather than assuming the built-in root
+contains application Resource Types. Editor support adds no production dependency.
 
 ## Tests
 

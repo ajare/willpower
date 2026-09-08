@@ -51,6 +51,20 @@ class WidgetFactory final : public ResourceFactory {
   }
 };
 
+// A runtime factory without a schema proves that unknown custom Resource Types
+// retain common structural validation and can still be application-owned.
+class ForwardCompatibleFactory final : public ResourceFactory {
+ public:
+  ForwardCompatibleFactory() : ResourceFactory("FutureResource") {}
+
+  Resource* createResource(std::string const& name, std::string const& namesp,
+                           std::string const& source,
+                           std::map<std::string, std::string> const& tags,
+                           ResourceLocation* location) override {
+    return new Resource(name, namesp, "FutureResource", source, tags, location);
+  }
+};
+
 bool validates(ResourceSchemaCatalog const& catalog, std::string const& manifest) {
   auto snapshot = catalog.snapshot();
   auto const manifestSchema = std::find_if(
@@ -66,6 +80,33 @@ bool validates(ResourceSchemaCatalog const& catalog, std::string const& manifest
   return reader->validateJsonSchema(manifestSchema->contents, schemas).empty();
 }
 
+bool runtimeAccepts(std::filesystem::path const& bundleDirectory,
+                    std::filesystem::path const& manifest) {
+  wp::Logger logger;
+  ResourceManager manager(nullptr, nullptr, nullptr, &logger);
+  manager.addResourceSchemaBundle(bundleDirectory);
+  manager.addResourceFactory(new WidgetFactory);
+  manager.addResourceFactory(new ForwardCompatibleFactory);
+  manager.addResourceDefinitionFactory(
+      new downstream_fixture::WidgetDefaultDefinitionFactory);
+  manager.addResourceDefinitionFactory(
+      new downstream_fixture::WidgetGlowDefinitionFactory);
+  manager.addResourceLocationFactory(
+      "Directory", [&logger](std::string const& path,
+                              std::string const& definition) -> ResourceLocation* {
+        return new DirectoryResourceLocation(&logger, path, definition);
+      });
+  manager.addResourceLocation("Directory", manifest.parent_path().string(),
+                              manifest.filename().string());
+  try {
+    manager.scanLocations();
+    return true;
+  } catch (ResourceManifestValidationException const& error) {
+    std::cerr << error.what() << '\n';
+    return false;
+  }
+}
+
 void verifyRuntimeValidation(std::filesystem::path const& bundleDirectory) {
   auto const unique = std::chrono::steady_clock::now().time_since_epoch().count();
   auto const root = std::filesystem::temp_directory_path() /
@@ -79,6 +120,10 @@ void verifyRuntimeValidation(std::filesystem::path const& bundleDirectory) {
     manager.addResourceSchemaBundle(ResourceSchemaCatalog::readBundle(bundleDirectory));
     manager.addResourceSchemaBundle(bundleDirectory);  // equivalent duplicate is idempotent
     manager.addResourceFactory(new WidgetFactory);
+    manager.addResourceDefinitionFactory(
+        new downstream_fixture::WidgetDefaultDefinitionFactory);
+    manager.addResourceDefinitionFactory(
+        new downstream_fixture::WidgetGlowDefinitionFactory);
     manager.addResourceLocationFactory(
         "Directory", [&logger](std::string const& path,
                                 std::string const& definition) -> ResourceLocation* {
@@ -184,8 +229,13 @@ void verifyRuntimeValidation(std::filesystem::path const& bundleDirectory) {
 
 int main(int argc, char** argv) {
   try {
-    require(argc == 2, "Expected the composed bundle directory.");
-    ResourceSchemaCatalog catalog{std::filesystem::path(argv[1])};
+    require(argc == 2 || (argc == 4 && std::string(argv[2]) == "--validate-manifest"),
+            "Expected a bundle directory and optional --validate-manifest file.");
+    auto const bundleDirectory = std::filesystem::path(argv[1]);
+    if (argc == 4) {
+      return runtimeAccepts(bundleDirectory, std::filesystem::path(argv[3])) ? 0 : 1;
+    }
+    ResourceSchemaCatalog catalog{bundleDirectory};
     auto snapshot = catalog.snapshot();
     require(snapshot.entries().size() == 14U,
             "Composed bundle did not contain the built-in and custom schemas.");
@@ -250,7 +300,7 @@ int main(int argc, char** argv) {
     location: readme.txt
 )"), "A built-in Resource Type was lost from the composed root.");
 
-    verifyRuntimeValidation(std::filesystem::path(argv[1]));
+    verifyRuntimeValidation(bundleDirectory);
 
     std::cout << "Downstream Resource Schema Bundle passed\n";
     return 0;

@@ -1,0 +1,9 @@
+Resources:
+  Namespace:
+    name: Ui
+    Resource:
+      - type: Widget
+        name: InvalidGlow
+        Definitions:
+          Definition:
+            factory: GlowFactory

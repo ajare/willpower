@@ -1,4 +1,4 @@
-foreach(_required TOOL DOWNSTREAM_TOOL WORK_DIR)
+foreach(_required TOOL DOWNSTREAM_TOOL EXTERNAL_CONSUMER MANIFEST_DIR WORK_DIR)
     if(NOT DEFINED ${_required} OR "${${_required}}" STREQUAL "")
         message(FATAL_ERROR "${_required} is required")
     endif()
@@ -53,6 +53,20 @@ file(READ "${WORK_DIR}/downstream/resource-manifest.schema.json" _root)
 if(NOT _catalog MATCHES "Widget" OR NOT _root MATCHES "Widget" OR NOT _root MATCHES "GlowFactory")
     message(FATAL_ERROR "Downstream exporter output does not contain its registered Resource Types")
 endif()
+foreach(_case valid-mixed invalid-default invalid-specialized)
+    execute_process(
+        COMMAND "${EXTERNAL_CONSUMER}" "${WORK_DIR}/downstream" "${MANIFEST_DIR}/${_case}.yaml"
+        RESULT_VARIABLE _validation_result)
+    if(_case STREQUAL "valid-mixed")
+        set(_expected 0)
+    else()
+        set(_expected 1)
+    endif()
+    if(NOT _validation_result EQUAL _expected)
+        message(FATAL_ERROR
+            "CLI-exported bundle returned ${_validation_result} for ${_case}, expected ${_expected}")
+    endif()
+endforeach()
 
 file(COPY "${WORK_DIR}/first/" DESTINATION "${WORK_DIR}/invalid")
 file(READ "${WORK_DIR}/invalid/catalog.json" _invalid_catalog)
