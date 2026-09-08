@@ -844,6 +844,7 @@ bool containedBy(fs::path const& base, fs::path const& target) {
 }
 
 constexpr char editorVersionKeyword[] = "x-willpower-editor-version";
+constexpr char editorDefaultKeyword[] = "x-willpower-editor-default";
 constexpr char widgetKeyword[] = "x-willpower-widget";
 constexpr char allowedTypesKeyword[] = "x-willpower-allowed-resource-types";
 constexpr char referenceScopeKeyword[] = "x-willpower-reference-scope";
@@ -863,15 +864,44 @@ void validateAnnotations(Json const& value, std::string const& context) {
     if (annotationKeys.empty()) return;
     if (!value.contains(editorVersionKeyword) ||
         !value.at(editorVersionKeyword).is_string() ||
-        value.at(editorVersionKeyword) != "1.0" ||
-        !value.contains(widgetKeyword) ||
-        !value.at(widgetKeyword).is_string()) {
+        value.at(editorVersionKeyword) != "1.0") {
       throw std::runtime_error(
-          context + ": editor annotations require version '1.0' and a widget.");
+          context + ": editor annotations require version '1.0'.");
     }
+    bool const hasDefault = value.contains(editorDefaultKeyword);
+    if (hasDefault && !value.at(editorDefaultKeyword).is_string() &&
+        !value.at(editorDefaultKeyword).is_boolean() &&
+        !value.at(editorDefaultKeyword).is_number()) {
+      throw std::runtime_error(
+          context + ": editor default must be a scalar JSON value.");
+    }
+    if (hasDefault && value.contains("enum") && value.at("enum").is_array() &&
+        std::find(value.at("enum").begin(), value.at("enum").end(),
+                  value.at(editorDefaultKeyword)) == value.at("enum").end()) {
+      throw std::runtime_error(
+          context + ": editor default must be one of the declared choices.");
+    }
+    if (hasDefault &&
+        value.value("$ref", std::string{})
+            .ends_with("/definitions/boolean") &&
+        !value.at(editorDefaultKeyword).is_boolean()) {
+      throw std::runtime_error(
+          context + ": boolean editor default must be a JSON boolean.");
+    }
+    std::set<std::string> expected{std::string(editorVersionKeyword)};
+    if (hasDefault) expected.insert(std::string(editorDefaultKeyword));
+    if (!value.contains(widgetKeyword)) {
+      if (!hasDefault || annotationKeys != expected) {
+        throw std::runtime_error(
+            context + ": incomplete or unknown editor annotation keyword.");
+      }
+      return;
+    }
+    if (!value.at(widgetKeyword).is_string()) {
+      throw std::runtime_error(context + ": editor widget must be a string.");
+    }
+    expected.insert(std::string(widgetKeyword));
     auto const widget = value.at(widgetKeyword).get<std::string>();
-    std::set<std::string> expected{std::string(editorVersionKeyword),
-                                   std::string(widgetKeyword)};
     if (widget == "file") {
       expected.insert("x-willpower-file-kind");
       expected.insert("x-willpower-file-extensions");
@@ -1183,6 +1213,21 @@ std::vector<ResourceForm> loadResourceForms(
             } else if (value.value("$ref", std::string{})
                            .ends_with("/definitions/boolean")) {
               option.boolean = true;
+            }
+            if (value.contains(editorDefaultKeyword)) {
+              auto const& editorDefault = value.at(editorDefaultKeyword);
+              if (option.boolean && editorDefault.is_boolean()) {
+                option.editorDefault =
+                    editorDefault.get<bool>() ? "true" : "false";
+              } else if (!option.boolean && editorDefault.is_string() &&
+                         std::find(option.values.begin(), option.values.end(),
+                                   editorDefault.get<std::string>()) !=
+                             option.values.end()) {
+                option.editorDefault = editorDefault.get<std::string>();
+              } else {
+                throw std::runtime_error(
+                    "Resource option editor default does not match its choices.");
+              }
             }
             form.options.push_back(std::move(option));
           }
@@ -1552,40 +1597,53 @@ std::vector<SemanticDiagnostic> semanticDiagnosticsFor(
     auto dependencies = standardDependencyItems(resource.node);
     auto annotations = dependencyAnnotations(catalog, resource.resourceType);
     for (std::size_t index = 0; index < dependencies.size(); ++index) {
+      auto const dependencyId = scalar(dependencies[index], "id");
+      auto annotation = std::find_if(
+          annotations.begin(), annotations.end(), [&](auto const& candidate) {
+            return candidate.id == dependencyId;
+          });
+      auto allowedTypes =
+          standardAllowedTypes(resource.resourceType, dependencyId);
+      if (annotation != annotations.end())
+        allowedTypes = annotation->allowedResourceTypes;
+
+      auto const dependencyPath =
+          resource.path + "/DependentResources/DependentResource/" +
+          std::to_string(index);
       auto reference = scalar(dependencies[index], "ref");
-      if (reference.empty()) continue;
+      if (reference.empty()) {
+        auto const inlineType = scalar(dependencies[index], "type");
+        if (!inlineType.empty() && !allowedTypes.empty() &&
+            !allowedResourceType(allowedTypes, inlineType)) {
+          add(SemanticDiagnosticKind::referenceTypeMismatch, resource,
+              dependencyPath + "/type",
+              "Inline dependent Resource has type '" + inlineType +
+                  "'; expected " + allowedTypes.front() + ".",
+              "inline-reference-type:" + dependencyId + ":" + inlineType);
+        }
+        continue;
+      }
       auto target = parseReference(reference, resource.identity.resourceNamespace);
       auto matches = identityCounts[target];
-      auto path = resource.path + "/DependentResources/DependentResource/" +
-                  std::to_string(index) + "/ref";
+      auto path = dependencyPath + "/ref";
       if (matches != 1U) {
         add(SemanticDiagnosticKind::unresolvedReference, resource, path,
             "Known Resource reference '" + reference + "' is " +
                 (matches == 0U ? "unresolved." : "ambiguous."),
-            "reference:" + scalar(dependencies[index], "id") + ":" +
-                qualifiedIdentity(target));
+            "reference:" + dependencyId + ":" + qualifiedIdentity(target));
         continue;
       }
       auto declaration = std::find_if(
           declarations.begin(), declarations.end(), [&](auto const& candidate) {
             return candidate.identity == target;
           });
-      auto annotation = std::find_if(
-          annotations.begin(), annotations.end(), [&](auto const& candidate) {
-            return candidate.id == scalar(dependencies[index], "id");
-          });
-      auto allowedTypes =
-          standardAllowedTypes(resource.resourceType,
-                               scalar(dependencies[index], "id"));
-      if (annotation != annotations.end())
-        allowedTypes = annotation->allowedResourceTypes;
       if (!allowedTypes.empty() &&
           !allowedResourceType(allowedTypes, declaration->resourceType)) {
         add(SemanticDiagnosticKind::referenceTypeMismatch, resource, path,
             "Typed Resource reference '" + reference + "' targets type '" +
                 declaration->resourceType + "'; expected " +
                 allowedTypes.front() + ".",
-            "reference-type:" + scalar(dependencies[index], "id") + ":" +
+            "reference-type:" + dependencyId + ":" +
                 qualifiedIdentity(target));
       }
       graph[resource.identity].push_back(target);
@@ -2918,10 +2976,15 @@ std::vector<DefinitionFactoryChoice> ManifestWorkspace::definitionFactories(
   auto const resource =
       collection->resources[*findResourceIndex(*collection, name)];
   auto const resourceType = scalar(resource, "type");
+  auto const* form = resourceForm(resourceType);
+  if (!form || !form->requiresDefinition) return result;
   std::set<std::string> existing;
-  for (auto const& definition :
-       collectionItems(resource["Definitions"]["Definition"])) {
-    existing.insert(scalar(definition, "factory"));
+  auto definitionsRoot = resource["Definitions"];
+  if (definitionsRoot && definitionsRoot.IsMap()) {
+    for (auto const& definition :
+         collectionItems(definitionsRoot["Definition"])) {
+      existing.insert(scalar(definition, "factory"));
+    }
   }
   for (auto const& entry : mCatalog.entries()) {
     if (entry.kind != ResourceSchemaKind::resourceType ||
@@ -2960,7 +3023,9 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
       type == "Material";
   if (!builtInAdvanced && !resourceForm(type)) return result;
 
-  auto definitions = collectionItems(resource["Definitions"]["Definition"]);
+  auto definitionsRoot = resource["Definitions"];
+  if (!definitionsRoot || !definitionsRoot.IsMap()) return result;
+  auto definitions = collectionItems(definitionsRoot["Definition"]);
   for (std::size_t definitionIndex = 0; definitionIndex < definitions.size();
        ++definitionIndex) {
     auto const& definition = definitions[definitionIndex];
@@ -3564,6 +3629,17 @@ bool ManifestWorkspace::commitDraft() {
   }
   if (form && !form->fileProperty.empty()) {
     resource[form->fileProperty] = mDraft->location;
+  }
+  if (form) {
+    std::vector<YAML::Node> options;
+    for (auto const& optionForm : form->options) {
+      if (!optionForm.editorDefault) continue;
+      YAML::Node option(YAML::NodeType::Map);
+      option["name"] = optionForm.name;
+      option["value"] = *optionForm.editorDefault;
+      options.push_back(std::move(option));
+    }
+    if (!options.empty()) setCollection(resource, "Option", options);
   }
   if (form && form->requiresDefinition) {
     YAML::Node definition(YAML::NodeType::Map);
@@ -5350,6 +5426,10 @@ bool runAuthoringTests(std::string* failure) {
       }
     }
     auto summaries = workspace.resources();
+    if (!workspace.nestedFormItems({}, "Shader").empty() ||
+        !workspace.definitionFactories({}, "Shader").empty()) {
+      return fail("A file-backed Resource without Definitions exposed Definition controls.");
+    }
     if (summaries.size() != fixtures.size() ||
         std::any_of(summaries.begin(), summaries.end(),
                     [](ResourceSummary const& item) {
@@ -5394,12 +5474,31 @@ bool runAuthoringTests(std::string* failure) {
       return fail("File-property edit did not support undo and redo.");
     }
 
+    auto image = std::find_if(summaries.begin(), summaries.end(),
+                              [](auto const& resource) {
+                                return resource.name == "Image";
+                              });
+    auto hasOption = [&](std::string const& name, std::string const& value) {
+      return image != summaries.end() &&
+             std::find(image->options.begin(), image->options.end(),
+                       std::pair{name, value}) != image->options.end();
+    };
+    if (!hasOption("filtering", "none") || !hasOption("uv-style", "atlas") ||
+        !hasOption("colour-space", "linear") ||
+        !hasOption("wrapping", "repeat") || !hasOption("mipmaps", "true")) {
+      return fail("A new Image did not use each schema option's first value.");
+    }
     if (!workspace.setResourceOption({}, "Image", "filtering", "linear") ||
-        workspace.canonicalYaml().find("\"filtering\"") == std::string::npos ||
-        !workspace.undo() ||
-        workspace.canonicalYaml().find("\"filtering\"") != std::string::npos ||
-        !workspace.redo()) {
-      return fail("Schema-generated Image option did not support undo and redo.");
+        !workspace.undo()) {
+      return fail("Schema-generated Image option did not support undo.");
+    }
+    summaries = workspace.resources();
+    image = std::find_if(summaries.begin(), summaries.end(),
+                         [](auto const& resource) {
+                           return resource.name == "Image";
+                         });
+    if (!hasOption("filtering", "none") || !workspace.redo()) {
+      return fail("Undo did not restore the new Resource option default.");
     }
 
     auto beforeDelete = workspace.canonicalYaml();
@@ -5768,6 +5867,18 @@ bool runDependencyAuthoringTests(std::string* failure) {
         Definition:
           Images:
             Image: {name: Pixel, x: 0, y: 0, width: 1, height: 1}
+    - type: ImageSet
+      name: InlineWrongType
+      DependentResources:
+        DependentResource:
+          id: Image
+          type: Shader
+          name: InlineShader
+          location: shader.vert
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: Pixel, x: 0, y: 0, width: 1, height: 1}
     - type: Custom
       name: CycleA
       DependentResources:
@@ -5823,12 +5934,28 @@ bool runDependencyAuthoringTests(std::string* failure) {
                     })) {
       return fail("Reference choices were not qualified and filtered by Resource Type.");
     }
+    if (workspace.setResourceReference(
+            {}, "Atlas", atlasSelectors.front().dependencyIndex,
+            std::pair{std::string{}, std::string("RootShader")})) {
+      return fail("A schema-incompatible Resource selection was accepted.");
+    }
     if (!workspace.setResourceReference(
             {}, "Atlas", atlasSelectors.front().dependencyIndex,
             std::pair{std::string("Assets"), std::string("SharedImage")}) ||
         workspace.canonicalYaml().find("Assets/SharedImage") ==
             std::string::npos) {
       return fail("A compatible qualified Resource selection was not committed.");
+    }
+    auto inlineTypeMismatch = std::find_if(
+        workspace.semanticDiagnostics().begin(),
+        workspace.semanticDiagnostics().end(), [](auto const& diagnostic) {
+          return diagnostic.kind ==
+                     SemanticDiagnosticKind::referenceTypeMismatch &&
+                 diagnostic.resourceName == "InlineWrongType" &&
+                 diagnostic.instancePath.ends_with("/type");
+        });
+    if (inlineTypeMismatch == workspace.semanticDiagnostics().end()) {
+      return fail("An incompatible inline dependent Resource Type was not diagnosed.");
     }
 
     auto cycleSelectors = workspace.resourceReferences({}, "CycleB");

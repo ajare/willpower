@@ -208,17 +208,25 @@ willpower_deploy_vendor_dlls(resource_manager)
 set_target_properties(resource_manager PROPERTIES
     OUTPUT_NAME resource-manager
     FOLDER Willpower/Tools)
+set(_resource_manager_icon_font
+    "${WILLPOWER_MPP_SOURCE_DIR}/resources/pipeline-editor/fa-solid-900.ttf")
 add_custom_command(TARGET resource_manager POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/resource-manager.ini"
         "$<TARGET_FILE_DIR:resource_manager>/resource-manager.ini"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_resource_manager_icon_font}"
+        "$<TARGET_FILE_DIR:resource_manager>/fa-solid-900.ttf"
     VERBATIM)
 install(TARGETS resource_manager
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Willpower_Application)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resource-manager.ini"
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/resource-manager.ini"
+    "${_resource_manager_icon_font}"
     DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Willpower_Application)
+unset(_resource_manager_icon_font)
 if(WIN32)
     set(_resource_manager_runtime_destination "${CMAKE_INSTALL_BINDIR}")
 else()

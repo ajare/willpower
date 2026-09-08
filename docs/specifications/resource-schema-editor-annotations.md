@@ -9,19 +9,37 @@ Resource Manifest Editor. They do not change Resource Manifest validation semant
 Draft 7 consumers that do not recognize them ignore them. Annotation versions are
 independent of Resource Schema Bundle and Resource Manifest schema versions.
 
-An annotated property always has these sibling keywords:
+Every annotated property has an `x-willpower-editor-version` sibling. Widget
+annotations additionally have `x-willpower-widget`:
 
 | Keyword | Value | Meaning |
 | --- | --- | --- |
 | `x-willpower-editor-version` | `"1.0"` | Annotation vocabulary version. |
-| `x-willpower-widget` | `"file"` or `"resource-reference"` | Requested editor control. |
+| `x-willpower-widget` | `"file"` or `"resource-reference"` | Optional requested editor control. |
 
-A property containing any `x-willpower-*` keyword must contain exactly the common
-keywords and the widget-specific keywords below. Unknown keywords, unsupported
-versions or widgets, missing values, wrong JSON types, empty values, duplicate allowed
-Resource Types, and invalid file extensions make the complete candidate editor catalog
-invalid. Annotation validation is an editor catalog-loading rule, not a JSON Schema
-validation keyword.
+A property containing any `x-willpower-*` keyword must contain exactly the version,
+the applicable metadata keyword, and any widget-specific keywords below. Unknown
+keywords, unsupported versions or widgets, missing values, wrong JSON types, empty
+values, duplicate allowed Resource Types, and invalid file extensions make the complete
+candidate editor catalog invalid. Annotation validation is an editor catalog-loading
+rule, not a JSON Schema validation keyword.
+
+## Editor default
+
+An option value schema may declare `x-willpower-editor-default`. The value must be a
+scalar accepted by that option: a member of its string `enum`, or a JSON boolean for a
+reference to the common boolean definition. When the editor creates a Resource, it
+writes annotated defaults into that Resource's `Option` collection. This keyword is
+editor-only metadata: it does not change JSON Schema validation or runtime Resource
+loading behavior.
+
+```json
+"value": {
+  "enum": ["none", "linear"],
+  "x-willpower-editor-version": "1.0",
+  "x-willpower-editor-default": "none"
+}
+```
 
 ## File widget
 

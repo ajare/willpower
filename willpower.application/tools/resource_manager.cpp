@@ -50,6 +50,12 @@ constexpr int serializationFailure = 7;
 constexpr int guiFailure = 8;
 constexpr int internalFailure = 9;
 
+// Font Awesome 5 Free solid glyphs, merged by the shared ImGui backend.
+constexpr char iconArrowDown[] = "\xef\x81\xa3";  // U+F063
+constexpr char iconArrowUp[] = "\xef\x81\xa2";    // U+F062
+constexpr char iconPlus[] = "\xef\x81\xa7";       // U+F067
+constexpr char iconTrash[] = "\xef\x87\xb8";      // U+F1F8
+
 struct SdlLifetime {
   ~SdlLifetime() { SDL_Quit(); }
 };
@@ -1013,6 +1019,128 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
             }
             acceptResourceDrop(item.name, resourceIndex);
             ImGui::Indent();
+
+            auto nestedItems =
+                workspace.nestedFormItems(item.name, resource.name);
+            std::vector<resource_manager::NestedFormItem> definitions;
+            std::copy_if(nestedItems.begin(), nestedItems.end(),
+                         std::back_inserter(definitions), [](auto const& nested) {
+                           return nested.kind ==
+                                  resource_manager::NestedCollectionKind::definition;
+                         });
+            auto factoryChoices =
+                workspace.definitionFactories(item.name, resource.name);
+            if (!definitions.empty() || !factoryChoices.empty()) {
+              ImGui::PushID((resource.instancePath + "##definitions").c_str());
+              bool definitionChanged = false;
+              for (std::size_t definitionIndex = 0;
+                   definitionIndex < definitions.size(); ++definitionIndex) {
+                auto const& definition = definitions[definitionIndex];
+                ImGui::PushID(definition.path.c_str());
+                float const controlsWidth =
+                    ImGui::GetFrameHeight() * 3.0f +
+                    ImGui::GetStyle().ItemSpacing.x * 3.0f;
+                bool const definitionSelected =
+                    selectedNestedPath == definition.path &&
+                    selectedNamespace == item.name &&
+                    selectedName == resource.name;
+                if (ImGui::Selectable(
+                        definition.label.c_str(), definitionSelected, 0,
+                        ImVec2((std::max)(40.0f,
+                                          ImGui::GetContentRegionAvail().x -
+                                              controlsWidth),
+                               0.0f))) {
+                  selectedNamespace = item.name;
+                  selectedName = resource.name;
+                  selectedResourcePath = resource.instancePath;
+                  selectedNamespacePath.clear();
+                  selectedNamespaceNode = false;
+                  selectedNamespaceIsDraft = false;
+                  selectedInline = false;
+                  selectedNestedPath = definition.path;
+                  editingIdentity.clear();
+                  editingNamespace.clear();
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(definitions.size() <= 1U);
+                if (ImGui::SmallButton((std::string(iconTrash) + "##delete").c_str())) {
+                  if (!workspace.removeNestedItem(item.name, resource.name,
+                                                  definition.path))
+                    report(logger, workspace.operationDiagnostic());
+                  else {
+                    selectedNestedPath.clear();
+                    definitionChanged = true;
+                  }
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                  ImGui::SetTooltip(definitions.size() <= 1U
+                                        ? "A Resource must retain one Definition."
+                                        : "Delete Definition");
+                ImGui::SameLine();
+                ImGui::BeginDisabled(definitionIndex == 0U);
+                if (ImGui::SmallButton((std::string(iconArrowUp) + "##up").c_str())) {
+                  if (!workspace.reorderNestedItem(
+                          item.name, resource.name, definition.path,
+                          definitionIndex - 1U))
+                    report(logger, workspace.operationDiagnostic());
+                  else {
+                    selectedNestedPath.clear();
+                    definitionChanged = true;
+                  }
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                  ImGui::SetTooltip("Move Definition up");
+                ImGui::SameLine();
+                ImGui::BeginDisabled(definitionIndex + 1U >= definitions.size());
+                if (ImGui::SmallButton((std::string(iconArrowDown) + "##down").c_str())) {
+                  if (!workspace.reorderNestedItem(
+                          item.name, resource.name, definition.path,
+                          definitionIndex + 1U))
+                    report(logger, workspace.operationDiagnostic());
+                  else {
+                    selectedNestedPath.clear();
+                    definitionChanged = true;
+                  }
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                  ImGui::SetTooltip("Move Definition down");
+                ImGui::PopID();
+                if (definitionChanged) break;
+              }
+
+              auto availableFactory = std::find_if(
+                  factoryChoices.begin(), factoryChoices.end(),
+                  [](auto const& choice) { return !choice.disabled; });
+              ImGui::BeginDisabled(availableFactory == factoryChoices.end());
+              if (ImGui::SmallButton(
+                      (std::string(iconPlus) + "  Definition##add").c_str()))
+                ImGui::OpenPopup("Add Definition");
+              ImGui::EndDisabled();
+              if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(availableFactory == factoryChoices.end()
+                                      ? "No additional Definition factory is available."
+                                      : "Create Definition");
+              if (ImGui::BeginPopup("Add Definition")) {
+                for (auto const& choice : factoryChoices) {
+                  ImGui::BeginDisabled(choice.disabled);
+                  auto choiceLabel = choice.factoryType.empty()
+                                         ? std::string("Default")
+                                         : choice.factoryType;
+                  choiceLabel += " [" + choice.title + "]";
+                  if (ImGui::MenuItem(choiceLabel.c_str()) &&
+                      !workspace.addDefinition(item.name, resource.name,
+                                               choice.factoryType))
+                    report(logger, workspace.operationDiagnostic());
+                  ImGui::EndDisabled();
+                }
+                ImGui::EndPopup();
+              }
+              ImGui::PopID();
+            }
+
             for (auto const& inlineResource :
                  workspace.inlineResources(item.name, resource.name)) {
               ImGui::PushID(static_cast<int>(inlineResource.dependencyIndex));
@@ -1307,26 +1435,47 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                                         ? std::string{}
                                         : value->second;
               auto label = option.name + "##inline";
-              auto const* preview = current.empty() ? "Not set" : current.c_str();
-              if (ImGui::BeginCombo(label.c_str(), preview)) {
-                if (ImGui::Selectable("Not set", current.empty())) {
+              if (option.boolean) {
+                bool checked = current == "true";
+                bool const unset = current.empty();
+                if (unset)
+                  ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+                if (ImGui::Checkbox(label.c_str(), &checked)) {
                   workspace.setInlineResourceOption(
                       inlineResource.resourceNamespace, inlineResource.ownerName,
-                      inlineResource.dependencyIndex, option.name, {});
+                      inlineResource.dependencyIndex, option.name,
+                      checked ? "true" : "false");
                 }
-                auto drawChoice = [&](std::string const& choice) {
-                  if (ImGui::Selectable(choice.c_str(), current == choice)) {
+                if (unset) ImGui::PopItemFlag();
+                if (!unset) {
+                  ImGui::SameLine();
+                  auto unsetLabel = "Unset##inline-" + option.name;
+                  if (ImGui::SmallButton(unsetLabel.c_str())) {
                     workspace.setInlineResourceOption(
-                        inlineResource.resourceNamespace, inlineResource.ownerName,
-                        inlineResource.dependencyIndex, option.name, choice);
+                        inlineResource.resourceNamespace,
+                        inlineResource.ownerName,
+                        inlineResource.dependencyIndex, option.name, {});
                   }
-                };
-                for (auto const& choice : option.values) drawChoice(choice);
-                if (option.boolean) {
-                  drawChoice("true");
-                  drawChoice("false");
                 }
-                ImGui::EndCombo();
+              } else {
+                auto const* preview = current.empty() ? "Not set" : current.c_str();
+                if (ImGui::BeginCombo(label.c_str(), preview)) {
+                  if (ImGui::Selectable("Not set", current.empty())) {
+                    workspace.setInlineResourceOption(
+                        inlineResource.resourceNamespace,
+                        inlineResource.ownerName,
+                        inlineResource.dependencyIndex, option.name, {});
+                  }
+                  for (auto const& choice : option.values) {
+                    if (ImGui::Selectable(choice.c_str(), current == choice)) {
+                      workspace.setInlineResourceOption(
+                          inlineResource.resourceNamespace,
+                          inlineResource.ownerName,
+                          inlineResource.dependencyIndex, option.name, choice);
+                    }
+                  }
+                  ImGui::EndCombo();
+                }
               }
             }
           }
@@ -1462,8 +1611,28 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                 auto [buffer, inserted] = nestedBuffers.try_emplace(key);
                 if (inserted || !ImGui::IsAnyItemActive())
                   setBuffer(buffer->second, property.value);
-                if (!property.enumValues.empty() ||
-                    !property.selectorValues.empty() || property.boolean) {
+                if (property.boolean) {
+                  bool checked = property.value == "true";
+                  bool const unset = property.value.empty();
+                  if (unset)
+                    ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+                  if (ImGui::Checkbox(property.name.c_str(), &checked)) {
+                    workspace.setNestedProperty(
+                        selected->resourceNamespace, selected->name, item.path,
+                        property.name, checked ? "true" : "false");
+                  }
+                  if (unset) ImGui::PopItemFlag();
+                  if (property.optional && !unset) {
+                    ImGui::SameLine();
+                    auto unsetLabel = "Unset##nested-" + property.name;
+                    if (ImGui::SmallButton(unsetLabel.c_str())) {
+                      workspace.setNestedProperty(
+                          selected->resourceNamespace, selected->name,
+                          item.path, property.name, {});
+                    }
+                  }
+                } else if (!property.enumValues.empty() ||
+                           !property.selectorValues.empty()) {
                   auto const* preview = property.value.empty()
                                             ? "Not set"
                                             : property.value.c_str();
@@ -1474,10 +1643,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                           selected->resourceNamespace, selected->name, item.path,
                           property.name, {});
                     }
-                    auto choices = property.selectorValues.empty()
-                                       ? property.enumValues
-                                       : property.selectorValues;
-                    if (property.boolean) choices = {"true", "false"};
+                    auto const& choices = property.selectorValues.empty()
+                                              ? property.enumValues
+                                              : property.selectorValues;
                     for (auto const& value : choices) {
                       if (ImGui::Selectable(value.c_str(),
                                             value == property.value)) {
@@ -1518,30 +1686,45 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                   workspace.duplicateNestedItem(selected->resourceNamespace,
                                                 selected->name, item.path);
                 }
+                auto const definitionCount = static_cast<std::size_t>(
+                    std::count_if(nestedItems.begin(), nestedItems.end(),
+                                  [](auto const& nested) {
+                                    return nested.kind == resource_manager::
+                                                              NestedCollectionKind::definition;
+                                  }));
+                bool const soleDefinition =
+                    item.kind ==
+                        resource_manager::NestedCollectionKind::definition &&
+                    definitionCount <= 1U;
                 ImGui::SameLine();
+                ImGui::BeginDisabled(soleDefinition);
                 if (ImGui::SmallButton("Remove")) {
                   workspace.removeNestedItem(selected->resourceNamespace,
                                              selected->name, item.path);
                 }
+                ImGui::EndDisabled();
+                auto separator = item.path.rfind('/');
+                auto index = static_cast<std::size_t>(std::stoull(
+                    item.path.substr(separator + 1U)));
                 ImGui::SameLine();
+                ImGui::BeginDisabled(index == 0U);
                 if (ImGui::SmallButton("Up")) {
-                  auto separator = item.path.rfind('/');
-                  auto index = static_cast<std::size_t>(std::stoull(
-                      item.path.substr(separator + 1U)));
-                  if (index > 0U)
-                    workspace.reorderNestedItem(selected->resourceNamespace,
-                                                selected->name, item.path,
-                                                index - 1U);
+                  workspace.reorderNestedItem(selected->resourceNamespace,
+                                              selected->name, item.path,
+                                              index - 1U);
                 }
+                ImGui::EndDisabled();
                 ImGui::SameLine();
+                ImGui::BeginDisabled(
+                    item.kind ==
+                            resource_manager::NestedCollectionKind::definition &&
+                        index + 1U >= definitionCount);
                 if (ImGui::SmallButton("Down")) {
-                  auto separator = item.path.rfind('/');
-                  auto index = static_cast<std::size_t>(std::stoull(
-                      item.path.substr(separator + 1U)));
                   workspace.reorderNestedItem(selected->resourceNamespace,
                                               selected->name, item.path,
                                               index + 1U);
                 }
+                ImGui::EndDisabled();
               }
               if (item.kind == resource_manager::NestedCollectionKind::definition &&
                   item.label == "Default Definition") {
@@ -1637,23 +1820,39 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               std::string current = value == selected->options.end()
                                         ? std::string{}
                                         : value->second;
-              auto const* preview = current.empty() ? "Not set" : current.c_str();
-              if (ImGui::BeginCombo(option.name.c_str(), preview)) {
-                if (ImGui::Selectable("Not set", current.empty()))
-                  workspace.setResourceOption(selected->resourceNamespace,
-                                              selected->name, option.name, {});
-                auto drawChoice = [&](std::string const& choice) {
-                  if (ImGui::Selectable(choice.c_str(), current == choice))
-                    workspace.setResourceOption(selected->resourceNamespace,
-                                                selected->name, option.name,
-                                                choice);
-                };
-                for (auto const& choice : option.values) drawChoice(choice);
-                if (option.boolean) {
-                  drawChoice("true");
-                  drawChoice("false");
+              if (option.boolean) {
+                bool checked = current == "true";
+                bool const unset = current.empty();
+                if (unset)
+                  ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, true);
+                if (ImGui::Checkbox(option.name.c_str(), &checked)) {
+                  workspace.setResourceOption(
+                      selected->resourceNamespace, selected->name, option.name,
+                      checked ? "true" : "false");
                 }
-                ImGui::EndCombo();
+                if (unset) ImGui::PopItemFlag();
+                if (!unset) {
+                  ImGui::SameLine();
+                  auto unsetLabel = "Unset##" + option.name;
+                  if (ImGui::SmallButton(unsetLabel.c_str())) {
+                    workspace.setResourceOption(selected->resourceNamespace,
+                                                selected->name, option.name, {});
+                  }
+                }
+              } else {
+                auto const* preview = current.empty() ? "Not set" : current.c_str();
+                if (ImGui::BeginCombo(option.name.c_str(), preview)) {
+                  if (ImGui::Selectable("Not set", current.empty()))
+                    workspace.setResourceOption(selected->resourceNamespace,
+                                                selected->name, option.name, {});
+                  for (auto const& choice : option.values) {
+                    if (ImGui::Selectable(choice.c_str(), current == choice))
+                      workspace.setResourceOption(selected->resourceNamespace,
+                                                  selected->name, option.name,
+                                                  choice);
+                  }
+                  ImGui::EndCombo();
+                }
               }
             }
           }
@@ -1994,7 +2193,8 @@ int runDesktop(DesktopArguments arguments) {
     renderSystem.createCoreResources(resourceManager.get());
 
     ImGuiBackendData backend{};
-    imGuiSetup(&renderSystem, resourceManager.get(), &backend, false);
+    imGuiSetup(&renderSystem, resourceManager.get(), &backend, false,
+               (executableDirectory() / "fa-solid-900.ttf").string());
     auto font = resourceManager->getResource("__ImGui_Font__", true);
     auto provider = std::make_shared<ImGuiDataProvider>(
         std::vector<mpp::ResourcePtr>{font});
@@ -2110,6 +2310,16 @@ int runDesktop(DesktopArguments arguments) {
                  static_cast<GLsizei>(renderSystem.getWindowHeight()));
       glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
       glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+      // The editor renders only 2D UI. Core resource creation leaves depth
+      // testing enabled, which otherwise lets each window background hide all
+      // later menu text and widgets at the same depth.
+      auto uiRasterState = renderSystem.captureRasterState(1);
+      uiRasterState.depthTest = false;
+      uiRasterState.depthWrite = false;
+      uiRasterState.cullMode = mpp::GraphCullMode::None;
+      renderSystem.applyRasterState(
+          uiRasterState, 1, renderSystem.getWindowWidth(),
+          renderSystem.getWindowHeight());
       renderer.render(&renderSystem);
       window.show();
 

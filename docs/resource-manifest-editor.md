@@ -111,7 +111,8 @@ Tests isolate it with `WILLPOWER_RESOURCE_MANAGER_PREFERENCE_DIR`.
 The Resource menu creates `TextFile`, `XmlFile`, `Shader`, `AudioBank`, and `Image`
 Resources from the loaded built-in catalog. A new Resource remains an inspector draft
 until it has an explicit namespace-unique name and a selected source file. Resource Type
-is displayed read-only after creation. Image options are generated from its schema.
+is displayed read-only after creation. Image options are generated from its schema and
+new Images initialize options from editor-only defaults declared by that schema.
 
 The built-in schemas use the versioned
 [Resource Schema editor annotations](specifications/resource-schema-editor-annotations.md)
@@ -163,8 +164,9 @@ can be understood and replaced. A dependency can be cleared only when removing i
 leaves the Resource structurally valid.
 
 Dependency diagnostics identify missing, ambiguous, incompatible, self, and cyclic
-references. They also list known incoming references that block deletion. Selectors never
-offer an inline Resource as a new target.
+references. Type constraints apply to both referenced declarations and inline dependent
+Resources. They also list known incoming references that block deletion. Selectors offer
+only compatible Resource Types as new targets and never offer an inline Resource.
 
 An inline dependent Resource is displayed below its syntactic owner with an inline marker.
 Its name and supported file-backed properties can be edited, but it has no independent
@@ -203,13 +205,16 @@ unique dependency ID and an Image Resource selector. Texture collections provide
 `default` and `resource` alternatives; resource texture values select from the
 Material's declared Image dependency IDs rather than accepting arbitrary text.
 
-The Add Definition selector is populated from exact `(Resource Type, factory type)`
-entries in the active Resource Schema Catalog. A factory already present on the Resource
-is disabled, an unregistered or cross-type factory is rejected, and the selected
-specialized schema alone determines its fields and constraints. Removing or duplicating
-a Definition is previewed against uniqueness and whole-manifest validity, so a required
-default Definition cannot be removed while a removable specialized Definition can.
-Unsupported schema authoring shapes remain read-only rather than being guessed.
+Definition entries are nested beneath their Resource in the manifest tree. FontAwesome
+buttons delete and move entries up or down; deletion is disabled when only one Definition
+remains, and boundary move buttons are disabled. The add-Definition button opens the
+factory choices populated from exact `(Resource Type, factory type)` entries in the
+active Resource Schema Catalog. A factory already present on the Resource is disabled,
+an unregistered or cross-type factory is rejected, and the selected specialized schema
+alone determines its fields and constraints. Removing or duplicating a Definition is
+previewed against uniqueness and whole-manifest validity, so a required default
+Definition cannot be removed while a removable specialized Definition can. Unsupported
+schema authoring shapes remain read-only rather than being guessed.
 
 ## Application schemas, unknown declarations, and reload
 

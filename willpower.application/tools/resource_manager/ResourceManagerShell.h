@@ -35,6 +35,7 @@ loadEditorSchemaCatalog(EditorSchemaConfiguration const& configuration);
 struct ResourceOptionForm {
   std::string name;
   std::vector<std::string> values;
+  std::optional<std::string> editorDefault;
   bool boolean = false;
 };
 

@@ -45,7 +45,11 @@
           "required": ["name", "value"],
           "properties": {
             "name": { "enum": ["filtering"] },
-            "value": { "enum": ["none", "linear"] }
+            "value": {
+              "enum": ["none", "linear"],
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-editor-default": "none"
+            }
           }
         },
         {
@@ -54,7 +58,11 @@
           "required": ["name", "value"],
           "properties": {
             "name": { "enum": ["uv-style"] },
-            "value": { "enum": ["atlas"] }
+            "value": {
+              "enum": ["atlas"],
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-editor-default": "atlas"
+            }
           }
         },
         {
@@ -63,7 +71,11 @@
           "required": ["name", "value"],
           "properties": {
             "name": { "enum": ["colour-space"] },
-            "value": { "enum": ["linear"] }
+            "value": {
+              "enum": ["linear"],
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-editor-default": "linear"
+            }
           }
         },
         {
@@ -72,7 +84,11 @@
           "required": ["name", "value"],
           "properties": {
             "name": { "enum": ["wrapping"] },
-            "value": { "enum": ["repeat"] }
+            "value": {
+              "enum": ["repeat"],
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-editor-default": "repeat"
+            }
           }
         },
         {
@@ -82,7 +98,9 @@
           "properties": {
             "name": { "enum": ["mipmaps"] },
             "value": {
-              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean"
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/boolean",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-editor-default": true
             }
           }
         }
