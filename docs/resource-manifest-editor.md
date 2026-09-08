@@ -69,11 +69,33 @@ semantic error. Warnings never block saving and there is no Save Invalid overrid
 Failed operations are retained in the persistent Diagnostics region and written to
 standard error and the rotating log; the editor does not display error dialogs.
 
-A manifest path can be supplied at launch. Its parent is the initial base directory.
+A manifest path can be supplied at launch. Its parent is the initial base directory,
+unless a base-directory association for that manifest exists in editor preferences.
 **File > Change Base Directory** migrates every annotated file value relative to the
 new canonical base while preserving its absolute target. The operation is atomic and
 is blocked if any annotated target is missing, outside the new base, or cannot be
 represented as a safe relative path.
+
+## Conflict protection, recovery, and preferences
+
+The editor records the source modification revision, size, and content hash whenever a
+manifest is opened or saved. It hashes the source again before replacing it. A clean
+externally changed document offers an inline reload action; an externally changed dirty
+document requires an explicit **Discard edits and reload** or confirmed **Overwrite
+source** choice. New, Open, Exit, and destructive overwrite actions never bypass their
+unsaved-work confirmations. Failures continue to appear in Diagnostics and the log,
+not in error dialogs.
+
+Dirty manifests are written after a short debounce to a separate recovery file beneath
+the platform preference directory. Recovery never replaces the source. Opening a
+manifest with recovery data newer than its source offers inline **Recover** and
+**Discard recovery** actions. Successful save and intentional discard remove the
+recovery file.
+
+`preferences.json` in that same platform preference directory stores recent manifests,
+per-manifest base-directory associations, workspace splitter sizes, and view choices.
+None of this user state is written to `resource-manager.ini` or Resource Manifest YAML.
+Tests isolate it with `WILLPOWER_RESOURCE_MANAGER_PREFERENCE_DIR`.
 
 ## File-backed Resource authoring
 
@@ -230,6 +252,7 @@ resource-manager --composite-tests
 resource-manager --advanced-tests
 resource-manager --schema-tests
 resource-manager --semantic-tests
+resource-manager --resilience-tests
 resource-manager --verify-schemas --ini /installed/bin/resource-manager.ini
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
@@ -254,6 +277,10 @@ application-owned and unsupported forms, unknown payload preservation, and faile
 successful atomic reload. `--semantic-tests` opens one document with independent name,
 reference, cycle, and file errors, repairs it in stages, rejects regressions, verifies
 base migration and warning-only save gating, and checks final canonical output.
+`--resilience-tests` uses an isolated preference directory and covers source revisions,
+clean and dirty external conflicts, explicit reload and overwrite, debounced recovery
+storage and cleanup, recovery choices, recents, base associations, splitter state, and
+view preferences.
 `--verify-schemas` checks deployment configuration and all
 bundle/catalog/annotation contracts without initializing SDL video and returns `3` for
 a configuration or bundle failure. `--smoke-test` executes schema reload, New, Save,

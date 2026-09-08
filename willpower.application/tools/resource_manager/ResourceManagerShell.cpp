@@ -6,11 +6,13 @@
 #include <cmath>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -135,8 +137,40 @@ void writeAtomically(fs::path const& destination, std::string const& bytes) {
 
 std::string readBytes(fs::path const& path) {
   std::ifstream input(path, std::ios::binary);
-  return std::string(std::istreambuf_iterator<char>(input),
-                     std::istreambuf_iterator<char>());
+  if (!input) throw std::runtime_error("Could not read '" + displayPath(path) + "'.");
+  std::string result{std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>()};
+  if (input.bad()) throw std::runtime_error("Could not finish reading '" + displayPath(path) + "'.");
+  return result;
+}
+
+// A content fingerprint, rather than a timestamp, is authoritative for conflict
+// detection.  FNV-1a is intentionally small and deterministic; this is not a
+// security boundary.
+std::string contentHash(std::string_view bytes) {
+  std::uint64_t value = 14695981039346656037ULL;
+  for (unsigned char byte : bytes) {
+    value ^= byte;
+    value *= 1099511628211ULL;
+  }
+  std::ostringstream output;
+  output << "fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << value;
+  return output.str();
+}
+
+SourceRevision revisionOf(fs::path const& path) {
+  std::error_code error;
+  SourceRevision result;
+  result.size = fs::file_size(path, error);
+  if (error) throw std::system_error(error, "Could not inspect Resource Manifest size");
+  result.modified = fs::last_write_time(path, error);
+  if (error) throw std::system_error(error, "Could not inspect Resource Manifest revision");
+  result.contentHash = contentHash(readBytes(path));
+  return result;
+}
+
+std::string pathKey(fs::path const& path) {
+  return contentHash(displayPath(path.lexically_normal())).substr(8);
 }
 
 std::vector<YAML::Node> collectionItems(YAML::Node const& collection) {
@@ -1792,13 +1826,120 @@ ResourceSchemaCatalogSnapshot loadEditorSchemaCatalog(
   return snapshot;
 }
 
+EditorPreferences::EditorPreferences(fs::path directory)
+    : mDirectory(std::move(directory)) {}
+
+bool EditorPreferences::load(std::string* failure) {
+  if (mDirectory.empty()) return true;
+  auto file = mDirectory / "preferences.json";
+  std::error_code error;
+  if (!fs::exists(file, error)) return true;
+  try {
+    auto root = Json::parse(readBytes(file));
+    mRecentManifests.clear();
+    mBaseDirectories.clear();
+    mViewPreferences.clear();
+    auto const recent = root.value("recentManifests", Json::array());
+    auto const bases = root.value("baseDirectories", Json::object());
+    auto const views = root.value("views", Json::object());
+    for (auto const& value : recent)
+      mRecentManifests.emplace_back(value.get<std::string>());
+    for (auto const& item : bases.items())
+      mBaseDirectories.emplace_back(fs::path(item.key()),
+                                    fs::path(item.value().get<std::string>()));
+    for (auto const& item : views.items())
+      mViewPreferences.emplace_back(item.key(), item.value().get<bool>());
+    mTreeFraction = root.value("treeFraction", 0.32f);
+    mDiagnosticsHeight = root.value("diagnosticsHeight", 145.0f);
+    mTreeFraction = std::clamp(mTreeFraction, 0.15f, 0.75f);
+    mDiagnosticsHeight = std::clamp(mDiagnosticsHeight, 80.0f, 600.0f);
+    return true;
+  } catch (std::exception const& errorValue) {
+    if (failure) *failure = "Could not load editor preferences: " + std::string(errorValue.what());
+    return false;
+  }
+}
+
+bool EditorPreferences::save(std::string* failure) const {
+  if (mDirectory.empty()) return true;
+  try {
+    fs::create_directories(mDirectory);
+    Json root;
+    root["formatVersion"] = 1;
+    root["recentManifests"] = Json::array();
+    for (auto const& path : mRecentManifests)
+      root["recentManifests"].push_back(displayPath(path));
+    root["baseDirectories"] = Json::object();
+    for (auto const& association : mBaseDirectories)
+      root["baseDirectories"][displayPath(association.first)] =
+          displayPath(association.second);
+    root["views"] = Json::object();
+    for (auto const& view : mViewPreferences) root["views"][view.first] = view.second;
+    root["treeFraction"] = mTreeFraction;
+    root["diagnosticsHeight"] = mDiagnosticsHeight;
+    writeAtomically(mDirectory / "preferences.json", root.dump(2) + "\n");
+    return true;
+  } catch (std::exception const& errorValue) {
+    if (failure) *failure = "Could not save editor preferences: " + std::string(errorValue.what());
+    return false;
+  }
+}
+
+void EditorPreferences::noteManifest(fs::path const& manifest,
+                                     fs::path const& baseDirectory) {
+  auto normalized = fs::absolute(manifest).lexically_normal();
+  mRecentManifests.erase(std::remove(mRecentManifests.begin(), mRecentManifests.end(),
+                                     normalized), mRecentManifests.end());
+  mRecentManifests.insert(mRecentManifests.begin(), normalized);
+  if (mRecentManifests.size() > 12U) mRecentManifests.resize(12U);
+  auto found = std::find_if(mBaseDirectories.begin(), mBaseDirectories.end(),
+                            [&](auto const& item) { return item.first == normalized; });
+  if (found == mBaseDirectories.end())
+    mBaseDirectories.emplace_back(normalized, baseDirectory);
+  else
+    found->second = baseDirectory;
+}
+
+std::vector<fs::path> const& EditorPreferences::recentManifests() const noexcept {
+  return mRecentManifests;
+}
+std::optional<fs::path> EditorPreferences::baseDirectoryFor(fs::path const& manifest) const {
+  auto normalized = fs::absolute(manifest).lexically_normal();
+  auto found = std::find_if(mBaseDirectories.begin(), mBaseDirectories.end(),
+                            [&](auto const& item) { return item.first == normalized; });
+  return found == mBaseDirectories.end() ? std::optional<fs::path>{}
+                                         : std::optional<fs::path>{found->second};
+}
+void EditorPreferences::setSplitter(float treeFraction,
+                                    float diagnosticsHeight) noexcept {
+  mTreeFraction = std::clamp(treeFraction, 0.15f, 0.75f);
+  mDiagnosticsHeight = std::clamp(diagnosticsHeight, 80.0f, 600.0f);
+}
+float EditorPreferences::treeFraction() const noexcept { return mTreeFraction; }
+float EditorPreferences::diagnosticsHeight() const noexcept { return mDiagnosticsHeight; }
+void EditorPreferences::setViewPreference(std::string name, bool value) {
+  auto found = std::find_if(mViewPreferences.begin(), mViewPreferences.end(),
+                            [&](auto const& item) { return item.first == name; });
+  if (found == mViewPreferences.end()) mViewPreferences.emplace_back(std::move(name), value);
+  else found->second = value;
+}
+bool EditorPreferences::viewPreference(std::string const& name, bool fallback) const {
+  auto found = std::find_if(mViewPreferences.begin(), mViewPreferences.end(),
+                            [&](auto const& item) { return item.first == name; });
+  return found == mViewPreferences.end() ? fallback : found->second;
+}
+fs::path const& EditorPreferences::directory() const noexcept { return mDirectory; }
+
 ManifestWorkspace::ManifestWorkspace()
     : ManifestWorkspace(ResourceSchemaCatalog::builtIn().snapshot()) {}
 
-ManifestWorkspace::ManifestWorkspace(ResourceSchemaCatalogSnapshot catalog)
-    : mCatalog(std::move(catalog)) {
+ManifestWorkspace::ManifestWorkspace(ResourceSchemaCatalogSnapshot catalog,
+                                     fs::path preferenceDirectory)
+    : mCatalog(std::move(catalog)), mPreferences(std::move(preferenceDirectory)) {
   validateEditorCatalog(mCatalog);
   mResourceForms = loadResourceForms(mCatalog);
+  std::string ignored;
+  mPreferences.load(&ignored);
 }
 
 bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
@@ -1819,9 +1960,13 @@ bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
     return false;
   }
 
+  removeRecovery();
   mDocument = std::move(candidate);
   mPath.clear();
   mBaseDirectory = std::move(canonicalBase);
+  mSourceRevision.reset();
+  mExternalChange = ExternalChangeState::unchanged;
+  mHasNewerRecovery = false;
   mStructuralDiagnostics.clear();
   mOperationDiagnostic.clear();
   mNamespaceDraft.reset();
@@ -1829,6 +1974,7 @@ bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
   mCommands.clear();
   mUnsavedDocument = true;
   refreshSemanticDiagnostics();
+  documentChanged();
   return true;
 }
 
@@ -1857,11 +2003,20 @@ bool ManifestWorkspace::open(fs::path const& manifestPath) {
   }
   fs::path canonicalBase;
   std::string failure;
-  if (!accessibleDirectory(canonicalPath.parent_path(), canonicalBase, failure)) {
-    setFailure(std::move(failure));
-    return false;
+  auto associatedBase = mPreferences.directory().empty()
+                            ? std::optional<fs::path>{}
+                            : mPreferences.baseDirectoryFor(canonicalPath);
+  auto requestedBase = associatedBase ? *associatedBase : canonicalPath.parent_path();
+  if (!accessibleDirectory(requestedBase, canonicalBase, failure)) {
+    // A stale association must not make an otherwise valid manifest unopenable.
+    if (!associatedBase ||
+        !accessibleDirectory(canonicalPath.parent_path(), canonicalBase, failure)) {
+      setFailure(std::move(failure));
+      return false;
+    }
   }
 
+  removeRecovery();
   mDocument = std::move(candidate);
   mPath = std::move(canonicalPath);
   mBaseDirectory = std::move(canonicalBase);
@@ -1872,6 +2027,22 @@ bool ManifestWorkspace::open(fs::path const& manifestPath) {
   mCommands.clear();
   mCommands.markSavePoint();
   mUnsavedDocument = false;
+  try {
+    mSourceRevision = revisionOf(mPath);
+  } catch (std::exception const& exception) {
+    setFailure(exception.what());
+    return false;
+  }
+  mExternalChange = ExternalChangeState::unchanged;
+  mHasNewerRecovery = false;
+  auto recovery = recoveryPath();
+  std::error_code recoveryError;
+  if (!recovery.empty() && fs::exists(recovery, recoveryError)) {
+    auto recoveryTime = fs::last_write_time(recovery, recoveryError);
+    mHasNewerRecovery = !recoveryError && recoveryTime > mSourceRevision->modified;
+  }
+  mPreferences.noteManifest(mPath, mBaseDirectory);
+  mPreferences.save();
   refreshSemanticDiagnostics();
   return true;
 }
@@ -1890,6 +2061,63 @@ bool ManifestWorkspace::saveAs(fs::path const& manifestPath) {
     return false;
   }
   return saveTo(manifestPath);
+}
+
+ExternalChangeState ManifestWorkspace::checkExternalChange() {
+  if (mPath.empty() || !mSourceRevision) {
+    mExternalChange = ExternalChangeState::unchanged;
+    return mExternalChange;
+  }
+  try {
+    std::error_code error;
+    if (!fs::is_regular_file(mPath, error)) {
+      mExternalChange = ExternalChangeState::missing;
+    } else {
+      auto current = revisionOf(mPath);
+      mExternalChange = current.contentHash == mSourceRevision->contentHash
+                            ? ExternalChangeState::unchanged
+                            : (dirty() ? ExternalChangeState::dirtyConflict
+                                       : ExternalChangeState::cleanDocument);
+    }
+  } catch (std::exception const& exception) {
+    setFailure("Could not check the source revision: " + std::string(exception.what()));
+    mExternalChange = ExternalChangeState::missing;
+  }
+  return mExternalChange;
+}
+
+ExternalChangeState ManifestWorkspace::externalChangeState() const noexcept {
+  return mExternalChange;
+}
+
+bool ManifestWorkspace::reloadExternal() {
+  if (mPath.empty()) {
+    setFailure("No file-backed Resource Manifest is open.");
+    return false;
+  }
+  auto source = mPath;
+  return open(source);
+}
+
+bool ManifestWorkspace::overwriteExternal() {
+  if (mPath.empty()) {
+    setFailure("No file-backed Resource Manifest is open.");
+    return false;
+  }
+  return saveTo(mPath, true);
+}
+
+bool ManifestWorkspace::discardChanges() {
+  if (!mDocument) return true;
+  removeRecovery();
+  if (!mPath.empty()) return reloadExternal();
+  mDocument.reset();
+  mBaseDirectory.clear();
+  mCommands.clear();
+  mUnsavedDocument = false;
+  mSourceRevision.reset();
+  mExternalChange = ExternalChangeState::unchanged;
+  return true;
 }
 
 bool ManifestWorkspace::changeBaseDirectory(fs::path const& baseDirectory) {
@@ -2010,6 +2238,11 @@ bool ManifestWorkspace::changeBaseDirectory(fs::path const& baseDirectory) {
   if (changedBase || changedFile) {
     mCommands.clear();
     mUnsavedDocument = true;
+    documentChanged();
+  }
+  if (!mPath.empty()) {
+    mPreferences.noteManifest(mPath, mBaseDirectory);
+    mPreferences.save();
   }
   return true;
 }
@@ -2048,7 +2281,7 @@ bool ManifestWorkspace::reloadSchemas(fs::path const& iniPath) {
   }
 }
 
-bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
+bool ManifestWorkspace::saveTo(fs::path const& manifestPath, bool allowOverwrite) {
   if (!mDocument) {
     setFailure("No Resource Manifest is open.");
     return false;
@@ -2070,6 +2303,21 @@ bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
     return false;
   }
 
+  // Save As to another destination is not a source overwrite.  Saving the
+  // current source always hashes it immediately before replacement.
+  std::error_code equivalentError;
+  bool const sameSource = !mPath.empty() &&
+      (fs::equivalent(mPath, manifestPath, equivalentError) ||
+       (equivalentError && fs::absolute(manifestPath).lexically_normal() == mPath));
+  if (sameSource && !allowOverwrite &&
+      checkExternalChange() != ExternalChangeState::unchanged) {
+    setFailure(mExternalChange == ExternalChangeState::dirtyConflict
+                   ? "The Resource Manifest changed externally while local edits are unsaved. Choose discard/reload or overwrite."
+                   : "The Resource Manifest changed externally. Reload it before saving, or explicitly overwrite it.");
+    return false;
+  }
+
+  auto const previousRecovery = recoveryPath();
   try {
     auto canonical = mDocument->serializeCanonical();
     writeAtomically(manifestPath, canonical);
@@ -2091,6 +2339,18 @@ bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
     refreshSemanticDiagnostics();
     mCommands.markSavePoint();
     mUnsavedDocument = false;
+    mSourceRevision = revisionOf(mPath);
+    mExternalChange = ExternalChangeState::unchanged;
+    if (!previousRecovery.empty() && previousRecovery != recoveryPath()) {
+      std::error_code recoveryError;
+      fs::remove(previousRecovery, recoveryError);
+      if (recoveryError)
+        throw std::system_error(recoveryError, "Could not remove previous recovery data");
+    }
+    if (!removeRecovery()) throw std::runtime_error(mOperationDiagnostic);
+    mHasNewerRecovery = false;
+    mPreferences.noteManifest(mPath, mBaseDirectory);
+    mPreferences.save();
     return true;
   } catch (std::exception const& exception) {
     setFailure("Could not save Resource Manifest '" + displayPath(manifestPath) +
@@ -2118,9 +2378,109 @@ fs::path const& ManifestWorkspace::path() const noexcept { return mPath; }
 fs::path const& ManifestWorkspace::baseDirectory() const noexcept {
   return mBaseDirectory;
 }
+std::optional<SourceRevision> const& ManifestWorkspace::sourceRevision() const noexcept {
+  return mSourceRevision;
+}
+EditorPreferences& ManifestWorkspace::preferences() noexcept { return mPreferences; }
+EditorPreferences const& ManifestWorkspace::preferences() const noexcept { return mPreferences; }
 std::string const& ManifestWorkspace::operationDiagnostic() const noexcept {
   return mOperationDiagnostic;
 }
+
+fs::path ManifestWorkspace::recoveryPath() const {
+  if (mPreferences.directory().empty()) return {};
+  auto name = mPath.empty() ? std::string("untitled") : pathKey(mPath);
+  return mPreferences.directory() / "recovery" / (name + ".json");
+}
+
+void ManifestWorkspace::documentChanged() {
+  ++mRecoveryGeneration;
+  mRecoveryDue = std::chrono::steady_clock::now() + std::chrono::milliseconds(750);
+}
+
+void ManifestWorkspace::updateRecovery() {
+  if (!dirty() || mRecoveryGeneration == mWrittenRecoveryGeneration ||
+      std::chrono::steady_clock::now() < mRecoveryDue) return;
+  writeRecoveryNow();
+}
+
+bool ManifestWorkspace::writeRecoveryNow() {
+  if (!dirty() || mPreferences.directory().empty()) return true;
+  try {
+    Json recovery{{"formatVersion", 1},
+                  {"source", displayPath(mPath)},
+                  {"baseDirectory", displayPath(mBaseDirectory)},
+                  {"sourceHash", mSourceRevision ? mSourceRevision->contentHash : ""},
+                  {"yaml", canonicalYaml()}};
+    auto destination = recoveryPath();
+    fs::create_directories(destination.parent_path());
+    writeAtomically(destination, recovery.dump(2) + "\n");
+    mWrittenRecoveryGeneration = mRecoveryGeneration;
+    return true;
+  } catch (std::exception const& exception) {
+    setFailure("Could not write Resource Manifest recovery data: " +
+               std::string(exception.what()));
+    return false;
+  }
+}
+
+bool ManifestWorkspace::hasNewerRecovery() const noexcept {
+  return mHasNewerRecovery;
+}
+
+bool ManifestWorkspace::recover() {
+  if (!mHasNewerRecovery) {
+    setFailure("No newer recovery data is available.");
+    return false;
+  }
+  try {
+    auto root = Json::parse(readBytes(recoveryPath()));
+    if (root.value("formatVersion", 0) != 1)
+      throw std::runtime_error("Unsupported recovery formatVersion.");
+    auto candidate = std::make_unique<ResourceManifestDocument>(
+        ResourceManifestDocument::parse(root.at("yaml").get<std::string>(),
+                                        "Recovered Resource Manifest"));
+    auto validation = candidate->validate(mCatalog);
+    if (!validation.valid())
+      throw std::runtime_error(validationMessage(validation));
+    mDocument = std::move(candidate);
+    auto recoveredBase = fs::path(root.value("baseDirectory", std::string{}));
+    fs::path canonicalBase;
+    std::string failure;
+    if (!recoveredBase.empty() &&
+        accessibleDirectory(recoveredBase, canonicalBase, failure))
+      mBaseDirectory = std::move(canonicalBase);
+    mCommands.clear();
+    mUnsavedDocument = true;
+    mHasNewerRecovery = false;
+    mExternalChange = ExternalChangeState::unchanged;
+    mOperationDiagnostic.clear();
+    refreshSemanticDiagnostics();
+    documentChanged();
+    // The existing recovery already represents this generation.
+    mWrittenRecoveryGeneration = mRecoveryGeneration;
+    return true;
+  } catch (std::exception const& exception) {
+    setFailure("Could not recover Resource Manifest: " + std::string(exception.what()));
+    return false;
+  }
+}
+
+bool ManifestWorkspace::removeRecovery() {
+  auto path = recoveryPath();
+  if (path.empty()) return true;
+  std::error_code error;
+  fs::remove(path, error);
+  if (error) {
+    setFailure("Could not remove Resource Manifest recovery data: " + error.message());
+    return false;
+  }
+  mWrittenRecoveryGeneration = mRecoveryGeneration;
+  mHasNewerRecovery = false;
+  return true;
+}
+
+bool ManifestWorkspace::discardRecovery() { return removeRecovery(); }
 std::vector<ResourceManifestDiagnostic> const&
 ManifestWorkspace::structuralDiagnostics() const noexcept {
   return mStructuralDiagnostics;
@@ -4689,6 +5049,7 @@ bool ManifestWorkspace::applyCommittedYaml(std::string const& yaml) {
   mOperationDiagnostic.clear();
   refreshSemanticDiagnostics();
   if (mNamespaceDraft) validateNamespaceDraft();
+  documentChanged();
   return true;
 }
 
@@ -4866,7 +5227,8 @@ bool runDocumentTests(std::string* failure) {
     }
     auto expected = workspace.canonicalYaml();
     if (!workspace.save() || readBytes(yamlPath) != expected) {
-      return fail("Save did not atomically replace the destination with canonical YAML.");
+      return fail("Save did not atomically replace the destination with canonical YAML: " +
+                  workspace.operationDiagnostic());
     }
     for (auto const& entry : fs::directory_iterator(root)) {
       if (entry.path().filename().string().find(".tmp-") != std::string::npos) {
@@ -6643,6 +7005,76 @@ bool runSemanticRepairTests(std::string* failure) {
         readBytes(output).find("ImageTarget") == std::string::npos) {
       return fail("Final canonical output did not contain the staged repairs.");
     }
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runResilienceTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-resilience-" + std::to_string(
+                  std::chrono::steady_clock::now().time_since_epoch().count()));
+  struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path, e); } } cleanup{root};
+  try {
+    auto base = root / "base";
+    auto preferences = root / "preferences";
+    fs::create_directories(base);
+    ManifestWorkspace workspace(ResourceSchemaCatalog::builtIn().snapshot(), preferences);
+    auto manifest = root / "Resources.yaml";
+    if (!workspace.createNew(base) || !workspace.saveAs(manifest) ||
+        !workspace.sourceRevision() || workspace.dirty())
+      return fail("Initial revision was not recorded.");
+
+    auto savedHash = workspace.sourceRevision()->contentHash;
+    std::ofstream(manifest, std::ios::app) << "# external\n";
+    if (workspace.checkExternalChange() != ExternalChangeState::cleanDocument ||
+        workspace.save())
+      return fail("A clean external change was not protected from overwrite.");
+    if (!workspace.reloadExternal() || workspace.sourceRevision()->contentHash == savedHash)
+      return fail("Explicit external reload did not publish the new revision.");
+
+    auto recoveryFile = preferences / "recovery" / (pathKey(manifest) + ".json");
+    if (!workspace.changeBaseDirectory(root) || !workspace.dirty())
+      return fail("The recovery test edit was not dirty.");
+    workspace.updateRecovery();
+    if (fs::exists(recoveryFile))
+      return fail("Recovery data was written before the debounce interval.");
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    workspace.updateRecovery();
+    if (!fs::exists(recoveryFile))
+      return fail("Dirty recovery data was not written separately from the source.");
+    std::ofstream(manifest, std::ios::app) << "# second external change\n";
+    if (workspace.checkExternalChange() != ExternalChangeState::dirtyConflict ||
+        workspace.save())
+      return fail("A dirty external conflict was not protected.");
+    if (!workspace.overwriteExternal() || workspace.dirty())
+      return fail("Explicit overwrite did not save the local document.");
+    if (fs::exists(preferences / "recovery" / (pathKey(manifest) + ".json")))
+      return fail("Successful save did not clean recovery data.");
+
+    if (!workspace.changeBaseDirectory(base) || !workspace.writeRecoveryNow())
+      return fail("A second recovery generation could not be written.");
+    ManifestWorkspace recovered(ResourceSchemaCatalog::builtIn().snapshot(), preferences);
+    if (!recovered.open(manifest) || !recovered.hasNewerRecovery() ||
+        !recovered.recover() || !recovered.dirty())
+      return fail("Opening did not offer and apply newer recovery data.");
+    if (!recovered.discardChanges() ||
+        fs::exists(preferences / "recovery" / (pathKey(manifest) + ".json")))
+      return fail("Intentional discard did not clean recovery data.");
+
+    workspace.preferences().setSplitter(0.41f, 190.0f);
+    workspace.preferences().setViewPreference("diagnostics", false);
+    if (!workspace.preferences().save()) return fail("Preferences were not saved.");
+    EditorPreferences loaded(preferences);
+    if (!loaded.load() || loaded.recentManifests().empty() ||
+        !loaded.baseDirectoryFor(manifest) || loaded.treeFraction() != 0.41f ||
+        loaded.diagnosticsHeight() != 190.0f || loaded.viewPreference("diagnostics", true))
+      return fail("Recents, base association, splitter, or view preferences did not round-trip.");
     return true;
   } catch (std::exception const& exception) {
     return fail(exception.what());

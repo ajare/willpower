@@ -87,6 +87,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --advanced-tests\n"
             "  resource-manager --schema-tests\n"
             "  resource-manager --semantic-tests\n"
+            "  resource-manager --resilience-tests\n"
             "  resource-manager --verify-schemas [--ini FILE]\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
@@ -490,7 +491,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                                    NativeDialog& dialog, SDL_Window* window,
                                    mpp::Logger& logger,
                                    fs::path const& deploymentIni,
-                                   bool& running) {
+                                   bool& running, bool closeRequested = false) {
   WorkspaceFrameResult result;
   static std::string selectedNamespace;
   static std::string selectedName;
@@ -510,6 +511,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   static std::map<std::string, std::array<char, 256>> nestedBuffers;
   static std::array<char, 256> materialDependencyIdBuffer{};
   static std::string selectedNestedPath;
+  enum class PendingDestructive { none, createNew, open, exit };
+  static PendingDestructive pendingDestructive = PendingDestructive::none;
+  static bool confirmOverwrite = false;
   auto setBuffer = [](auto& buffer, std::string const& value) {
     buffer.fill('\0');
     auto const length = (std::min)(value.size(), buffer.size() - 1U);
@@ -526,6 +530,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   bool requestOpen = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O,
                                      ImGuiInputFlags_RouteGlobal);
   bool requestChangeBase = false;
+  bool requestExit = closeRequested;
   bool requestSave = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S,
                                      ImGuiInputFlags_RouteGlobal);
   bool requestSaveAs = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift |
@@ -547,7 +552,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           "Change Base Directory...", nullptr, false,
           workspace.hasDocument() && !dialog.busy());
       ImGui::Separator();
-      if (ImGui::MenuItem("Exit")) running = false;
+      if (ImGui::MenuItem("Exit")) requestExit = true;
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -641,20 +646,36 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       setBuffer(draftNameBuffer, {});
     }
   }
-  if (requestNew && !dialog.busy()) {
+  auto requestDestructive = [&](PendingDestructive action) {
+    if (workspace.dirty()) {
+      pendingDestructive = action;
+      ImGui::OpenPopup("Unsaved Resource Manifest");
+      return false;
+    }
+    return true;
+  };
+  if (requestNew && !dialog.busy() &&
+      requestDestructive(PendingDestructive::createNew)) {
     dialog.begin(NativeDialog::Purpose::createNew, window,
                  workspace.baseDirectory().string());
   }
-  if (requestOpen && !dialog.busy()) {
+  if (requestOpen && !dialog.busy() &&
+      requestDestructive(PendingDestructive::open)) {
     dialog.begin(NativeDialog::Purpose::open, window);
   }
+  if (requestExit && requestDestructive(PendingDestructive::exit)) running = false;
+
   if (requestChangeBase && !dialog.busy()) {
     dialog.begin(NativeDialog::Purpose::changeBaseDirectory, window,
                  workspace.baseDirectory().string());
   }
   if (requestSave && workspace.canSave()) {
     if (workspace.hasPath()) {
-      if (workspace.save()) {
+      auto external = workspace.checkExternalChange();
+      if (external != resource_manager::ExternalChangeState::unchanged) {
+        confirmOverwrite = true;
+        ImGui::OpenPopup("Confirm external overwrite");
+      } else if (workspace.save()) {
         logger.info("Saved Resource Manifest: " + displayPath(workspace.path()));
       } else {
         report(logger, workspace.operationDiagnostic());
@@ -671,6 +692,62 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     dialog.begin(NativeDialog::Purpose::saveAs, window, suggested.string());
   }
 
+  auto completeDestructive = [&] {
+    auto action = pendingDestructive;
+    pendingDestructive = PendingDestructive::none;
+    if (action == PendingDestructive::createNew) {
+      dialog.begin(NativeDialog::Purpose::createNew, window,
+                   workspace.baseDirectory().string());
+    } else if (action == PendingDestructive::open) {
+      dialog.begin(NativeDialog::Purpose::open, window);
+    } else if (action == PendingDestructive::exit) {
+      running = false;
+    }
+  };
+  if (ImGui::BeginPopupModal("Unsaved Resource Manifest", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextWrapped("This Resource Manifest has unsaved changes.");
+    if (workspace.hasPath() && workspace.canSave()) {
+      if (ImGui::Button("Save")) {
+        if (workspace.save()) {
+          completeDestructive();
+          ImGui::CloseCurrentPopup();
+        } else {
+          report(logger, workspace.operationDiagnostic());
+        }
+      }
+      ImGui::SameLine();
+    }
+    if (ImGui::Button("Discard")) {
+      if (pendingDestructive == PendingDestructive::exit)
+        workspace.discardRecovery();
+      completeDestructive();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+      pendingDestructive = PendingDestructive::none;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+  if (confirmOverwrite &&
+      ImGui::BeginPopupModal("Confirm external overwrite", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextWrapped("Overwrite the externally changed source with local content?");
+    if (ImGui::Button("Overwrite")) {
+      if (!workspace.overwriteExternal()) report(logger, workspace.operationDiagnostic());
+      confirmOverwrite = false;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+      confirmOverwrite = false;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+
   auto* viewport = ImGui::GetMainViewport();
   auto const expectedPosition = viewport->WorkPos;
   auto const expectedSize = viewport->WorkSize;
@@ -682,6 +759,35 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                          ImGuiWindowFlags_NoSavedSettings;
   if (ImGui::Begin("Resource Manifest Editor", nullptr, flags)) {
     result.editorDrawn = true;
+    if (workspace.hasNewerRecovery()) {
+      ImGui::TextWrapped("Newer recovery data is available for this Resource Manifest.");
+      if (ImGui::Button("Recover")) workspace.recover();
+      ImGui::SameLine();
+      if (ImGui::Button("Discard recovery")) workspace.discardRecovery();
+      ImGui::Separator();
+    }
+    auto externalState = workspace.externalChangeState();
+    if (externalState != resource_manager::ExternalChangeState::unchanged) {
+      bool const dirtyConflict =
+          externalState == resource_manager::ExternalChangeState::dirtyConflict ||
+          (externalState == resource_manager::ExternalChangeState::missing &&
+           workspace.dirty());
+      ImGui::TextWrapped(dirtyConflict
+                             ? "The source changed externally and conflicts with unsaved edits."
+                             : "The source changed externally.");
+      if (externalState != resource_manager::ExternalChangeState::missing &&
+          ImGui::Button(dirtyConflict ? "Discard edits and reload" : "Reload")) {
+        workspace.reloadExternal();
+      }
+      if (dirtyConflict) {
+        ImGui::SameLine();
+        if (ImGui::Button("Overwrite source...")) {
+          confirmOverwrite = true;
+          ImGui::OpenPopup("Confirm external overwrite");
+        }
+      }
+      ImGui::Separator();
+    }
     auto const position = ImGui::GetWindowPos();
     auto const size = ImGui::GetWindowSize();
     result.fillsWorkArea =
@@ -690,11 +796,12 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         std::abs(size.x - expectedSize.x) < 1.0f &&
         std::abs(size.y - expectedSize.y) < 1.0f;
 
-    float const diagnosticsHeight = 145.0f;
+    float const diagnosticsHeight = workspace.preferences().diagnosticsHeight();
     float const upperHeight =
         (std::max)(80.0f, ImGui::GetContentRegionAvail().y - diagnosticsHeight);
     float const treeWidth =
-        (std::max)(180.0f, ImGui::GetContentRegionAvail().x * 0.32f);
+        (std::max)(180.0f, ImGui::GetContentRegionAvail().x *
+                               workspace.preferences().treeFraction());
     auto resources = workspace.resources();
     auto namespaces = workspace.namespaces();
     ImGui::BeginChild("Manifest tree", ImVec2(treeWidth, upperHeight), true);
@@ -1740,7 +1847,7 @@ int runDesktop(DesktopArguments arguments) {
     return success;
   }
 
-  ManifestWorkspace workspace(configuration.catalog);
+  ManifestWorkspace workspace(configuration.catalog, logPath.parent_path());
   fs::path smokeRoot;
   struct SmokeCleanup {
     fs::path* path;
@@ -1809,11 +1916,17 @@ int runDesktop(DesktopArguments arguments) {
     unsigned int smokeFrames = 0;
     bool smokeResized = false;
     bool smokeSchemasReloaded = false;
+    auto nextRevisionCheck = std::chrono::steady_clock::now();
     while (running) {
       bool const closeRequested = !window.processEvents(&input);
       imGuiHandleInput(&input, &backend);
       input.update();
-      if (closeRequested) running = false;
+      workspace.updateRecovery();
+      if (std::chrono::steady_clock::now() >= nextRevisionCheck) {
+        (void)workspace.checkExternalChange();
+        nextRevisionCheck = std::chrono::steady_clock::now() +
+                            std::chrono::milliseconds(750);
+      }
       if (window.getWidth() > 0 && window.getHeight() > 0 &&
           (static_cast<std::size_t>(window.getWidth()) !=
                renderSystem.getWindowWidth() ||
@@ -1890,7 +2003,7 @@ int runDesktop(DesktopArguments arguments) {
       imGuiNewFrame(window.getWindow(), &backend);
       ImGui::NewFrame();
       auto frame = drawWorkspace(workspace, dialog, window.getWindow(), logger,
-                                 arguments.iniPath, running);
+                                 arguments.iniPath, running, closeRequested);
       SDL_SetWindowTitle(
           window.getWindow(),
           workspace.hasDocument()
@@ -1944,6 +2057,7 @@ int runDesktop(DesktopArguments arguments) {
     }
     renderSystem.removeRenderPipeline("ResourceManifestEditor.UI");
     renderSystem.destroyCoreResources();
+    workspace.preferences().save();
     logger.info("Resource Manifest Editor shutdown.");
     if (arguments.smokeTest) {
       std::cout << "Resource Manifest Editor smoke test passed: startup, schema "
@@ -2056,6 +2170,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor semantic repair tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--resilience-tests") {
+      std::string failure;
+      if (!resource_manager::runResilienceTests(&failure)) {
+        std::cerr << "Resource Manifest Editor resilience tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor resilience tests passed.\n";
       return success;
     }
 

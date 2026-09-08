@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -215,6 +217,50 @@ struct ResourceDraftReference {
   std::string name;
 };
 
+// The revision observed when a file-backed document was opened or saved.  The
+// timestamp and size make inexpensive polling possible; contentHash is the
+// authoritative comparison and is always computed before an overwrite.
+struct SourceRevision {
+  std::uintmax_t size = 0;
+  std::filesystem::file_time_type modified{};
+  std::string contentHash;
+
+  friend bool operator==(SourceRevision const&, SourceRevision const&) = default;
+};
+
+enum class ExternalChangeState { unchanged, cleanDocument, dirtyConflict, missing };
+
+// User state is deliberately independent of the deployment INI and manifest.
+// The file is written atomically below the platform preference directory.
+class EditorPreferences {
+ public:
+  explicit EditorPreferences(std::filesystem::path directory = {});
+  bool load(std::string* failure = nullptr);
+  bool save(std::string* failure = nullptr) const;
+
+  void noteManifest(std::filesystem::path const& manifest,
+                    std::filesystem::path const& baseDirectory);
+  [[nodiscard]] std::vector<std::filesystem::path> const& recentManifests() const noexcept;
+  [[nodiscard]] std::optional<std::filesystem::path> baseDirectoryFor(
+      std::filesystem::path const& manifest) const;
+  void setSplitter(float treeFraction, float diagnosticsHeight) noexcept;
+  [[nodiscard]] float treeFraction() const noexcept;
+  [[nodiscard]] float diagnosticsHeight() const noexcept;
+  void setViewPreference(std::string name, bool value);
+  [[nodiscard]] bool viewPreference(std::string const& name,
+                                    bool fallback = false) const;
+  [[nodiscard]] std::filesystem::path const& directory() const noexcept;
+
+ private:
+  std::filesystem::path mDirectory;
+  std::vector<std::filesystem::path> mRecentManifests;
+  std::vector<std::pair<std::filesystem::path, std::filesystem::path>>
+      mBaseDirectories;
+  std::vector<std::pair<std::string, bool>> mViewPreferences;
+  float mTreeFraction = 0.32f;
+  float mDiagnosticsHeight = 145.0f;
+};
+
 struct ResourceDraft {
   std::string resourceNamespace;
   std::string resourceType;
@@ -231,12 +277,29 @@ class ManifestWorkspace {
  public:
   ManifestWorkspace();
   explicit ManifestWorkspace(
-      wp::application::resourcesystem::ResourceSchemaCatalogSnapshot catalog);
+      wp::application::resourcesystem::ResourceSchemaCatalogSnapshot catalog,
+      std::filesystem::path preferenceDirectory = {});
 
   bool createNew(std::filesystem::path const& baseDirectory);
   bool open(std::filesystem::path const& manifestPath);
   bool save();
   bool saveAs(std::filesystem::path const& manifestPath);
+  // Save refuses to replace a source whose content changed since the last
+  // observed revision.  overwriteExternal is the explicit destructive choice.
+  bool overwriteExternal();
+  [[nodiscard]] ExternalChangeState checkExternalChange();
+  [[nodiscard]] ExternalChangeState externalChangeState() const noexcept;
+  bool reloadExternal();
+  bool discardChanges();
+
+  // Called by the desktop loop. Dirty data is written only after the debounce
+  // interval; tests may use writeRecoveryNow to avoid waiting.
+  void updateRecovery();
+  bool writeRecoveryNow();
+  [[nodiscard]] bool hasNewerRecovery() const noexcept;
+  bool recover();
+  bool discardRecovery();
+
   bool changeBaseDirectory(std::filesystem::path const& baseDirectory);
   // Rereads the deployment INI and every configured bundle. Publication is
   // atomic: malformed candidates and candidates that reject the open document
@@ -251,6 +314,9 @@ class ManifestWorkspace {
   [[nodiscard]] bool canSaveAs() const;
   [[nodiscard]] std::filesystem::path const& path() const noexcept;
   [[nodiscard]] std::filesystem::path const& baseDirectory() const noexcept;
+  [[nodiscard]] std::optional<SourceRevision> const& sourceRevision() const noexcept;
+  [[nodiscard]] EditorPreferences& preferences() noexcept;
+  [[nodiscard]] EditorPreferences const& preferences() const noexcept;
   [[nodiscard]] std::string const& operationDiagnostic() const noexcept;
   [[nodiscard]] std::vector<wp::application::resourcesystem::ResourceManifestDiagnostic>
       const& structuralDiagnostics() const noexcept;
@@ -399,7 +465,10 @@ class ManifestWorkspace {
   void endContinuousEdit();
 
  private:
-  bool saveTo(std::filesystem::path const& manifestPath);
+  bool saveTo(std::filesystem::path const& manifestPath, bool allowOverwrite = false);
+  void documentChanged();
+  std::filesystem::path recoveryPath() const;
+  bool removeRecovery();
   void setFailure(std::string message);
   bool applyCommittedYaml(std::string const& yaml);
   bool executeYamlCommand(std::string name, std::string yaml,
@@ -424,6 +493,13 @@ class ManifestWorkspace {
   std::optional<ResourceDraft> mDraft;
   mpp::app::CommandStack mCommands{256};
   bool mUnsavedDocument = false;
+  EditorPreferences mPreferences;
+  std::optional<SourceRevision> mSourceRevision;
+  ExternalChangeState mExternalChange = ExternalChangeState::unchanged;
+  bool mHasNewerRecovery = false;
+  std::chrono::steady_clock::time_point mRecoveryDue{};
+  std::uint64_t mRecoveryGeneration = 0;
+  std::uint64_t mWrittenRecoveryGeneration = 0;
 };
 
 bool runDocumentTests(std::string* failure);
@@ -434,5 +510,6 @@ bool runCompositeAuthoringTests(std::string* failure);
 bool runAdvancedAuthoringTests(std::string* failure);
 bool runSchemaIntegrationTests(std::string* failure);
 bool runSemanticRepairTests(std::string* failure);
+bool runResilienceTests(std::string* failure);
 
 }  // namespace resource_manager

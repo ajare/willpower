@@ -387,6 +387,8 @@ if(BUILD_TESTING)
         COMMAND resource_manager --schema-tests)
     willpower_add_test(NAME willpower_resource_manager_semantic_repairs
         COMMAND resource_manager --semantic-tests)
+    willpower_add_test(NAME willpower_resource_manager_resilience
+        COMMAND resource_manager --resilience-tests)
     willpower_add_test(NAME willpower_resource_manager_startup
         COMMAND "${CMAKE_COMMAND}"
             "-DTOOL=$<TARGET_FILE:resource_manager>"
