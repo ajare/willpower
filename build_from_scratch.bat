@@ -126,7 +126,11 @@ if not defined BUILD_DIR (
     set "ERROR_MESSAGE=refusing to remove an empty build directory"
     goto fatal
 )
-for %%I in ("%BUILD_DIR%") do set "BUILD_DIR=%%~fI"
+for %%I in ("%BUILD_DIR%") do (
+    set "BUILD_DIR=%%~fI"
+    set "BUILD_DIR_NAME=%%~nxI"
+)
+set "MPP_BUILD_DIR=%MPP_DIR%\%BUILD_DIR_NAME%"
 if /i "%BUILD_DIR%"=="%ROOT_DIR%" (
     set "ERROR_MESSAGE=refusing to remove unsafe build directory: %BUILD_DIR%"
     goto fatal
@@ -143,9 +147,9 @@ if exist "%BUILD_DIR%" (
     set "ERROR_MESSAGE=could not remove build directory: %BUILD_DIR%"
     goto fatal
 )
-if exist "%MPP_DIR%\build" rmdir /s /q "%MPP_DIR%\build"
-if exist "%MPP_DIR%\build" (
-    set "ERROR_MESSAGE=could not remove dependency build directory: %MPP_DIR%\build"
+if exist "%MPP_BUILD_DIR%" rmdir /s /q "%MPP_BUILD_DIR%"
+if exist "%MPP_BUILD_DIR%" (
+    set "ERROR_MESSAGE=could not remove dependency build directory: %MPP_BUILD_DIR%"
     goto fatal
 )
 

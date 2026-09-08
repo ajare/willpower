@@ -46,10 +46,16 @@ set(WILLPOWER_NLOHMANN_JSON_INCLUDE_DIR
 
 set(WILLPOWER_EXT_DIR "${PROJECT_SOURCE_DIR}/ext")
 set(WILLPOWER_MPP_SOURCE_DIR "${WILLPOWER_EXT_DIR}/massive-poly-pusher")
-set(WILLPOWER_MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/massive-poly-pusher-build")
-# MPP deliberately places artifacts under its source checkout's build tree,
-# independently of the CMake binary directory used to configure it.
-set(WILLPOWER_MPP_OUTPUT_DIR "${WILLPOWER_MPP_SOURCE_DIR}/build")
+# Give MPP the same build-tree name as Willpower. Besides keeping the generated
+# solutions easy to identify, this prevents platform builds from sharing MPP's
+# CMake cache and artifacts (for example, both use build-windows or build-linux).
+get_filename_component(WILLPOWER_BUILD_DIR_NAME "${CMAKE_BINARY_DIR}" NAME)
+if(NOT WILLPOWER_BUILD_DIR_NAME)
+    message(FATAL_ERROR "Could not determine the Willpower build directory name")
+endif()
+set(WILLPOWER_MPP_BUILD_DIR
+    "${WILLPOWER_MPP_SOURCE_DIR}/${WILLPOWER_BUILD_DIR_NAME}")
+set(WILLPOWER_MPP_OUTPUT_DIR "${WILLPOWER_MPP_BUILD_DIR}")
 
 foreach(required_path
         "${WILLPOWER_MPP_SOURCE_DIR}/CMakeLists.txt"
@@ -76,6 +82,7 @@ ExternalProject_Add(willpower_mpp_external
     CMAKE_ARGS
         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
         "-DCMAKE_BUILD_TYPE=$<CONFIG>"
+        "-DMPP_BUILD_OUTPUT_ROOT=${WILLPOWER_MPP_OUTPUT_DIR}"
         "-DUTILS_VALIJSON_SOURCE_DIR=${willpower_valijson_SOURCE_DIR}"
         "-DFETCHCONTENT_SOURCE_DIR_UTILS_NLOHMANN_JSON=${willpower_nlohmann_json_SOURCE_DIR}"
     BUILD_COMMAND
