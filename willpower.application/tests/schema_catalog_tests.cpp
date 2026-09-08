@@ -124,6 +124,25 @@ int main() {
     require(firstExport.catalogJson == secondExport.catalogJson &&
                 firstExport.documents.size() == secondExport.documents.size(),
             "Built-in bundle export was not deterministic.");
+    auto firstComposed = builtInSnapshot.exportComposedBundle(
+        "https://example.test/composed-resource-manifest.schema.json");
+    auto secondComposed = builtInSnapshot.exportComposedBundle(
+        "https://example.test/composed-resource-manifest.schema.json");
+    require(firstComposed.catalogJson == secondComposed.catalogJson &&
+                firstComposed.documents.size() == secondComposed.documents.size() &&
+                std::equal(firstComposed.documents.begin(), firstComposed.documents.end(),
+                           secondComposed.documents.begin(), [](auto const& left, auto const& right) {
+                             return left.document == right.document &&
+                                    left.contents == right.contents;
+                           }),
+            "Composed bundle export was not byte-for-byte deterministic.");
+    ResourceSchemaCatalog composed(firstComposed);
+    auto composedSnapshot = composed.snapshot();
+    require(std::count_if(composedSnapshot.entries().begin(),
+                          composedSnapshot.entries().end(), [](auto const& schema) {
+                            return schema.kind == ResourceSchemaKind::manifest;
+                          }) == 1,
+            "Composed export did not contain exactly one root schema.");
 
     ResourceSchemaCatalog catalog;
     auto callerOwned = widgetBundle();

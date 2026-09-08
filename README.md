@@ -233,6 +233,14 @@ or default-factory lookup, and export a deterministic merged bundle. Catalog mut
 explicit; `snapshot()` returns immutable owned data, so validation or export can proceed
 while other code prepares a later catalog update.
 
+The `willpower-resource-schemas` executable provides JSON-producing `list`, `verify`,
+`merge`, and `export` commands. `export` emits both a self-contained bundle and a composed
+root schema for YAML language servers, including downstream Resource Types. Applications
+can link their schema-registration code to the reusable `runResourceSchemaExporter`
+entry point without initializing runtime services. See
+[`docs/resource-schema-tools.md`](docs/resource-schema-tools.md) for command syntax,
+exit codes, a downstream exporter target, and reproducible CI/editor examples.
+
 Each `ResourceManager` owns a catalog initialized with those built-in schemas. Call
 `addResourceSchemaBundle()` with an in-memory bundle or bundle directory before the first
 `scanLocations()`/`rescanLocations()` call. Scanning freezes one immutable snapshot and

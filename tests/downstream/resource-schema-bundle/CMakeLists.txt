@@ -13,6 +13,19 @@ willpower_compose_resource_schema_bundle(
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/resource-schema-bundle"
     ROOT_SCHEMA_ID "https://schemas.example.test/resource-manifest.schema.json")
 
+add_executable(willpower_downstream_schema_exporter schema_exporter.cpp)
+target_compile_features(willpower_downstream_schema_exporter PRIVATE cxx_std_20)
+target_compile_definitions(willpower_downstream_schema_exporter PRIVATE
+    WILLPOWER_EXAMPLE_SCHEMA_BUNDLE="${willpower_downstream_resource_schema_bundle_BUNDLE_DIR}")
+target_link_libraries(willpower_downstream_schema_exporter PRIVATE Willpower.Application)
+willpower_target_defaults(willpower_downstream_schema_exporter)
+willpower_output_dirs(willpower_downstream_schema_exporter)
+willpower_deploy_runtime_dlls(willpower_downstream_schema_exporter)
+willpower_deploy_vendor_dlls(willpower_downstream_schema_exporter)
+set_target_properties(willpower_downstream_schema_exporter PROPERTIES FOLDER Willpower/Tests)
+add_dependencies(willpower_downstream_schema_exporter
+    willpower_downstream_resource_schema_bundle)
+
 add_library(willpower_downstream_widget_resource STATIC WidgetResource.cpp WidgetResource.h)
 target_compile_features(willpower_downstream_widget_resource PRIVATE cxx_std_20)
 target_link_libraries(willpower_downstream_widget_resource PRIVATE Willpower.Application)
@@ -33,3 +46,10 @@ add_dependencies(willpower_downstream_resource_schema_tests
 willpower_add_test(NAME willpower_downstream_resource_schema_bundle
     COMMAND willpower_downstream_resource_schema_tests
         "${willpower_downstream_resource_schema_bundle_BUNDLE_DIR}")
+
+willpower_add_test(NAME willpower_resource_schema_cli
+    COMMAND "${CMAKE_COMMAND}"
+        "-DTOOL=$<TARGET_FILE:willpower_resource_schemas>"
+        "-DDOWNSTREAM_TOOL=$<TARGET_FILE:willpower_downstream_schema_exporter>"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli-test"
+        -P "${PROJECT_SOURCE_DIR}/willpower.application/tests/resource_schema_cli_tests.cmake")

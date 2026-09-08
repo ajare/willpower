@@ -559,6 +559,144 @@ ResourceSchemaBundle exportEntries(std::vector<ResourceSchema> entries) {
   return result;
 }
 
+Json collectionOf(Json item) {
+  return Json{{"oneOf", Json::array({item, Json{{"type", "array"},
+                                                 {"minItems", 1},
+                                                 {"items", item}}})}};
+}
+
+std::string composeRootSchema(std::vector<ResourceSchema> const& entries,
+                              std::string const& rootSchemaId) {
+  if (!absoluteSchemaId(rootSchemaId)) {
+    throw ResourceSchemaCatalogException("Root schema ID must be an absolute URI: '" +
+                                         rootSchemaId + "'.");
+  }
+
+  struct TypeSchemas {
+    std::string defaultId;
+    std::map<std::string, std::string> factories;
+  };
+  std::map<std::string, TypeSchemas> types;
+  for (auto const& entry : entries) {
+    if (entry.kind != ResourceSchemaKind::resourceType) continue;
+    auto& type = types[entry.resourceType];
+    if (entry.factoryType.empty())
+      type.defaultId = entry.schemaId;
+    else
+      type.factories.emplace(entry.factoryType, entry.schemaId);
+  }
+
+  constexpr char commonId[] =
+      "https://schemas.willpower.dev/resource-manifest/common.schema.json";
+  constexpr char resourceId[] =
+      "https://schemas.willpower.dev/resource-manifest/resource.schema.json";
+  Json definitions = Json::object();
+  Json resourceBranches = Json::array();
+  Json knownTypes = Json::array();
+  std::size_t number = 0;
+  for (auto const& [resourceType, schemas] : types) {
+    knownTypes.push_back(resourceType);
+    Json base;
+    if (!schemas.defaultId.empty()) {
+      base = Json{{"$ref", schemas.defaultId}};
+    } else {
+      base = Json{{"allOf", Json::array(
+                                {Json{{"$ref", std::string(resourceId) + "#/definitions/resource"}},
+                                 Json{{"properties", Json{{"type", Json{{"enum", Json::array({resourceType})}}}}}}})}};
+    }
+
+    Json constraints = Json::array({base});
+    if (!schemas.factories.empty()) {
+      Json definitionBranches = Json::array();
+      Json registeredFactories = Json::array();
+      for (auto const& [factory, schemaId] : schemas.factories) {
+        registeredFactories.push_back(factory);
+        definitionBranches.push_back(
+            Json{{"allOf", Json::array(
+                               {Json{{"$ref", std::string(resourceId) + "#/definitions/definition"}},
+                                Json{{"required", Json::array({"factory"})},
+                                     {"properties", Json{{"factory", Json{{"enum", Json::array({factory})}}}}}},
+                                Json{{"$ref", schemaId}}})}});
+      }
+      definitionBranches.push_back(
+          Json{{"allOf", Json::array(
+                             {Json{{"$ref", std::string(resourceId) + "#/definitions/definition"}},
+                              Json{{"not", Json{{"required", Json::array({"factory"})},
+                                                  {"properties", Json{{"factory", Json{{"enum", registeredFactories}}}}}}}}})}});
+
+      auto const suffix = std::to_string(number);
+      auto const definitionName = "applicationDefinition" + suffix;
+      auto const collectionName = "applicationDefinitionCollection" + suffix;
+      auto const definitionsName = "applicationDefinitions" + suffix;
+      definitions[definitionName] = Json{{"oneOf", std::move(definitionBranches)}};
+      definitions[collectionName] = collectionOf(Json{{"$ref", "#/definitions/" + definitionName}});
+      definitions[definitionsName] =
+          Json{{"type", "object"},
+               {"additionalProperties", false},
+               {"required", Json::array({"Definition"})},
+               {"properties", Json{{"Definition", Json{{"$ref", "#/definitions/" + collectionName}}}}}};
+      constraints.push_back(Json{{"properties", Json{{"Definitions", Json{{"$ref", "#/definitions/" + definitionsName}}}}}});
+    }
+    resourceBranches.push_back(Json{{"allOf", std::move(constraints)}});
+    ++number;
+  }
+  resourceBranches.push_back(
+      Json{{"allOf", Json::array(
+                         {Json{{"$ref", std::string(resourceId) + "#/definitions/resource"}},
+                          Json{{"properties", Json{{"type", Json{{"not", Json{{"enum", knownTypes}}}}}}}}})}});
+
+  definitions["resource"] = Json{{"oneOf", std::move(resourceBranches)}};
+  definitions["resourceCollection"] =
+      collectionOf(Json{{"$ref", "#/definitions/resource"}});
+  definitions["namespace"] =
+      Json{{"type", "object"},
+           {"additionalProperties", false},
+           {"required", Json::array({"name", "Resource"})},
+           {"properties",
+            Json{{"name", Json{{"$ref", std::string(commonId) + "#/definitions/nonEmptyString"}}},
+                 {"Resource", Json{{"$ref", "#/definitions/resourceCollection"}}}}}};
+
+  Json root{{"$schema", "http://json-schema.org/draft-07/schema#"},
+            {"$id", rootSchemaId},
+            {"title", "Application Resource Manifest"},
+            {"type", "object"},
+            {"additionalProperties", false},
+            {"required", Json::array({"Resources"})},
+            {"properties",
+             Json{{"Resources",
+                   Json{{"type", "object"},
+                        {"additionalProperties", false},
+                        {"properties",
+                         Json{{"Resource", Json{{"$ref", "#/definitions/resourceCollection"}}},
+                              {"Namespace", collectionOf(Json{{"$ref", "#/definitions/namespace"}})}}}}}}},
+            {"definitions", std::move(definitions)}};
+  return root.dump(2) + "\n";
+}
+
+void writeExportedBundle(std::filesystem::path const& directory,
+                         ResourceSchemaBundle const& bundle) {
+  if (directory.empty()) throw ResourceSchemaCatalogException("Export directory cannot be empty.");
+  std::error_code error;
+  auto const target = std::filesystem::absolute(directory, error).lexically_normal();
+  if (error || target == target.root_path() || target == std::filesystem::current_path(error)) {
+    throw ResourceSchemaCatalogException("Refusing unsafe Resource Schema Bundle export directory '" +
+                                         directory.string() + "'.");
+  }
+  std::filesystem::remove_all(target, error);
+  if (error) {
+    throw ResourceSchemaCatalogException("Cannot replace Resource Schema Bundle directory '" +
+                                         target.string() + "': " + error.message());
+  }
+  std::filesystem::create_directories(target, error);
+  if (error) {
+    throw ResourceSchemaCatalogException("Cannot create Resource Schema Bundle directory '" +
+                                         target.string() + "': " + error.message());
+  }
+  writeFile(target / "catalog.json", bundle.catalogJson);
+  for (auto const& document : bundle.documents)
+    writeFile(target / std::filesystem::path(document.document), document.contents);
+}
+
 std::shared_ptr<std::vector<ResourceSchema> const> emptySnapshot();
 }  // namespace
 
@@ -636,27 +774,30 @@ ResourceSchemaBundle ResourceSchemaCatalogSnapshot::exportBundle() const {
 }
 
 void ResourceSchemaCatalogSnapshot::exportBundle(std::filesystem::path const& directory) const {
-  if (directory.empty()) throw ResourceSchemaCatalogException("Export directory cannot be empty.");
-  std::error_code error;
-  auto const target = std::filesystem::absolute(directory, error).lexically_normal();
-  if (error || target == target.root_path() || target == std::filesystem::current_path(error)) {
-    throw ResourceSchemaCatalogException("Refusing unsafe Resource Schema Bundle export directory '" +
-                                         directory.string() + "'.");
+  writeExportedBundle(directory, exportBundle());
+}
+
+ResourceSchemaBundle ResourceSchemaCatalogSnapshot::exportComposedBundle(
+    std::string const& rootSchemaId) const {
+  std::vector<ResourceSchema> entries;
+  for (auto const& entry : *mEntries) {
+    if (entry.kind != ResourceSchemaKind::manifest) entries.push_back(entry);
   }
-  auto const bundle = exportBundle();
-  std::filesystem::remove_all(target, error);
-  if (error) {
-    throw ResourceSchemaCatalogException("Cannot replace Resource Schema Bundle directory '" +
-                                         target.string() + "': " + error.message());
-  }
-  std::filesystem::create_directories(target, error);
-  if (error) {
-    throw ResourceSchemaCatalogException("Cannot create Resource Schema Bundle directory '" +
-                                         target.string() + "': " + error.message());
-  }
-  writeFile(target / "catalog.json", bundle.catalogJson);
-  for (auto const& document : bundle.documents)
-    writeFile(target / std::filesystem::path(document.document), document.contents);
+  ResourceSchema root;
+  root.kind = ResourceSchemaKind::manifest;
+  root.schemaId = rootSchemaId;
+  root.document = "schemas/resource-manifest.schema.json";
+  root.contents = composeRootSchema(entries, rootSchemaId);
+  root.documentHash = "sha256:" + sha256(root.contents);
+  entries.push_back(std::move(root));
+  std::sort(entries.begin(), entries.end(), entryLess);
+  validateReferenceClosure(entries);
+  return exportEntries(std::move(entries));
+}
+
+void ResourceSchemaCatalogSnapshot::exportComposedBundle(
+    std::filesystem::path const& directory, std::string const& rootSchemaId) const {
+  writeExportedBundle(directory, exportComposedBundle(rootSchemaId));
 }
 
 ResourceSchemaCatalog::ResourceSchemaCatalog() : mImplementation(std::make_unique<Impl>()) {}

@@ -128,6 +128,7 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/ResourceLocation.cpp
     src/resourcesystem/ResourceManager.cpp
     src/resourcesystem/ResourceSchemaCatalog.cpp
+    src/resourcesystem/ResourceSchemaExporter.cpp
     src/resourcesystem/ResourceManifestValidator.cpp
     src/resourcesystem/ResourceManifestValidator.h
     src/resourcesystem/ShaderDefaultDefinitionFactory.cpp
@@ -168,6 +169,20 @@ willpower_output_dirs(Willpower.Application)
 willpower_enable_sdl_checks(Willpower.Application)
 set_target_properties(Willpower.Application PROPERTIES FOLDER Willpower)
 add_dependencies(Willpower.Application willpower_resource_schema_bundle)
+
+add_executable(willpower_resource_schemas tools/resource_schema_tool.cpp)
+target_compile_features(willpower_resource_schemas PRIVATE cxx_std_20)
+target_link_libraries(willpower_resource_schemas PRIVATE Willpower.Application)
+willpower_target_defaults(willpower_resource_schemas)
+willpower_output_dirs(willpower_resource_schemas)
+willpower_deploy_runtime_dlls(willpower_resource_schemas)
+willpower_deploy_vendor_dlls(willpower_resource_schemas)
+set_target_properties(willpower_resource_schemas PROPERTIES
+    OUTPUT_NAME willpower-resource-schemas
+    FOLDER Willpower/Tools)
+install(TARGETS willpower_resource_schemas
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT Willpower_Application)
 
 if(BUILD_TESTING)
     willpower_add_test(NAME willpower_resource_schema_bundle

@@ -71,6 +71,14 @@ class WP_APPLICATION_API ResourceSchemaCatalogSnapshot {
   [[nodiscard]] ResourceSchemaBundle exportBundle() const;
   void exportBundle(std::filesystem::path const& directory) const;
 
+  // Replaces any input manifest entries with one deterministic root schema
+  // that dispatches every registered Resource Type and factory. The result is
+  // a complete, self-contained bundle suitable for YAML language servers.
+  [[nodiscard]] ResourceSchemaBundle exportComposedBundle(
+      std::string const& rootSchemaId) const;
+  void exportComposedBundle(std::filesystem::path const& directory,
+                            std::string const& rootSchemaId) const;
+
  private:
   explicit ResourceSchemaCatalogSnapshot(
       std::shared_ptr<std::vector<ResourceSchema> const> entries);
@@ -111,5 +119,12 @@ class WP_APPLICATION_API ResourceSchemaCatalog {
   explicit ResourceSchemaCatalog(std::unique_ptr<Impl> implementation);
   std::unique_ptr<Impl> mImplementation;
 };
+
+// Reusable main entry point for schema-only application exporters. Downstream
+// code can construct a catalog, register application-owned bundles, and pass it
+// here without constructing any Resource or runtime service. Returns a process
+// exit code and writes JSON results/diagnostics to stdout/stderr.
+WP_APPLICATION_API int runResourceSchemaExporter(ResourceSchemaCatalog& catalog, int argc,
+                                                 char const* const* argv);
 
 }  // namespace wp::application::resourcesystem
