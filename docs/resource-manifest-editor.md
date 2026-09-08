@@ -137,6 +137,26 @@ number, or entering an incomplete alternative is rejected without changing the c
 document. Rejected-edit diagnostics retain their complete instance paths and can be
 selected to return to the owning Resource's nested inspector.
 
+## Program, Material, and Definition factories
+
+`Program` drafts require separate selector-backed Vertex and Fragment Shader
+dependencies and create a minimal valid default Definition. Their inspector covers
+attribute counts and flags, primitive/index/storage controls, and nested Buffer and
+Channel collections with constrained component and data-type selectors.
+
+`Material` drafts require a Program dependency. Image dependencies are added with a
+unique dependency ID and an Image Resource selector. Texture collections provide atomic
+`default` and `resource` alternatives; resource texture values select from the
+Material's declared Image dependency IDs rather than accepting arbitrary text.
+
+The Add Definition selector is populated from exact `(Resource Type, factory type)`
+entries in the active Resource Schema Catalog. A factory already present on the Resource
+is disabled, an unregistered or cross-type factory is rejected, and the selected
+specialized schema alone determines its fields and constraints. Removing or duplicating
+a Definition is previewed against uniqueness and whole-manifest validity, so a required
+default Definition cannot be removed while a removable specialized Definition can.
+Unsupported schema authoring shapes remain read-only rather than being guessed.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -148,6 +168,7 @@ resource-manager --authoring-tests
 resource-manager --organization-tests
 resource-manager --dependency-tests
 resource-manager --composite-tests
+resource-manager --advanced-tests
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
@@ -162,9 +183,12 @@ cycle prevention, missing and incoming references, inline editing, selector visi
 and atomic promotion. `--composite-tests` covers ImageSet and AnimationSet creation,
 explicit and image-set frames, compatible scalar input, nested collection boundaries,
 dependency selectors, rejected edits and transitions, diagnostics, canonical output,
-and undo/redo. `--smoke-test` executes New,
-Save, and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
+and undo/redo. `--advanced-tests` covers valid and invalid Program and Material forms,
+shader/Program/Image selectors, buffers, channels, texture alternatives, default and
+specialized Definition factories, factory uniqueness, deletion validity, canonical
+output, and history. `--smoke-test` executes New, Save, and Open in a temporary
+directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.
-CTest registers startup, document workflow, and GUI smoke coverage. The GUI smoke test
+CTest registers all headless workflow suites, startup, and GUI smoke coverage. The GUI smoke test
 is skipped with status `77` only when Linux has no display available.

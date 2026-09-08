@@ -131,3 +131,4 @@ work build on the same validation contract.
 | [WP-041](WP-041.md) | [#41](https://github.com/ajare/willpower/issues/41) | Organization | P1 | hard | Organize Resources in flat namespaces safely | WP-040 | done |
 | [WP-042](WP-042.md) | [#42](https://github.com/ajare/willpower/issues/42) | Dependencies | P1 | hard | Author dependencies and inline Resources | WP-040, WP-041 | done |
 | [WP-043](WP-043.md) | [#43](https://github.com/ajare/willpower/issues/43) | Composite authoring | P1 | hard | Author ImageSet and AnimationSet Definitions | WP-042 | done |
+| [WP-044](WP-044.md) | [#44](https://github.com/ajare/willpower/issues/44) | Advanced authoring | P1 | hard | Author Program, Material, and specialized Definitions | WP-043 | done |

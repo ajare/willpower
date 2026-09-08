@@ -547,6 +547,14 @@ std::string collectionName(NestedCollectionKind kind) {
       return "Frame";
     case NestedCollectionKind::tag:
       return "Tag";
+    case NestedCollectionKind::buffer:
+      return "Buffer";
+    case NestedCollectionKind::channel:
+      return "Channel";
+    case NestedCollectionKind::texture:
+      return "Texture";
+    case NestedCollectionKind::object:
+      return {};
   }
   return {};
 }
@@ -589,6 +597,21 @@ YAML::Node defaultNestedItem(NestedCollectionKind kind) {
       item["key"] = "Tag";
       item["value"] = "";
       break;
+    case NestedCollectionKind::buffer:
+      item["Channels"]["Channel"] =
+          defaultNestedItem(NestedCollectionKind::channel);
+      break;
+    case NestedCollectionKind::channel:
+      item["data"] = "POSITION3";
+      item["type"] = "FLOAT32";
+      item["normalised"] = false;
+      break;
+    case NestedCollectionKind::texture:
+      item["sampler"] = "Texture";
+      item["type"] = "default";
+      break;
+    case NestedCollectionKind::object:
+      break;
   }
   return item;
 }
@@ -603,6 +626,149 @@ NestedPropertyForm propertyForm(YAML::Node const& item, std::string name,
   result.optional = !required;
   result.integer = integer;
   result.number = number;
+  return result;
+}
+
+bool schemaScalarMatches(YAML::Node const& node, Json const& expected) {
+  if (!node || !node.IsScalar()) return false;
+  try {
+    if (expected.is_string()) return node.as<std::string>() == expected.get<std::string>();
+    if (expected.is_boolean()) return node.as<bool>() == expected.get<bool>();
+    if (expected.is_number_integer())
+      return node.as<long long>() == expected.get<long long>();
+    if (expected.is_number()) return node.as<double>() == expected.get<double>();
+  } catch (...) {
+  }
+  return false;
+}
+
+Json mergeSchemaShapes(Json left, Json const& right) {
+  if (!left.is_object()) left = Json::object();
+  if (!right.is_object()) return left;
+  if (right.contains("properties") && right.at("properties").is_object()) {
+    if (!left.contains("properties") || !left.at("properties").is_object())
+      left["properties"] = Json::object();
+    for (auto const& [name, property] : right.at("properties").items())
+      left["properties"][name] = property;
+  }
+  if (right.contains("required") && right.at("required").is_array()) {
+    if (!left.contains("required") || !left.at("required").is_array())
+      left["required"] = Json::array();
+    for (auto const& required : right.at("required")) {
+      if (std::find(left["required"].begin(), left["required"].end(), required) ==
+          left["required"].end()) {
+        left["required"].push_back(required);
+      }
+    }
+  }
+  for (auto const& [name, value] : right.items()) {
+    if (name != "properties" && name != "required" && name != "allOf" &&
+        name != "oneOf" && name != "anyOf" && name != "if" && name != "then" &&
+        name != "else" && name != "$ref") {
+      left[name] = value;
+    }
+  }
+  return left;
+}
+
+Json schemaReference(ResourceSchemaCatalogSnapshot const& catalog,
+                     std::string const& currentSchemaId,
+                     std::string const& reference) {
+  auto const hash = reference.find('#');
+  auto schemaId = reference.substr(0, hash);
+  if (schemaId.empty()) schemaId = currentSchemaId;
+  auto const* entry = catalog.findBySchemaId(schemaId);
+  if (!entry) throw std::runtime_error("uncatalogued schema reference");
+  auto document = Json::parse(entry->contents);
+  if (hash != std::string::npos && hash + 1U < reference.size()) {
+    auto pointer = reference.substr(hash + 1U);
+    if (pointer.empty() || pointer.front() != '/')
+      throw std::runtime_error("unsupported schema reference fragment");
+    return document.at(Json::json_pointer(pointer));
+  }
+  return document;
+}
+
+bool schemaBranchMatches(YAML::Node const& node, Json const& schema) {
+  if (!schema.is_object()) return false;
+  if (schema.contains("type") && schema.at("type").is_string()) {
+    auto const type = schema.at("type").get<std::string>();
+    if ((type == "object" && (!node || !node.IsMap())) ||
+        (type == "array" && (!node || !node.IsSequence()))) {
+      return false;
+    }
+  }
+  if (schema.contains("required") && schema.at("required").is_array()) {
+    if (!node || !node.IsMap()) return false;
+    for (auto const& required : schema.at("required")) {
+      if (!required.is_string() || !node[required.get<std::string>()]) return false;
+    }
+  }
+  if (node && node.IsMap() && schema.contains("properties") &&
+      schema.at("properties").is_object()) {
+    for (auto const& [name, property] : schema.at("properties").items()) {
+      if (!node[name] || !property.is_object()) continue;
+      if (property.contains("const") &&
+          !schemaScalarMatches(node[name], property.at("const"))) {
+        return false;
+      }
+      if (property.contains("enum") && property.at("enum").is_array() &&
+          std::none_of(property.at("enum").begin(), property.at("enum").end(),
+                       [&](auto const& value) {
+                         return schemaScalarMatches(node[name], value);
+                       })) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+Json expandSchema(ResourceSchemaCatalogSnapshot const& catalog, Json schema,
+                  std::string const& currentSchemaId, YAML::Node const& node,
+                  unsigned int depth = 0U) {
+  if (depth > 32U || !schema.is_object())
+    throw std::runtime_error("unsupported schema composition depth");
+  if (schema.contains("$ref")) {
+    auto resolved = schemaReference(catalog, currentSchemaId,
+                                    schema.at("$ref").get<std::string>());
+    schema.erase("$ref");
+    schema = mergeSchemaShapes(
+        expandSchema(catalog, std::move(resolved), currentSchemaId, node,
+                     depth + 1U),
+        schema);
+  }
+  Json result = schema;
+  if (schema.contains("allOf") && schema.at("allOf").is_array()) {
+    for (auto const& branch : schema.at("allOf")) {
+      result = mergeSchemaShapes(
+          std::move(result),
+          expandSchema(catalog, branch, currentSchemaId, node, depth + 1U));
+    }
+  }
+  for (auto const* keyword : {"oneOf", "anyOf"}) {
+    if (!schema.contains(keyword) || !schema.at(keyword).is_array() ||
+        schema.at(keyword).empty()) {
+      continue;
+    }
+    auto branch = std::find_if(schema.at(keyword).begin(), schema.at(keyword).end(),
+                               [&](auto const& candidate) {
+                                 return schemaBranchMatches(node, candidate);
+                               });
+    if (branch == schema.at(keyword).end()) branch = schema.at(keyword).begin();
+    result = mergeSchemaShapes(
+        std::move(result),
+        expandSchema(catalog, *branch, currentSchemaId, node, depth + 1U));
+  }
+  if (schema.contains("if") && schema.at("if").is_object()) {
+    auto const matches = schemaBranchMatches(node, schema.at("if"));
+    auto const* keyword = matches ? "then" : "else";
+    if (schema.contains(keyword)) {
+      result = mergeSchemaShapes(
+          std::move(result), expandSchema(catalog, schema.at(keyword),
+                                          currentSchemaId, node, depth + 1U));
+    }
+  }
   return result;
 }
 
@@ -650,7 +816,7 @@ std::vector<ResourceForm> loadResourceForms(
     ResourceSchemaCatalogSnapshot const& catalog) {
   static std::set<std::string> const authoredTypes{
       "TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet",
-      "AnimationSet"};
+      "AnimationSet", "Program", "Material"};
   std::vector<ResourceForm> result;
   for (auto const& entry : catalog.entries()) {
     if (entry.kind != ResourceSchemaKind::resourceType ||
@@ -666,22 +832,39 @@ std::vector<ResourceForm> loadResourceForms(
       form.resourceType = entry.resourceType;
       form.title = schema.value("title", entry.resourceType);
       form.composite = entry.resourceType == "ImageSet" ||
-                       entry.resourceType == "AnimationSet";
+                       entry.resourceType == "AnimationSet" ||
+                       entry.resourceType == "Program" ||
+                       entry.resourceType == "Material";
       if (form.composite) {
-        // Require the catalogued shapes used by the nested renderer. This keeps
-        // malformed or incompatible bundles from silently producing controls.
+        // Require the catalogued shapes consumed by the constrained renderer.
+        // The full validator remains authoritative for every committed edit.
         auto const& definitions = schema.at("definitions");
         static_cast<void>(definitions.at("defaultDefinition"));
         static_cast<void>(definitions.at("definitionCollection"));
-        static_cast<void>(definitions.at("imageDependency"));
         if (entry.resourceType == "ImageSet") {
+          static_cast<void>(definitions.at("imageDependency"));
           static_cast<void>(definitions.at("image"));
           static_cast<void>(definitions.at("imageSet"));
-        } else {
+          form.requiredDependencies.push_back({"Image", {"Image"}});
+        } else if (entry.resourceType == "AnimationSet") {
+          static_cast<void>(definitions.at("imageDependency"));
           static_cast<void>(definitions.at("animation"));
           static_cast<void>(definitions.at("explicitFrame"));
           static_cast<void>(definitions.at("imageSetFrameOverride"));
           static_cast<void>(definitions.at("tag"));
+          form.requiredDependencies.push_back({"Image", {"ImageSet"}});
+        } else if (entry.resourceType == "Program") {
+          static_cast<void>(definitions.at("attribs"));
+          static_cast<void>(definitions.at("meshSpecification"));
+          static_cast<void>(definitions.at("buffer"));
+          static_cast<void>(definitions.at("channel"));
+          form.requiredDependencies.push_back({"Vertex", {"Shader"}});
+          form.requiredDependencies.push_back({"Fragment", {"Shader"}});
+        } else {
+          static_cast<void>(definitions.at("texture"));
+          static_cast<void>(definitions.at("resourceTexture"));
+          static_cast<void>(definitions.at("defaultTexture"));
+          form.requiredDependencies.push_back({"Program", {"Program"}});
         }
       } else {
         auto const& location = ownProperties.at("location");
@@ -731,7 +914,7 @@ std::vector<ResourceForm> loadResourceForms(
   }
   if (result.size() != authoredTypes.size()) {
     throw std::runtime_error(
-        "The built-in catalog does not contain all seven authored Resource forms.");
+        "The built-in catalog does not contain all nine authored Resource forms.");
   }
   return result;
 }
@@ -784,8 +967,10 @@ bool hasYamlExtension(fs::path const& path) {
 }
 
 ManifestWorkspace::ManifestWorkspace()
-    : mCatalog(ResourceSchemaCatalog::builtIn().snapshot()),
-      mResourceForms(loadResourceForms(mCatalog)) {}
+    : ManifestWorkspace(ResourceSchemaCatalog::builtIn().snapshot()) {}
+
+ManifestWorkspace::ManifestWorkspace(ResourceSchemaCatalogSnapshot catalog)
+    : mCatalog(std::move(catalog)), mResourceForms(loadResourceForms(mCatalog)) {}
 
 bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
   fs::path canonicalBase;
@@ -1245,19 +1430,22 @@ std::vector<std::string> ManifestWorkspace::incomingReferences(
   return result;
 }
 
-std::vector<ResourceReferenceChoice> ManifestWorkspace::draftReferenceChoices() const {
+std::vector<ResourceReferenceChoice> ManifestWorkspace::draftReferenceChoices(
+    std::string const& dependencyId) const {
   std::vector<ResourceReferenceChoice> result;
-  if (!mDraft || !mDocument) return result;
-  auto const allowed = mDraft->resourceType == "ImageSet"
-                           ? std::vector<std::string>{"Image"}
-                           : mDraft->resourceType == "AnimationSet"
-                                 ? std::vector<std::string>{"ImageSet"}
-                                 : std::vector<std::string>{};
-  if (allowed.empty()) return result;
+  if (!mDraft || !mDocument || mDraft->references.empty()) return result;
+  auto reference = std::find_if(
+      mDraft->references.begin(), mDraft->references.end(),
+      [&](auto const& item) {
+        return dependencyId.empty() || item.id == dependencyId;
+      });
+  if (reference == mDraft->references.end()) return result;
   auto root = YAML::Load(canonicalYaml());
-  for (auto const& declaration : resourceDeclarations(root)) {
+  auto declarations = resourceDeclarations(root);
+  for (auto const& declaration : declarations) {
     if (declaration.inlineResource ||
-        !allowedResourceType(allowed, declaration.resourceType) ||
+        !allowedResourceType(reference->allowedResourceTypes,
+                             declaration.resourceType) ||
         !validResourceName(declaration.identity.name)) {
       continue;
     }
@@ -1266,10 +1454,9 @@ std::vector<ResourceReferenceChoice> ManifestWorkspace::draftReferenceChoices() 
     choice.name = declaration.identity.name;
     choice.resourceType = declaration.resourceType;
     choice.qualifiedIdentity = qualifiedIdentity(declaration.identity);
-    choice.selected = choice.resourceNamespace == mDraft->dependencyNamespace &&
-                      choice.name == mDraft->dependencyName;
-    auto matches = matchingDeclarations(resourceDeclarations(root),
-                                        declaration.identity);
+    choice.selected = choice.resourceNamespace == reference->resourceNamespace &&
+                      choice.name == reference->name;
+    auto matches = matchingDeclarations(declarations, declaration.identity);
     choice.disabled = matches.size() != 1U;
     if (choice.disabled) choice.reason = "ambiguous Resource identity";
     if (std::none_of(result.begin(), result.end(), [&](auto const& existing) {
@@ -1278,6 +1465,44 @@ std::vector<ResourceReferenceChoice> ManifestWorkspace::draftReferenceChoices() 
         })) {
       result.push_back(std::move(choice));
     }
+  }
+  return result;
+}
+
+std::vector<DefinitionFactoryChoice> ManifestWorkspace::definitionFactories(
+    std::string const& resourceNamespace, std::string const& name) const {
+  std::vector<DefinitionFactoryChoice> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) return result;
+  auto const resource =
+      collection->resources[*findResourceIndex(*collection, name)];
+  auto const resourceType = scalar(resource, "type");
+  std::set<std::string> existing;
+  for (auto const& definition :
+       collectionItems(resource["Definitions"]["Definition"])) {
+    existing.insert(scalar(definition, "factory"));
+  }
+  for (auto const& entry : mCatalog.entries()) {
+    if (entry.kind != ResourceSchemaKind::resourceType ||
+        entry.resourceType != resourceType) {
+      continue;
+    }
+    DefinitionFactoryChoice choice;
+    choice.factoryType = entry.factoryType;
+    choice.selected = existing.contains(choice.factoryType);
+    choice.disabled = choice.selected;
+    try {
+      auto schema = Json::parse(entry.contents);
+      choice.title = schema.value(
+          "title", choice.factoryType.empty() ? "Default Definition"
+                                                : choice.factoryType);
+    } catch (...) {
+      choice.title = choice.factoryType.empty() ? "Default Definition"
+                                                : choice.factoryType;
+    }
+    result.push_back(std::move(choice));
   }
   return result;
 }
@@ -1291,7 +1516,10 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
   if (!collection || resourceCount(*collection, name) != 1U) return result;
   auto resource = collection->resources[*findResourceIndex(*collection, name)];
   auto const type = scalar(resource, "type");
-  if (type != "ImageSet" && type != "AnimationSet") return result;
+  if (type != "ImageSet" && type != "AnimationSet" && type != "Program" &&
+      type != "Material") {
+    return result;
+  }
 
   auto definitions = collectionItems(resource["Definitions"]["Definition"]);
   for (std::size_t definitionIndex = 0; definitionIndex < definitions.size();
@@ -1305,9 +1533,56 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
     definitionItem.label = scalar(definition, "factory").empty()
                                ? "Default Definition"
                                : "Definition: " + scalar(definition, "factory");
-    if (!scalar(definition, "factory").empty()) {
-      definitionItem.properties.push_back(
-          propertyForm(definition, "factory", true));
+    auto const factoryType = scalar(definition, "factory");
+    if (!factoryType.empty()) {
+      auto const* entry = mCatalog.findExact({type, factoryType});
+      if (entry) {
+        try {
+          auto schema = expandSchema(mCatalog, Json::parse(entry->contents),
+                                     entry->schemaId, definition);
+          auto required = schema.value("required", std::vector<std::string>{});
+          if (schema.contains("properties") && schema.at("properties").is_object()) {
+            for (auto const& [propertyName, rawPropertySchema] :
+                 schema.at("properties").items()) {
+              auto propertySchema = expandSchema(
+                  mCatalog, rawPropertySchema, entry->schemaId,
+                  definition[propertyName]);
+              auto property = propertyForm(
+                  definition, propertyName,
+                  std::find(required.begin(), required.end(), propertyName) !=
+                      required.end());
+              auto schemaType = propertySchema.value("type", std::string{});
+              property.integer = schemaType == "integer";
+              property.number = schemaType == "number";
+              property.boolean = schemaType == "boolean";
+              if (propertySchema.contains("minimum")) {
+                property.hasMinimum = true;
+                property.minimum = propertySchema.at("minimum").get<double>();
+              } else if (propertySchema.contains("exclusiveMinimum") &&
+                         propertySchema.at("exclusiveMinimum").is_number()) {
+                property.hasMinimum = true;
+                property.exclusiveMinimum = true;
+                property.minimum =
+                    propertySchema.at("exclusiveMinimum").get<double>();
+              }
+              if (propertySchema.contains("enum") &&
+                  propertySchema.at("enum").is_array()) {
+                for (auto const& enumValue : propertySchema.at("enum")) {
+                  if (enumValue.is_string())
+                    property.enumValues.push_back(enumValue.get<std::string>());
+                }
+              }
+              definitionItem.properties.push_back(std::move(property));
+            }
+          }
+        } catch (...) {
+          // A catalog accepted by ResourceSchemaCatalog remains valid for
+          // validation. Unsupported authoring shapes stay read-only rather
+          // than being guessed by the editor.
+        }
+      }
+      result.push_back(std::move(definitionItem));
+      continue;
     }
     result.push_back(std::move(definitionItem));
 
@@ -1347,6 +1622,111 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
           }
           result.push_back(std::move(item));
         }
+      }
+      continue;
+    }
+
+    if (type == "Program") {
+      auto attribs = definition["Attribs"];
+      NestedFormItem attribItem;
+      attribItem.kind = NestedCollectionKind::object;
+      attribItem.path = definitionPath + "/Attribs";
+      attribItem.label = "Attributes";
+      attribItem.properties = {
+          propertyForm(attribs, "textures", false, true),
+          propertyForm(attribs, "diffuse", false),
+          propertyForm(attribs, "colours", false),
+          propertyForm(attribs, "atlas", false),
+          propertyForm(attribs, "rotation", false)};
+      attribItem.properties.front().hasMinimum = true;
+      for (std::size_t index = 1; index < attribItem.properties.size(); ++index)
+        attribItem.properties[index].boolean = true;
+      result.push_back(std::move(attribItem));
+
+      auto mesh = definition["MeshSpecification"];
+      NestedFormItem meshItem;
+      meshItem.kind = NestedCollectionKind::object;
+      meshItem.path = definitionPath + "/MeshSpecification";
+      meshItem.label = "Mesh specification";
+      meshItem.properties = {propertyForm(mesh, "primitive", true),
+                             propertyForm(mesh, "indexed", true),
+                             propertyForm(mesh, "storage", true)};
+      meshItem.properties[0].enumValues = {"POINTS", "LINES", "TRIANGLES"};
+      meshItem.properties[1].boolean = true;
+      meshItem.properties[2].enumValues = {"STATIC", "DYNAMIC"};
+      result.push_back(std::move(meshItem));
+
+      auto buffers = collectionItems(mesh["Buffers"]["Buffer"]);
+      for (std::size_t bufferIndex = 0; bufferIndex < buffers.size();
+           ++bufferIndex) {
+        auto bufferPath = definitionPath + "/MeshSpecification/Buffers/Buffer/" +
+                          std::to_string(bufferIndex);
+        NestedFormItem bufferItem;
+        bufferItem.kind = NestedCollectionKind::buffer;
+        bufferItem.path = bufferPath;
+        bufferItem.label = "Buffer " + std::to_string(bufferIndex + 1U);
+        result.push_back(std::move(bufferItem));
+        auto channels = collectionItems(buffers[bufferIndex]["Channels"]["Channel"]);
+        for (std::size_t channelIndex = 0; channelIndex < channels.size();
+             ++channelIndex) {
+          NestedFormItem channelItem;
+          channelItem.kind = NestedCollectionKind::channel;
+          channelItem.path = bufferPath + "/Channels/Channel/" +
+                             std::to_string(channelIndex);
+          channelItem.label = "Channel " + std::to_string(channelIndex + 1U);
+          channelItem.properties = {
+              propertyForm(channels[channelIndex], "data", true),
+              propertyForm(channels[channelIndex], "type", true),
+              propertyForm(channels[channelIndex], "normalised", false)};
+          channelItem.properties[0].enumValues = {
+              "POSITION2", "POSITION3", "POSITION4", "NORMAL3", "NORMAL4",
+              "TEXCOORD2", "TEXCOORD3", "TEXCOORD4", "COLOUR1", "COLOUR3",
+              "COLOUR4", "USER1", "USER2", "USER3", "USER4"};
+          channelItem.properties[1].enumValues = {
+              "FLOAT16", "FLOAT32", "INT8", "INT16", "INT32", "UINT8",
+              "UINT16", "UINT32"};
+          channelItem.properties[2].boolean = true;
+          result.push_back(std::move(channelItem));
+        }
+      }
+      continue;
+    }
+
+    if (type == "Material") {
+      std::vector<std::string> imageDependencyIds;
+      auto declarations = resourceDeclarations(root);
+      for (auto const& dependency : standardDependencyItems(resource)) {
+        auto id = scalar(dependency, "id");
+        if (id.empty() || id == "Program") continue;
+        auto reference = scalar(dependency, "ref");
+        if (reference.empty()) {
+          if (scalar(dependency, "type") == "Image")
+            imageDependencyIds.push_back(std::move(id));
+          continue;
+        }
+        auto matches = matchingDeclarations(
+            declarations, parseReference(reference, resourceNamespace));
+        if (matches.size() == 1U && matches.front().resourceType == "Image")
+          imageDependencyIds.push_back(std::move(id));
+      }
+      auto textures = collectionItems(definition["Textures"]["Texture"]);
+      for (std::size_t textureIndex = 0; textureIndex < textures.size();
+           ++textureIndex) {
+        auto const& texture = textures[textureIndex];
+        NestedFormItem textureItem;
+        textureItem.kind = NestedCollectionKind::texture;
+        textureItem.path = definitionPath + "/Textures/Texture/" +
+                           std::to_string(textureIndex);
+        textureItem.label = "Texture " + std::to_string(textureIndex + 1U);
+        textureItem.alternative = scalar(texture, "type");
+        textureItem.alternatives = {"resource", "default"};
+        textureItem.properties = {propertyForm(texture, "sampler", true)};
+        if (textureItem.alternative == "resource") {
+          auto value = propertyForm(texture, "value", true);
+          value.selectorValues = imageDependencyIds;
+          textureItem.properties.push_back(std::move(value));
+        }
+        result.push_back(std::move(textureItem));
       }
       continue;
     }
@@ -1518,6 +1898,13 @@ bool ManifestWorkspace::beginDraft(std::string resourceType,
     return false;
   }
   mDraft = ResourceDraft{std::move(resourceNamespace), std::move(resourceType)};
+  auto const* form = resourceForm(mDraft->resourceType);
+  if (form) {
+    for (auto const& dependency : form->requiredDependencies) {
+      mDraft->references.push_back(
+          {dependency.id, dependency.allowedResourceTypes});
+    }
+  }
   validateDraft();
   mOperationDiagnostic.clear();
   return true;
@@ -1552,11 +1939,29 @@ bool ManifestWorkspace::selectDraftFile(fs::path const& selectedFile) {
 
 bool ManifestWorkspace::setDraftReference(std::string resourceNamespace,
                                           std::string name) {
+  if (!mDraft || mDraft->references.empty()) {
+    setFailure("No Resource draft dependency is active.");
+    return false;
+  }
+  return setDraftReference(mDraft->references.front().id,
+                           std::move(resourceNamespace), std::move(name));
+}
+
+bool ManifestWorkspace::setDraftReference(std::string const& dependencyId,
+                                          std::string resourceNamespace,
+                                          std::string name) {
   if (!mDraft) {
     setFailure("No Resource draft is active.");
     return false;
   }
-  auto choices = draftReferenceChoices();
+  auto reference = std::find_if(
+      mDraft->references.begin(), mDraft->references.end(),
+      [&](auto const& item) { return item.id == dependencyId; });
+  if (reference == mDraft->references.end()) {
+    setFailure("The requested dependency is not required by this Resource Type.");
+    return false;
+  }
+  auto choices = draftReferenceChoices(dependencyId);
   auto found = std::find_if(choices.begin(), choices.end(),
                             [&](auto const& choice) {
                               return choice.resourceNamespace == resourceNamespace &&
@@ -1566,8 +1971,10 @@ bool ManifestWorkspace::setDraftReference(std::string resourceNamespace,
     setFailure("The selected Resource is not a compatible dependency.");
     return false;
   }
-  mDraft->dependencyNamespace = std::move(resourceNamespace);
-  mDraft->dependencyName = std::move(name);
+  reference->resourceNamespace = std::move(resourceNamespace);
+  reference->name = std::move(name);
+  mDraft->dependencyNamespace = mDraft->references.front().resourceNamespace;
+  mDraft->dependencyName = mDraft->references.front().name;
   validateDraft();
   mOperationDiagnostic.clear();
   return true;
@@ -1604,16 +2011,21 @@ void ManifestWorkspace::validateDraft() {
     return;
   }
   if (form->composite) {
-    if (mDraft->dependencyName.empty()) {
-      mDraft->validationMessage = "Select the required compatible Image dependency.";
-      return;
-    }
-    auto choices = draftReferenceChoices();
-    if (std::none_of(choices.begin(), choices.end(), [](auto const& choice) {
-          return choice.selected && !choice.disabled;
-        })) {
-      mDraft->validationMessage = "The selected Image dependency is no longer available.";
-      return;
+    for (auto const& reference : mDraft->references) {
+      if (reference.name.empty()) {
+        mDraft->validationMessage =
+            "Select the required compatible " + reference.id + " dependency.";
+        return;
+      }
+      auto choices = draftReferenceChoices(reference.id);
+      if (std::none_of(choices.begin(), choices.end(),
+                       [](auto const& choice) {
+                         return choice.selected && !choice.disabled;
+                       })) {
+        mDraft->validationMessage = "The selected " + reference.id +
+                                    " dependency is no longer available.";
+        return;
+      }
     }
   } else if (mDraft->location.empty()) {
     mDraft->validationMessage = "Select the required source file.";
@@ -1643,19 +2055,32 @@ bool ManifestWorkspace::commitDraft() {
   resource["name"] = mDraft->name;
   auto const* form = resourceForm(mDraft->resourceType);
   if (form && form->composite) {
-    YAML::Node dependency(YAML::NodeType::Map);
-    dependency["id"] = "Image";
-    dependency["ref"] = formatReference(
-        {mDraft->dependencyNamespace, mDraft->dependencyName},
-        mDraft->resourceNamespace);
-    resource["DependentResources"]["DependentResource"] = dependency;
+    std::vector<YAML::Node> dependencies;
+    for (auto const& selected : mDraft->references) {
+      YAML::Node dependency(YAML::NodeType::Map);
+      dependency["id"] = selected.id;
+      dependency["ref"] = formatReference(
+          {selected.resourceNamespace, selected.name}, mDraft->resourceNamespace);
+      dependencies.push_back(std::move(dependency));
+    }
+    setCollection(resource["DependentResources"], "DependentResource",
+                  dependencies);
     YAML::Node definition(YAML::NodeType::Map);
     if (mDraft->resourceType == "ImageSet") {
       definition["Images"]["Image"] =
           defaultNestedItem(NestedCollectionKind::image);
-    } else {
+    } else if (mDraft->resourceType == "AnimationSet") {
       definition["Animations"]["Animation"] =
           defaultNestedItem(NestedCollectionKind::animation);
+    } else if (mDraft->resourceType == "Program") {
+      definition["Attribs"] = YAML::Node(YAML::NodeType::Map);
+      definition["MeshSpecification"]["primitive"] = "TRIANGLES";
+      definition["MeshSpecification"]["indexed"] = false;
+      definition["MeshSpecification"]["storage"] = "STATIC";
+      definition["MeshSpecification"]["Buffers"]["Buffer"] =
+          defaultNestedItem(NestedCollectionKind::buffer);
+    } else {
+      definition["Textures"] = YAML::Node(YAML::NodeType::Map);
     }
     resource["Definitions"]["Definition"] = definition;
   } else {
@@ -2384,6 +2809,247 @@ bool ManifestWorkspace::promoteInlineResource(
   return executeYamlCommand("Promote inline Resource", emitYaml(root));
 }
 
+bool ManifestWorkspace::addResourceDependency(
+    std::string const& ownerNamespace, std::string const& ownerName,
+    std::string dependencyId,
+    std::pair<std::string, std::string> const& target) {
+  if (!validResourceName(dependencyId) || dependencyId == "Program") {
+    setFailure("A Material image dependency ID is required and cannot be 'Program'.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, ownerNamespace);
+  auto targetCollection = findResourceCollection(root, target.first);
+  if (!collection || !targetCollection ||
+      resourceCount(*collection, ownerName) != 1U ||
+      resourceCount(*targetCollection, target.second) != 1U) {
+    setFailure("Dependency owner or target was not found uniquely.");
+    return false;
+  }
+  auto ownerIndex = *findResourceIndex(*collection, ownerName);
+  auto resource = collection->resources[ownerIndex];
+  if (scalar(resource, "type") != "Material") {
+    setFailure("Only Material image dependencies can be added by this form.");
+    return false;
+  }
+  auto targetIndex = *findResourceIndex(*targetCollection, target.second);
+  if (scalar(targetCollection->resources[targetIndex], "type") != "Image") {
+    setFailure("A Material texture dependency must target an Image Resource.");
+    return false;
+  }
+  auto dependencies = standardDependencyItems(resource);
+  if (std::any_of(dependencies.begin(), dependencies.end(),
+                  [&](auto const& dependency) {
+                    return scalar(dependency, "id") == dependencyId;
+                  })) {
+    setFailure("Material dependency IDs must be unique.");
+    return false;
+  }
+  YAML::Node dependency(YAML::NodeType::Map);
+  dependency["id"] = std::move(dependencyId);
+  dependency["ref"] = formatReference({target.first, target.second}, ownerNamespace);
+  dependencies.push_back(std::move(dependency));
+  setCollection(resource["DependentResources"], "DependentResource", dependencies);
+  collection->resources[ownerIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Add Material image dependency", emitYaml(root));
+}
+
+bool ManifestWorkspace::addDefinition(std::string const& resourceNamespace,
+                                      std::string const& name,
+                                      std::string factoryType) {
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Definition Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto const resourceType = scalar(resource, "type");
+  auto const* schemaEntry = mCatalog.findExact({resourceType, factoryType});
+  if (!schemaEntry) {
+    setFailure("Definition factory '" + factoryType +
+               "' is not registered for Resource Type '" + resourceType + "'.");
+    return false;
+  }
+  auto definitions = collectionItems(resource["Definitions"]["Definition"]);
+  if (std::any_of(definitions.begin(), definitions.end(), [&](auto const& item) {
+        return scalar(item, "factory") == factoryType;
+      })) {
+    setFailure("A Resource cannot contain duplicate Definition factories.");
+    return false;
+  }
+
+  YAML::Node definition(YAML::NodeType::Map);
+  if (factoryType.empty()) {
+    if (resourceType == "ImageSet") {
+      definition["Images"]["Image"] = defaultNestedItem(NestedCollectionKind::image);
+    } else if (resourceType == "AnimationSet") {
+      definition["Animations"]["Animation"] =
+          defaultNestedItem(NestedCollectionKind::animation);
+    } else if (resourceType == "Program") {
+      definition["Attribs"] = YAML::Node(YAML::NodeType::Map);
+      definition["MeshSpecification"]["primitive"] = "TRIANGLES";
+      definition["MeshSpecification"]["indexed"] = false;
+      definition["MeshSpecification"]["storage"] = "STATIC";
+      definition["MeshSpecification"]["Buffers"]["Buffer"] =
+          defaultNestedItem(NestedCollectionKind::buffer);
+    } else if (resourceType == "Material") {
+      definition["Textures"] = YAML::Node(YAML::NodeType::Map);
+    } else {
+      setFailure("The selected default Definition has no supported starter form.");
+      return false;
+    }
+  } else {
+    try {
+      auto schema = expandSchema(mCatalog, Json::parse(schemaEntry->contents),
+                                 schemaEntry->schemaId, definition);
+      auto const schemaType = schema.value("type", std::string{});
+      if (!schemaType.empty() && schemaType != "object") {
+        throw std::runtime_error("Definition schema root is not an object");
+      }
+      auto required = schema.value("required", std::vector<std::string>{});
+      auto properties = schema.at("properties");
+      for (auto const& propertyName : required) {
+        auto property = expandSchema(mCatalog, properties.at(propertyName),
+                                     schemaEntry->schemaId,
+                                     definition[propertyName]);
+        if (propertyName == "factory") {
+          definition[propertyName] = factoryType;
+        } else if (property.contains("const")) {
+          auto const& value = property.at("const");
+          if (value.is_string())
+            definition[propertyName] = value.get<std::string>();
+          else if (value.is_boolean())
+            definition[propertyName] = value.get<bool>();
+          else if (value.is_number_integer())
+            definition[propertyName] = value.get<long long>();
+          else if (value.is_number())
+            definition[propertyName] = value.get<double>();
+        } else if (property.contains("enum") && !property.at("enum").empty()) {
+          auto const& value = property.at("enum").front();
+          if (value.is_string())
+            definition[propertyName] = value.get<std::string>();
+          else if (value.is_boolean())
+            definition[propertyName] = value.get<bool>();
+          else if (value.is_number_integer())
+            definition[propertyName] = value.get<long long>();
+          else if (value.is_number())
+            definition[propertyName] = value.get<double>();
+        } else {
+          auto const propertyType = property.value("type", std::string{});
+          if (propertyType == "boolean") definition[propertyName] = false;
+          else if (propertyType == "integer") {
+            auto minimum = property.value("minimum", 0.0);
+            definition[propertyName] = static_cast<long long>(std::ceil(minimum));
+          } else if (propertyType == "number") {
+            auto minimum = property.value("minimum", 0.0);
+            if (property.contains("exclusiveMinimum") &&
+                property.at("exclusiveMinimum").is_number()) {
+              minimum = property.at("exclusiveMinimum").get<double>() + 1.0;
+            }
+            definition[propertyName] = minimum;
+          } else if (propertyType == "string") {
+            definition[propertyName] = "Value";
+          } else if (propertyType == "object") {
+            definition[propertyName] = YAML::Node(YAML::NodeType::Map);
+          } else if (propertyType == "array") {
+            definition[propertyName] = YAML::Node(YAML::NodeType::Sequence);
+          } else {
+            throw std::runtime_error(
+                "required property uses an unsupported authoring construct");
+          }
+        }
+      }
+      definition["factory"] = factoryType;
+    } catch (std::exception const& error) {
+      setFailure("Could not create the selected Definition schema exactly: " +
+                 std::string(error.what()));
+      return false;
+    }
+  }
+  definitions.push_back(std::move(definition));
+  setCollection(resource["Definitions"], "Definition", definitions);
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Add Definition", emitYaml(root));
+}
+
+bool ManifestWorkspace::setNestedAlternative(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& itemPath, std::string alternative) {
+  auto forms = nestedFormItems(resourceNamespace, name);
+  auto form = std::find_if(forms.begin(), forms.end(), [&](auto const& item) {
+    return item.path == itemPath;
+  });
+  if (form == forms.end() ||
+      std::find(form->alternatives.begin(), form->alternatives.end(), alternative) ==
+          form->alternatives.end()) {
+    setFailure("The requested schema alternative is not available.");
+    return false;
+  }
+  if (form->kind == NestedCollectionKind::animation) {
+    return setFramesAlternative(resourceNamespace, name, itemPath + "/Frames",
+                                alternative == "image-set", "ImageSet");
+  }
+  if (form->kind != NestedCollectionKind::texture) {
+    setFailure("The selected schema alternative is read-only.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) return false;
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto parts = pathParts(itemPath);
+  auto texture = nodeAtPath(resource, parts, parts.size());
+  if (!texture || !texture.IsMap()) return false;
+  auto sampler = scalar(texture, "sampler");
+  YAML::Node replacement(YAML::NodeType::Map);
+  replacement["sampler"] = sampler.empty() ? "Texture" : sampler;
+  replacement["type"] = alternative;
+  if (alternative == "resource") {
+    std::string dependencyId;
+    auto declarations = resourceDeclarations(root);
+    for (auto const& dependency : standardDependencyItems(resource)) {
+      auto id = scalar(dependency, "id");
+      if (id.empty() || id == "Program") continue;
+      auto reference = scalar(dependency, "ref");
+      bool compatible = reference.empty()
+                            ? scalar(dependency, "type") == "Image"
+                            : [&] {
+                                auto matches = matchingDeclarations(
+                                    declarations,
+                                    parseReference(reference, resourceNamespace));
+                                return matches.size() == 1U &&
+                                       matches.front().resourceType == "Image";
+                              }();
+      if (compatible) {
+        dependencyId = std::move(id);
+        break;
+      }
+    }
+    if (dependencyId.empty()) {
+      setFailure("A resource texture requires a selected Material image dependency.");
+      return false;
+    }
+    replacement["value"] = dependencyId;
+  }
+  std::size_t itemIndex = 0;
+  if (parts.empty() || !indexPart(parts.back(), itemIndex)) return false;
+  auto collectionPath = itemPath.substr(0, itemPath.rfind('/'));
+  auto target = collectionAtPath(resource, collectionPath);
+  if (!target) return false;
+  auto items = collectionItems(target->first[target->second]);
+  if (itemIndex >= items.size()) return false;
+  items[itemIndex] = replacement;
+  setCollection(target->first, target->second.c_str(), items);
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Change Texture alternative", emitYaml(root));
+}
+
 bool ManifestWorkspace::setNestedProperty(
     std::string const& resourceNamespace, std::string const& name,
     std::string const& itemPath, std::string const& property,
@@ -2407,10 +3073,17 @@ bool ManifestWorkspace::setNestedProperty(
     setFailure("Required property '" + property + "' cannot be removed.");
     return false;
   }
-  if (value && !propertyForm->enumValues.empty() &&
-      std::find(propertyForm->enumValues.begin(), propertyForm->enumValues.end(),
-                *value) == propertyForm->enumValues.end()) {
+  auto const& permittedValues = propertyForm->selectorValues.empty()
+                                    ? propertyForm->enumValues
+                                    : propertyForm->selectorValues;
+  if (value && !permittedValues.empty() &&
+      std::find(permittedValues.begin(), permittedValues.end(), *value) ==
+          permittedValues.end()) {
     setFailure("Property '" + property + "' is not one of the permitted values.");
+    return false;
+  }
+  if (value && propertyForm->boolean && *value != "true" && *value != "false") {
+    setFailure("Property '" + property + "' requires a boolean value.");
     return false;
   }
 
@@ -2441,9 +3114,12 @@ bool ManifestWorkspace::setNestedProperty(
       }
       item[property] = parsed;
     } catch (...) {
-      setFailure("Property '" + property + "' requires an integer within its schema constraints.");
+      setFailure("Property '" + property +
+                 "' requires an integer within its schema constraints.");
       return false;
     }
+  } else if (propertyForm->boolean) {
+    item[property] = *value == "true";
   } else if (propertyForm->number) {
     try {
       std::size_t consumed = 0;
@@ -2457,7 +3133,8 @@ bool ManifestWorkspace::setNestedProperty(
       }
       item[property] = parsed;
     } catch (...) {
-      setFailure("Property '" + property + "' requires a number within its schema constraints.");
+      setFailure("Property '" + property +
+                 "' requires a number within its schema constraints.");
       return false;
     }
   } else {
@@ -2536,6 +3213,11 @@ bool ManifestWorkspace::duplicateNestedItem(
   auto items = collectionItems(target->first[target->second]);
   if (index >= items.size()) {
     setFailure("The nested collection item was not found.");
+    return false;
+  }
+  if (collectionPath.ends_with("/Definitions/Definition") ||
+      collectionPath == "/Definitions/Definition") {
+    setFailure("A Resource cannot contain duplicate Definition factories.");
     return false;
   }
   insertCollectionItem(items, index + 1U, items[index]);
@@ -2954,8 +3636,8 @@ bool runAuthoringTests(std::string* failure) {
     std::ofstream(outside) << "outside";
 
     ManifestWorkspace workspace;
-    if (!workspace.createNew(base) || workspace.resourceForms().size() != 7U) {
-      return fail("The seven built-in authored forms were not available.");
+    if (!workspace.createNew(base) || workspace.resourceForms().size() != 9U) {
+      return fail("The nine built-in authored forms were not available.");
     }
     for (auto const& form : workspace.resourceForms()) {
       if (!form.composite &&
@@ -3911,6 +4593,282 @@ bool runCompositeAuthoringTests(std::string* failure) {
     }
     static_cast<void>(withImageSet);
     static_cast<void>(scalarCanonical);
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runAdvancedAuthoringTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-advanced-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  try {
+    auto base = root / "base";
+    fs::create_directories(base);
+    std::ofstream(base / "vertex.vert") << "vertex";
+    std::ofstream(base / "fragment.frag") << "fragment";
+    std::ofstream(base / "texture.png", std::ios::binary) << "texture";
+
+    ManifestWorkspace workspace;
+    if (!workspace.createNew(base) || workspace.resourceForms().size() != 9U) {
+      return fail("Program and Material catalogued forms were not available.");
+    }
+    auto createFile = [&](std::string const& type, std::string const& name,
+                          fs::path const& path) {
+      if (!workspace.beginDraft(type)) return false;
+      workspace.setDraftName(name);
+      return workspace.selectDraftFile(path) && workspace.commitDraft();
+    };
+    if (!createFile("Shader", "VertexShader", base / "vertex.vert") ||
+        !createFile("Shader", "FragmentShader", base / "fragment.frag") ||
+        !createFile("Image", "TextureImage", base / "texture.png")) {
+      return fail("Could not create Program/Material dependencies.");
+    }
+
+    if (!workspace.beginDraft("Program")) return fail("Could not begin Program draft.");
+    workspace.setDraftName("RenderProgram");
+    if (workspace.draftValid() ||
+        workspace.draftReferenceChoices("Vertex").size() != 2U ||
+        !workspace.setDraftReference("Vertex", {}, "VertexShader") ||
+        workspace.draftValid() ||
+        !workspace.setDraftReference("Fragment", {}, "FragmentShader") ||
+        !workspace.draftValid() || !workspace.commitDraft()) {
+      return fail("A Program draft did not require both typed shader dependencies.");
+    }
+    auto programYaml = workspace.canonicalYaml();
+    if (programYaml.find("id: \"Vertex\"") == std::string::npos ||
+        programYaml.find("id: \"Fragment\"") == std::string::npos ||
+        programYaml.find("MeshSpecification") == std::string::npos) {
+      return fail("Program starter output omitted dependencies or its default Definition.");
+    }
+    auto programItems = workspace.nestedFormItems({}, "RenderProgram");
+    auto attribs = std::find_if(programItems.begin(), programItems.end(), [](auto const& item) {
+      return item.path.ends_with("/Attribs");
+    });
+    auto mesh = std::find_if(programItems.begin(), programItems.end(), [](auto const& item) {
+      return item.path.ends_with("/MeshSpecification");
+    });
+    auto channel = std::find_if(programItems.begin(), programItems.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::channel;
+    });
+    auto buffer = std::find_if(programItems.begin(), programItems.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::buffer;
+    });
+    if (attribs == programItems.end() || mesh == programItems.end() ||
+        channel == programItems.end() || buffer == programItems.end()) {
+      return fail("Program attributes, mesh, buffers, or channels were not rendered.");
+    }
+    auto beforeInvalidProgram = workspace.canonicalYaml();
+    if (workspace.setNestedProperty({}, "RenderProgram", attribs->path,
+                                    "textures", "-1") ||
+        workspace.setNestedProperty({}, "RenderProgram", mesh->path,
+                                    "primitive", "QUADS") ||
+        workspace.setNestedProperty({}, "RenderProgram", mesh->path,
+                                    "indexed", "yes") ||
+        workspace.canonicalYaml() != beforeInvalidProgram) {
+      return fail("Invalid Program numbers, enums, or booleans were accepted.");
+    }
+    if (!workspace.setNestedProperty({}, "RenderProgram", attribs->path,
+                                     "textures", "4") ||
+        !workspace.setNestedProperty({}, "RenderProgram", attribs->path,
+                                     "diffuse", "true") ||
+        !workspace.setNestedProperty({}, "RenderProgram", mesh->path,
+                                     "primitive", "LINES") ||
+        !workspace.setNestedProperty({}, "RenderProgram", channel->path,
+                                     "data", "TEXCOORD2") ||
+        !workspace.setNestedProperty({}, "RenderProgram", channel->path,
+                                     "type", "UINT8") ||
+        !workspace.setNestedProperty({}, "RenderProgram", channel->path,
+                                     "normalised", "true") ||
+        !workspace.addNestedItem({}, "RenderProgram",
+                                 buffer->path + "/Channels/Channel",
+                                 NestedCollectionKind::channel) ||
+        !workspace.addNestedItem({}, "RenderProgram",
+                                 "/Definitions/Definition/0/MeshSpecification/Buffers/Buffer",
+                                 NestedCollectionKind::buffer)) {
+      return fail("Valid Program constrained fields or collections were rejected: " +
+                  workspace.operationDiagnostic());
+    }
+    auto editedProgram = workspace.canonicalYaml();
+    if (!workspace.undo() || workspace.canonicalYaml() == editedProgram ||
+        !workspace.redo() || workspace.canonicalYaml() != editedProgram) {
+      return fail("Program collection history was not reversible.");
+    }
+
+    if (!workspace.beginDraft("Material")) return fail("Could not begin Material draft.");
+    workspace.setDraftName("Surface");
+    auto programChoices = workspace.draftReferenceChoices("Program");
+    if (programChoices.size() != 1U ||
+        !workspace.setDraftReference("Program", {}, "RenderProgram") ||
+        !workspace.commitDraft()) {
+      return fail("Material Program dependency was not selector-backed.");
+    }
+    if (!workspace.addResourceDependency({}, "Surface", "DiffuseImage",
+                                         {{}, "TextureImage"}) ||
+        workspace.addResourceDependency({}, "Surface", "DiffuseImage",
+                                        {{}, "TextureImage"})) {
+      return fail("Material image dependency creation or uniqueness failed.");
+    }
+    auto materialDefinitions = workspace.nestedFormItems({}, "Surface");
+    auto materialDefinition = std::find_if(
+        materialDefinitions.begin(), materialDefinitions.end(), [](auto const& item) {
+          return item.kind == NestedCollectionKind::definition;
+        });
+    if (materialDefinition == materialDefinitions.end() ||
+        !workspace.addNestedItem({}, "Surface",
+                                 materialDefinition->path + "/Textures/Texture",
+                                 NestedCollectionKind::texture)) {
+      return fail("A Material texture could not be added.");
+    }
+    auto textures = workspace.nestedFormItems({}, "Surface");
+    auto texture = std::find_if(textures.begin(), textures.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::texture;
+    });
+    if (texture == textures.end() || texture->alternative != "default" ||
+        !workspace.setNestedAlternative({}, "Surface", texture->path, "resource")) {
+      return fail("Material default/resource texture alternatives were not rendered atomically.");
+    }
+    textures = workspace.nestedFormItems({}, "Surface");
+    texture = std::find_if(textures.begin(), textures.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::texture;
+    });
+    auto value = std::find_if(texture->properties.begin(), texture->properties.end(),
+                              [](auto const& property) { return property.name == "value"; });
+    auto beforeBadTexture = workspace.canonicalYaml();
+    if (value == texture->properties.end() ||
+        value->selectorValues != std::vector<std::string>{"DiffuseImage"} ||
+        workspace.setNestedProperty({}, "Surface", texture->path, "value",
+                                    "MissingId") ||
+        workspace.canonicalYaml() != beforeBadTexture ||
+        !workspace.setNestedProperty({}, "Surface", texture->path, "sampler",
+                                     "Diffuse") ||
+        !workspace.setNestedAlternative({}, "Surface", texture->path, "default") ||
+        workspace.canonicalYaml().find("value: \"DiffuseImage\"") !=
+            std::string::npos) {
+      return fail("Material texture selectors, constraints, or alternative cleanup failed.");
+    }
+
+    auto output = root / "advanced.yaml";
+    if (!workspace.saveAs(output)) return fail("Could not save advanced fixture.");
+
+    auto bundle = ResourceSchemaCatalog::builtIn().snapshot().exportBundle();
+    std::string const specializedSchema = R"({
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.willpower.test/program-post.schema.json",
+  "title": "Program Post Definition",
+  "allOf": [
+    {"$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/definition"},
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factory", "label", "passes", "enabled", "weight", "mode"],
+      "properties": {
+        "factory": {"enum": ["Post"]},
+        "label": {"type": "string", "minLength": 1},
+        "passes": {"type": "integer", "minimum": 1},
+        "enabled": {"type": "boolean"},
+        "weight": {"type": "number", "exclusiveMinimum": 0},
+        "mode": {"enum": ["fast", "quality"]}
+      },
+      "if": {"properties": {"mode": {"const": "quality"}}},
+      "then": {"properties": {"passes": {"type": "integer", "minimum": 2}}}
+    }
+  ]
+})";
+    auto catalogJson = Json::parse(bundle.catalogJson);
+    catalogJson["schemas"].push_back(
+        Json{{"kind", "resourceType"},
+             {"resourceType", "Program"},
+             {"factoryType", "Post"},
+             {"schemaId", "https://schemas.willpower.test/program-post.schema.json"},
+             {"document", "schemas/program-post.schema.json"},
+             {"documentHash", "sha256:f8ceda1e0e77505b64fa2b2e2dca92a449dc010354b7b3d804c84d1ffed4720a"}});
+    bundle.catalogJson = catalogJson.dump(2) + "\n";
+    bundle.documents.push_back(
+        {"schemas/program-post.schema.json", specializedSchema});
+    ResourceSchemaCatalog specializedCatalog(bundle);
+    ManifestWorkspace specialized(specializedCatalog.snapshot());
+    if (!specialized.open(output)) {
+      return fail("A catalog with a specialized Program factory could not open the fixture: " +
+                  specialized.operationDiagnostic());
+    }
+    auto factories = specialized.definitionFactories({}, "RenderProgram");
+    if (factories.size() != 2U ||
+        std::none_of(factories.begin(), factories.end(), [](auto const& factory) {
+          return factory.factoryType == "Post" && !factory.disabled;
+        }) ||
+        specialized.definitionFactories({}, "Surface").size() != 1U ||
+        specialized.addDefinition({}, "Surface", "Post") ||
+        !specialized.addDefinition({}, "RenderProgram", "Post") ||
+        specialized.addDefinition({}, "RenderProgram", "Post")) {
+      return fail("Definition factories were not filtered by type or kept unique.");
+    }
+    auto specializedItems = specialized.nestedFormItems({}, "RenderProgram");
+    auto post = std::find_if(specializedItems.begin(), specializedItems.end(),
+                             [](auto const& item) {
+                               return item.label == "Definition: Post";
+                             });
+    if (post == specializedItems.end() || post->properties.size() != 6U) {
+      return fail("The exact specialized Definition schema was not rendered.");
+    }
+    if (!specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "passes", "1")) {
+      return fail("A valid specialized conditional baseline was rejected.");
+    }
+    auto beforeInvalidSpecialized = specialized.canonicalYaml();
+    if (specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                      "passes", "0") ||
+        specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                      "weight", "0") ||
+        specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                      "mode", "invalid") ||
+        specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                      "mode", "quality") ||
+        specialized.canonicalYaml() != beforeInvalidSpecialized ||
+        !specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "label", "Bloom") ||
+        !specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "passes", "2") ||
+        !specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "enabled", "true") ||
+        !specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "weight", "0.5") ||
+        !specialized.setNestedProperty({}, "RenderProgram", post->path,
+                                       "mode", "quality")) {
+      return fail("Specialized Definition constraints were not enforced.");
+    }
+    auto authoredSpecialized = specialized.canonicalYaml();
+    if (specialized.removeNestedItem({}, "RenderProgram",
+                                     "/Definitions/Definition/0") ||
+        !specialized.removeNestedItem({}, "RenderProgram", post->path) ||
+        !specialized.undo() || specialized.canonicalYaml() != authoredSpecialized ||
+        !specialized.redo()) {
+      return fail("Definition deletion validity or history was incorrect.");
+    }
+    auto finalOutput = root / "specialized.yaml";
+    if (!specialized.saveAs(finalOutput)) {
+      return fail("Could not save canonical specialized output.");
+    }
+    auto saved = ResourceManifestDocument::load(finalOutput);
+    if (!saved.validate(specializedCatalog.snapshot()).valid() ||
+        saved.serializeCanonical() != specialized.canonicalYaml() ||
+        readBytes(finalOutput) != specialized.canonicalYaml()) {
+      return fail("Advanced canonical output was invalid or unstable.");
+    }
     return true;
   } catch (std::exception const& exception) {
     return fail(exception.what());

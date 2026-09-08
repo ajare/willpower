@@ -26,6 +26,11 @@ struct ResourceOptionForm {
 // Library-neutral metadata extracted from one catalogued Resource Type schema.
 // File controls are intentionally described by schema annotations rather than
 // by Resource Type names in the UI.
+struct ResourceDependencyForm {
+  std::string id;
+  std::vector<std::string> allowedResourceTypes;
+};
+
 struct ResourceForm {
   std::string resourceType;
   std::string title;
@@ -33,6 +38,7 @@ struct ResourceForm {
   std::string fileKind;
   std::vector<std::string> fileExtensions;
   std::vector<ResourceOptionForm> options;
+  std::vector<ResourceDependencyForm> requiredDependencies;
   bool composite = false;
 };
 
@@ -43,7 +49,11 @@ enum class NestedCollectionKind {
   animation,
   frame,
   overrideFrame,
-  tag
+  tag,
+  buffer,
+  channel,
+  texture,
+  object
 };
 
 struct NestedPropertyForm {
@@ -52,11 +62,15 @@ struct NestedPropertyForm {
   bool required = false;
   bool integer = false;
   bool number = false;
+  bool boolean = false;
   bool optional = false;
   double minimum = 0.0;
   bool hasMinimum = false;
   bool exclusiveMinimum = false;
   std::vector<std::string> enumValues;
+  // A selector is used instead of free text when values are constrained by
+  // the current Resource (for example a Material image dependency ID).
+  std::vector<std::string> selectorValues;
 };
 
 // Paths are Resource-relative JSON instance paths. Collection values are
@@ -67,6 +81,14 @@ struct NestedFormItem {
   std::string label;
   std::vector<NestedPropertyForm> properties;
   std::string alternative;
+  std::vector<std::string> alternatives;
+};
+
+struct DefinitionFactoryChoice {
+  std::string factoryType;
+  std::string title;
+  bool selected = false;
+  bool disabled = false;
 };
 
 struct DiagnosticNavigation {
@@ -135,19 +157,30 @@ struct NamespaceDraft {
   std::string validationMessage;
 };
 
+struct ResourceDraftReference {
+  std::string id;
+  std::vector<std::string> allowedResourceTypes;
+  std::string resourceNamespace;
+  std::string name;
+};
+
 struct ResourceDraft {
   std::string resourceNamespace;
   std::string resourceType;
   std::string name;
   std::string location;
+  // Retained for source compatibility with the first required dependency.
   std::string dependencyNamespace;
   std::string dependencyName;
+  std::vector<ResourceDraftReference> references;
   std::string validationMessage;
 };
 
 class ManifestWorkspace {
  public:
   ManifestWorkspace();
+  explicit ManifestWorkspace(
+      wp::application::resourcesystem::ResourceSchemaCatalogSnapshot catalog);
 
   bool createNew(std::filesystem::path const& baseDirectory);
   bool open(std::filesystem::path const& manifestPath);
@@ -177,7 +210,10 @@ class ManifestWorkspace {
   [[nodiscard]] std::vector<DependencyDiagnostic> dependencyDiagnostics() const;
   [[nodiscard]] std::vector<std::string> incomingReferences(
       std::string const& resourceNamespace, std::string const& name) const;
-  [[nodiscard]] std::vector<ResourceReferenceChoice> draftReferenceChoices() const;
+  [[nodiscard]] std::vector<ResourceReferenceChoice> draftReferenceChoices(
+      std::string const& dependencyId = {}) const;
+  [[nodiscard]] std::vector<DefinitionFactoryChoice> definitionFactories(
+      std::string const& resourceNamespace, std::string const& name) const;
   [[nodiscard]] std::vector<NestedFormItem> nestedFormItems(
       std::string const& resourceNamespace, std::string const& name) const;
   [[nodiscard]] std::optional<DiagnosticNavigation> diagnosticNavigation(
@@ -198,6 +234,8 @@ class ManifestWorkspace {
   void setDraftName(std::string name);
   bool selectDraftFile(std::filesystem::path const& selectedFile);
   bool setDraftReference(std::string resourceNamespace, std::string name);
+  bool setDraftReference(std::string const& dependencyId,
+                         std::string resourceNamespace, std::string name);
   [[nodiscard]] ResourceDraft const* draft() const noexcept;
   [[nodiscard]] bool draftValid() const noexcept;
   bool commitDraft();
@@ -249,6 +287,16 @@ class ManifestWorkspace {
                              std::string const& ownerName,
                              std::size_t dependencyIndex,
                              std::string const& targetNamespace);
+  bool addResourceDependency(
+      std::string const& ownerNamespace, std::string const& ownerName,
+      std::string dependencyId,
+      std::pair<std::string, std::string> const& target);
+  bool addDefinition(std::string const& resourceNamespace,
+                     std::string const& name, std::string factoryType);
+  bool setNestedAlternative(std::string const& resourceNamespace,
+                            std::string const& name,
+                            std::string const& itemPath,
+                            std::string alternative);
   bool setNestedProperty(std::string const& resourceNamespace,
                          std::string const& name,
                          std::string const& itemPath,
@@ -315,5 +363,6 @@ bool runAuthoringTests(std::string* failure);
 bool runOrganizationTests(std::string* failure);
 bool runDependencyAuthoringTests(std::string* failure);
 bool runCompositeAuthoringTests(std::string* failure);
+bool runAdvancedAuthoringTests(std::string* failure);
 
 }  // namespace resource_manager

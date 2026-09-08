@@ -91,6 +91,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --organization-tests\n"
             "  resource-manager --dependency-tests\n"
             "  resource-manager --composite-tests\n"
+            "  resource-manager --advanced-tests\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -546,6 +547,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   static std::array<char, 256> draftNameBuffer{};
   static std::array<char, 256> namespaceDraftNameBuffer{};
   static std::map<std::string, std::array<char, 256>> nestedBuffers;
+  static std::array<char, 256> materialDependencyIdBuffer{};
   static std::string selectedNestedPath;
   auto setBuffer = [](auto& buffer, std::string const& value) {
     buffer.fill('\0');
@@ -852,23 +854,28 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         workspace.setDraftName(draftNameBuffer.data());
       auto const* draftForm = workspace.resourceForm(draft->resourceType);
       if (draftForm && draftForm->composite) {
-        auto choices = workspace.draftReferenceChoices();
-        std::string preview = draft->dependencyName.empty()
-                                  ? "Select compatible Resource"
-                                  : (draft->dependencyNamespace.empty()
-                                         ? draft->dependencyName
-                                         : draft->dependencyNamespace + "/" +
-                                               draft->dependencyName);
-        if (ImGui::BeginCombo("Image dependency", preview.c_str())) {
-          for (auto const& choice : choices) {
-            ImGui::BeginDisabled(choice.disabled);
-            if (ImGui::Selectable(choice.qualifiedIdentity.c_str(),
-                                  choice.selected)) {
-              workspace.setDraftReference(choice.resourceNamespace, choice.name);
+        for (auto const& reference : draft->references) {
+          auto choices = workspace.draftReferenceChoices(reference.id);
+          std::string preview = reference.name.empty()
+                                    ? "Select compatible Resource"
+                                    : (reference.resourceNamespace.empty()
+                                           ? reference.name
+                                           : reference.resourceNamespace + "/" +
+                                                 reference.name);
+          auto label = reference.id + " dependency";
+          if (ImGui::BeginCombo(label.c_str(), preview.c_str())) {
+            for (auto const& choice : choices) {
+              ImGui::BeginDisabled(choice.disabled);
+              if (ImGui::Selectable(choice.qualifiedIdentity.c_str(),
+                                    choice.selected)) {
+                workspace.setDraftReference(reference.id,
+                                            choice.resourceNamespace,
+                                            choice.name);
+              }
+              ImGui::EndDisabled();
             }
-            ImGui::EndDisabled();
+            ImGui::EndCombo();
           }
-          ImGui::EndCombo();
         }
         ImGui::TextDisabled(
             "A valid starter Definition is created and can be extended after creation.");
@@ -1114,6 +1121,27 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         } else if (selectedForm && selectedForm->composite) {
           ImGui::Separator();
           ImGui::TextUnformatted("Definition");
+          auto factoryChoices = workspace.definitionFactories(
+              selected->resourceNamespace, selected->name);
+          auto availableFactory = std::find_if(
+              factoryChoices.begin(), factoryChoices.end(),
+              [](auto const& choice) { return !choice.disabled; });
+          if (availableFactory != factoryChoices.end() &&
+              ImGui::BeginCombo("Add Definition", "Select factory")) {
+            for (auto const& choice : factoryChoices) {
+              ImGui::BeginDisabled(choice.disabled);
+              auto label = choice.factoryType.empty()
+                               ? std::string("Default")
+                               : choice.factoryType;
+              label += " [" + choice.title + "]";
+              if (ImGui::Selectable(label.c_str(), false)) {
+                workspace.addDefinition(selected->resourceNamespace,
+                                        selected->name, choice.factoryType);
+              }
+              ImGui::EndDisabled();
+            }
+            ImGui::EndCombo();
+          }
           auto nestedItems = workspace.nestedFormItems(
               selected->resourceNamespace, selected->name);
           for (auto const& item : nestedItems) {
@@ -1137,6 +1165,18 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                   }
                   ImGui::EndCombo();
                 }
+              } else if (!item.alternatives.empty()) {
+                if (ImGui::BeginCombo("Alternative", item.alternative.c_str())) {
+                  for (auto const& alternative : item.alternatives) {
+                    if (ImGui::Selectable(alternative.c_str(),
+                                          alternative == item.alternative)) {
+                      workspace.setNestedAlternative(
+                          selected->resourceNamespace, selected->name,
+                          item.path, alternative);
+                    }
+                  }
+                  ImGui::EndCombo();
+                }
               }
               for (auto const& property : item.properties) {
                 auto propertyPath = item.path + "/" + property.name;
@@ -1155,7 +1195,8 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                 auto [buffer, inserted] = nestedBuffers.try_emplace(key);
                 if (inserted || !ImGui::IsAnyItemActive())
                   setBuffer(buffer->second, property.value);
-                if (!property.enumValues.empty()) {
+                if (!property.enumValues.empty() ||
+                    !property.selectorValues.empty() || property.boolean) {
                   auto const* preview = property.value.empty()
                                             ? "Not set"
                                             : property.value.c_str();
@@ -1166,7 +1207,11 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                           selected->resourceNamespace, selected->name, item.path,
                           property.name, {});
                     }
-                    for (auto const& value : property.enumValues) {
+                    auto choices = property.selectorValues.empty()
+                                       ? property.enumValues
+                                       : property.selectorValues;
+                    if (property.boolean) choices = {"true", "false"};
+                    for (auto const& value : choices) {
                       if (ImGui::Selectable(value.c_str(),
                                             value == property.value)) {
                         workspace.setNestedProperty(
@@ -1231,7 +1276,8 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                                               index + 1U);
                 }
               }
-              if (item.kind == resource_manager::NestedCollectionKind::definition) {
+              if (item.kind == resource_manager::NestedCollectionKind::definition &&
+                  item.label == "Default Definition") {
                 auto base = item.path;
                 if (selected->resourceType == "ImageSet") {
                   if (ImGui::SmallButton("Add image"))
@@ -1245,11 +1291,26 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                         selected->resourceNamespace, selected->name,
                         base + "/Images/ImageSet",
                         resource_manager::NestedCollectionKind::imageSet);
-                } else if (ImGui::SmallButton("Add animation")) {
+                } else if (selected->resourceType == "AnimationSet") {
+                  if (ImGui::SmallButton("Add animation")) {
+                    workspace.addNestedItem(
+                        selected->resourceNamespace, selected->name,
+                        base + "/Animations/Animation",
+                        resource_manager::NestedCollectionKind::animation);
+                  }
+                } else if (selected->resourceType == "Program") {
+                  if (ImGui::SmallButton("Add buffer")) {
+                    workspace.addNestedItem(
+                        selected->resourceNamespace, selected->name,
+                        base + "/MeshSpecification/Buffers/Buffer",
+                        resource_manager::NestedCollectionKind::buffer);
+                  }
+                } else if (selected->resourceType == "Material" &&
+                           ImGui::SmallButton("Add texture")) {
                   workspace.addNestedItem(
                       selected->resourceNamespace, selected->name,
-                      base + "/Animations/Animation",
-                      resource_manager::NestedCollectionKind::animation);
+                      base + "/Textures/Texture",
+                      resource_manager::NestedCollectionKind::texture);
                 }
               } else if (item.kind == resource_manager::NestedCollectionKind::animation) {
                 if (ImGui::SmallButton(item.alternative == "image-set"
@@ -1261,6 +1322,13 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                       item.alternative == "image-set"
                           ? resource_manager::NestedCollectionKind::overrideFrame
                           : resource_manager::NestedCollectionKind::frame);
+                }
+              } else if (item.kind == resource_manager::NestedCollectionKind::buffer) {
+                if (ImGui::SmallButton("Add channel")) {
+                  workspace.addNestedItem(
+                      selected->resourceNamespace, selected->name,
+                      item.path + "/Channels/Channel",
+                      resource_manager::NestedCollectionKind::channel);
                 }
               } else if ((item.kind == resource_manager::NestedCollectionKind::frame ||
                           item.kind == resource_manager::NestedCollectionKind::overrideFrame) &&
@@ -1313,6 +1381,33 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                 ImGui::EndCombo();
               }
             }
+          }
+        }
+        if (selected->resourceType == "Material") {
+          if (materialDependencyIdBuffer[0] == '\0')
+            setBuffer(materialDependencyIdBuffer, "TextureImage");
+          ImGui::Separator();
+          ImGui::TextUnformatted("Add image dependency");
+          ImGui::InputText("Dependency ID", materialDependencyIdBuffer.data(),
+                           materialDependencyIdBuffer.size());
+          if (ImGui::BeginCombo("Image Resource", "Select Image")) {
+            for (auto const& candidate : resources) {
+              if (candidate.resourceType != "Image" ||
+                  (candidate.resourceNamespace == selected->resourceNamespace &&
+                   candidate.name == selected->name)) {
+                continue;
+              }
+              auto label = candidate.resourceNamespace.empty()
+                               ? candidate.name
+                               : candidate.resourceNamespace + "/" + candidate.name;
+              if (ImGui::Selectable(label.c_str())) {
+                workspace.addResourceDependency(
+                    selected->resourceNamespace, selected->name,
+                    materialDependencyIdBuffer.data(),
+                    {candidate.resourceNamespace, candidate.name});
+              }
+            }
+            ImGui::EndCombo();
           }
         }
         auto referenceSelectors = workspace.resourceReferences(
@@ -1757,6 +1852,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor composite tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--advanced-tests") {
+      std::string failure;
+      if (!resource_manager::runAdvancedAuthoringTests(&failure)) {
+        std::cerr << "Resource Manifest Editor advanced authoring tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor advanced authoring tests passed.\n";
       return success;
     }
 
