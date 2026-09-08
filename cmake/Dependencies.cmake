@@ -3,6 +3,10 @@ include(ExternalProject)
 include(FetchContent)
 
 find_package(OpenGL REQUIRED)
+# OpenGL::GL is configuration-less on Windows. The project-wide Shipping to
+# Release fallback otherwise makes CMake discard it instead of using its
+# generic import library.
+set_property(TARGET OpenGL::GL PROPERTY MAP_IMPORTED_CONFIG_SHIPPING "")
 
 # Fetch once in the top-level build, then hand the pinned header-only source to
 # Utils' independent build. Utils has the same pinned fallback for standalone
@@ -154,6 +158,7 @@ function(willpower_import_mpp_static target stem)
     if(WIN32)
         set_target_properties(${target} PROPERTIES
             IMPORTED_CONFIGURATIONS "Debug;Release;Shipping;MemCheck"
+            MAP_IMPORTED_CONFIG_SHIPPING "Shipping;Release"
             IMPORTED_LOCATION_RELEASE "${_mpp_lib}/Release/${stem}.lib"
             IMPORTED_LOCATION_SHIPPING "${_mpp_lib}/Shipping/${stem}.lib"
             IMPORTED_LOCATION_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
