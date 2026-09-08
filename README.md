@@ -264,10 +264,18 @@ namespaces, Resource reordering and drag moves, protected bulk deletion, and tra
 standard dependency-reference rewrites. Standard dependency selectors filter compatible
 qualified targets, prevent cycles, preserve missing legacy selections, and diagnose
 incoming references. Owned inline Resources appear beneath their owner for editing or
-one-command promotion and are never offered as new shared targets. The normal build and
-install include the required deployment INI and runtime dependencies. See the
+one-command promotion and are never offered as new shared targets. The deployment INI
+can select a complete application Resource Schema Bundle plus ordered extensions;
+relative paths use the INI directory and embedded built-ins are used only when no base
+is configured. Supported application forms are authored entirely from trusted bundle
+data, while unknown or unsupported payloads are preserved with explicit read-only
+warnings. `--verify-schemas` validates this configuration headlessly, and the Schemas
+menu reloads it atomically without replacing a working catalog on failure. The editor
+loads no application code, plugins, or network schemas. The normal build and install
+include the required deployment INI and runtime dependencies. See the
 [Resource Manifest Editor desktop shell guide](docs/resource-manifest-editor.md) for
-startup logging and status codes, document commands, deployment, and smoke tests.
+startup logging and status codes, document commands, schema annotations, deployment,
+and smoke tests.
 
 For schemas unavailable when an application bundle is generated, the tool and
 `ResourceSchemaCatalog::addPlugin()` optionally accept exact, explicitly supplied native
@@ -366,9 +374,10 @@ The repository's [VS Code settings](.vscode/settings.json) show how to associate
 `**/Resources.yaml` and `**/Resources.yml` with an exported application root when the
 Red Hat YAML extension (or another setting-compatible YAML language server) is
 installed. Generate `build/editor-resource-schemas/resource-manifest.schema.json` with
-an application exporter first. The Resource Manifest Editor should consume the whole
-application bundle starting at `catalog.json`, rather than assuming the built-in root
-contains application Resource Types. Editor support adds no production dependency.
+an application exporter first. Configure the Resource Manifest Editor's `baseBundle`
+to consume the whole application bundle starting at `catalog.json`, rather than
+assuming the built-in root contains application Resource Types. Editor support adds no
+production dependency.
 
 ## Tests
 

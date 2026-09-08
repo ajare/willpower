@@ -104,7 +104,16 @@
         { "$ref": "https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/dependentResource" },
         {
           "required": ["id"],
-          "properties": { "id": { "enum": ["Program"] } }
+          "properties": {
+            "id": { "enum": ["Program"] },
+            "ref": {
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-widget": "resource-reference",
+              "x-willpower-allowed-resource-types": ["Program"],
+              "x-willpower-reference-scope": "manifest"
+            }
+          }
         }
       ]
     },

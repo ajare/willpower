@@ -11,13 +11,28 @@ stages the INI and runtime libraries beside the executable, and `cmake --install
 installs the executable, INI, and runtime dependencies. An alternate INI can be selected
 with `--ini FILE`.
 
-The deployment file must contain:
+The deployment file must contain `formatVersion=1`. It may select one complete
+application Resource Schema Bundle and repeat `bundle` for ordered extensions:
 
 ```ini
 [ResourceManifestEditor]
 formatVersion=1
+baseBundle=../share/example/resource-schema-bundle
+bundle=../share/vendor-a/resource-schema-extension
+bundle=../share/vendor-b/resource-schema-extension
 ```
 
+Paths are resolved relative to the INI location, so installed configurations remain
+relocatable. If `baseBundle` is absent, and only then, the embedded Willpower catalog is
+the base. Each `bundle` is merged in declaration order. A duplicate Resource
+Type/factory lookup key is an error even when its schema bytes are identical. The editor
+loads bundle directories only: it never loads Resource Type Plugins, application
+libraries, factories, or network references.
+
+The complete candidate must contain exactly one manifest schema and pass bundle
+metadata, version, path, hash, schema-ID, collision, closed-reference, and
+[editor-annotation](specifications/resource-schema-editor-annotations.md) checks. The
+built-in `resource-manager.ini` omits `baseBundle` and therefore uses embedded built-ins.
 An optional `[mpp]` section uses the rendering settings accepted by MassivePolyPusher.
 The installed INI supplies conservative defaults.
 
@@ -157,6 +172,27 @@ a Definition is previewed against uniqueness and whole-manifest validity, so a r
 default Definition cannot be removed while a removable specialized Definition can.
 Unsupported schema authoring shapes remain read-only rather than being guessed.
 
+## Application schemas, unknown declarations, and reload
+
+A catalogued application Resource Type using the supported generic form subset can be
+created and edited entirely from bundle data. The subset is a common Resource
+declaration with an explicit name, at most one annotated file property, annotated
+standard dependencies, and an optional default Definition that is a closed flat object
+of string, enum, boolean, integer, or number properties and their basic bounds/defaults.
+Catalogued specialized Definition schemas continue to use the scalar Definition form
+subset. Valid schemas outside this authoring subset remain visible and are preserved,
+but their type-specific payload is read-only with an explicit unsupported-form warning.
+
+A Resource Type with no default editing schema remains openable under common Resource
+validation. Rename, move, reorder, reference-safe delete, and canonical round-trip
+preserve its payload. Unknown Definition payloads are read-only, and the inspector warns
+that unannotated custom data cannot be dependency-checked or rewritten.
+
+**Schemas > Reload configuration and bundles** rereads the deployment INI and all bundle
+bytes into an isolated candidate. Publication occurs only after annotation/form loading
+and validation of the open Resource Manifest. Any failure retains the previous catalog,
+forms, document, and history and reports the reason in Diagnostics and the log.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -169,6 +205,8 @@ resource-manager --organization-tests
 resource-manager --dependency-tests
 resource-manager --composite-tests
 resource-manager --advanced-tests
+resource-manager --schema-tests
+resource-manager --verify-schemas --ini /installed/bin/resource-manager.ini
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
@@ -186,8 +224,13 @@ dependency selectors, rejected edits and transitions, diagnostics, canonical out
 and undo/redo. `--advanced-tests` covers valid and invalid Program and Material forms,
 shader/Program/Image selectors, buffers, channels, texture alternatives, default and
 specialized Definition factories, factory uniqueness, deletion validity, canonical
-output, and history. `--smoke-test` executes New, Save, and Open in a temporary
-directory, initializes the real SDL3/ImGui/OpenGL stack,
+output, and history. `--schema-tests` covers complete and extension bundles, relative
+ordered configuration, embedded fallback, duplicate keys, malformed annotations,
+application-owned and unsupported forms, unknown payload preservation, and failed and
+successful atomic reload. `--verify-schemas` checks deployment configuration and all
+bundle/catalog/annotation contracts without initializing SDL video and returns `3` for
+a configuration or bundle failure. `--smoke-test` executes schema reload, New, Save,
+and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.
 CTest registers all headless workflow suites, startup, and GUI smoke coverage. The GUI smoke test

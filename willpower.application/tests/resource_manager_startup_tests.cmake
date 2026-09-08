@@ -27,6 +27,16 @@ run_startup(0 "${WORK_DIR}/preferences" "${INI}" valid_stdout valid_stderr)
 if(NOT valid_stdout MATCHES "startup check passed")
   message(FATAL_ERROR "Successful startup check was not reported: ${valid_stdout}")
 endif()
+execute_process(
+  COMMAND "${TOOL}" --verify-schemas --ini "${INI}"
+  RESULT_VARIABLE verify_result
+  OUTPUT_VARIABLE verify_stdout
+  ERROR_VARIABLE verify_stderr)
+if(NOT verify_result EQUAL 0 OR NOT verify_stdout MATCHES "Verified Resource Schema")
+  message(FATAL_ERROR
+    "Headless schema verification failed (${verify_result})\n"
+    "stdout: ${verify_stdout}\nstderr: ${verify_stderr}")
+endif()
 if(NOT EXISTS "${WORK_DIR}/preferences/resource-manager.log" OR
    NOT EXISTS "${WORK_DIR}/preferences/resource-manager.log.1")
   message(FATAL_ERROR "Preference-directory log was not created and rotated")
@@ -48,6 +58,16 @@ run_startup(3 "${WORK_DIR}/preferences" "${WORK_DIR}/invalid.ini"
   invalid_stdout invalid_stderr)
 if(NOT invalid_stderr MATCHES "formatVersion")
   message(FATAL_ERROR "Invalid deployment INI diagnostic was incomplete: ${invalid_stderr}")
+endif()
+execute_process(
+  COMMAND "${TOOL}" --verify-schemas --ini "${WORK_DIR}/invalid.ini"
+  RESULT_VARIABLE invalid_verify_result
+  ERROR_VARIABLE invalid_verify_stderr)
+if(NOT invalid_verify_result EQUAL 3 OR
+   NOT invalid_verify_stderr MATCHES "schema configuration failure")
+  message(FATAL_ERROR
+    "Malformed schema configuration did not fail headlessly with status 3: "
+    "${invalid_verify_result}; ${invalid_verify_stderr}")
 endif()
 
 file(WRITE "${WORK_DIR}/not-a-directory" "blocking preference path")

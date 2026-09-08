@@ -812,109 +812,358 @@ bool containedBy(fs::path const& base, fs::path const& target) {
   return true;
 }
 
+constexpr char editorVersionKeyword[] = "x-willpower-editor-version";
+constexpr char widgetKeyword[] = "x-willpower-widget";
+constexpr char allowedTypesKeyword[] = "x-willpower-allowed-resource-types";
+constexpr char referenceScopeKeyword[] = "x-willpower-reference-scope";
+
+bool validFileExtension(std::string const& extension) {
+  return !extension.empty() && extension.front() != '.' &&
+         extension.find_first_of(";*\\/") == std::string::npos;
+}
+
+void validateAnnotations(Json const& value, std::string const& context) {
+  if (value.is_object()) {
+    std::set<std::string> annotationKeys;
+    for (auto const& [name, child] : value.items()) {
+      if (name.starts_with("x-willpower-")) annotationKeys.insert(name);
+      validateAnnotations(child, context + "/" + name);
+    }
+    if (annotationKeys.empty()) return;
+    if (!value.contains(editorVersionKeyword) ||
+        !value.at(editorVersionKeyword).is_string() ||
+        value.at(editorVersionKeyword) != "1.0" ||
+        !value.contains(widgetKeyword) ||
+        !value.at(widgetKeyword).is_string()) {
+      throw std::runtime_error(
+          context + ": editor annotations require version '1.0' and a widget.");
+    }
+    auto const widget = value.at(widgetKeyword).get<std::string>();
+    std::set<std::string> expected{std::string(editorVersionKeyword),
+                                   std::string(widgetKeyword)};
+    if (widget == "file") {
+      expected.insert("x-willpower-file-kind");
+      expected.insert("x-willpower-file-extensions");
+      if (!value.contains("x-willpower-file-kind") ||
+          !value.at("x-willpower-file-kind").is_string() ||
+          value.at("x-willpower-file-kind")
+              .get_ref<std::string const&>()
+              .empty() ||
+          !value.contains("x-willpower-file-extensions") ||
+          !value.at("x-willpower-file-extensions").is_array()) {
+        throw std::runtime_error(context +
+                                 ": malformed file widget annotation.");
+      }
+      auto const extensions = value.at("x-willpower-file-extensions")
+                                  .get<std::vector<std::string>>();
+      if (extensions.empty() ||
+          std::any_of(extensions.begin(), extensions.end(),
+                      [](auto const& extension) {
+                        return !validFileExtension(extension);
+                      })) {
+        throw std::runtime_error(context + ": invalid file filter extensions.");
+      }
+    } else if (widget == "resource-reference") {
+      expected.insert(std::string(allowedTypesKeyword));
+      expected.insert(std::string(referenceScopeKeyword));
+      if (!value.contains(allowedTypesKeyword) ||
+          !value.at(allowedTypesKeyword).is_array() ||
+          value.at(allowedTypesKeyword).empty() ||
+          !value.contains(referenceScopeKeyword) ||
+          value.at(referenceScopeKeyword) != "manifest") {
+        throw std::runtime_error(
+            context + ": malformed Resource-reference widget annotation.");
+      }
+      std::set<std::string> types;
+      for (auto const& type : value.at(allowedTypesKeyword)) {
+        if (!type.is_string() || type.get_ref<std::string const&>().empty() ||
+            !types.insert(type.get<std::string>()).second) {
+          throw std::runtime_error(
+              context +
+              ": allowed Resource Types must be unique non-empty strings.");
+        }
+      }
+    } else {
+      throw std::runtime_error(context + ": unsupported editor widget '" +
+                               widget + "'.");
+    }
+    if (annotationKeys != expected) {
+      throw std::runtime_error(
+          context + ": incomplete or unknown editor annotation keyword.");
+    }
+  } else if (value.is_array()) {
+    for (std::size_t index = 0; index < value.size(); ++index) {
+      validateAnnotations(value[index], context + "/" + std::to_string(index));
+    }
+  }
+}
+
+void collectAnnotatedDependencies(
+    Json const& value, std::vector<ResourceDependencyForm>& result);
+
+void validateEditorCatalog(ResourceSchemaCatalogSnapshot const& catalog) {
+  std::size_t manifests = 0;
+  for (auto const& entry : catalog.entries()) {
+    if (entry.kind == ResourceSchemaKind::manifest) ++manifests;
+    auto document = Json::parse(entry.contents);
+    validateAnnotations(document, "Schema '" + entry.schemaId + "'");
+    std::vector<ResourceDependencyForm> annotatedDependencies;
+    collectAnnotatedDependencies(document, annotatedDependencies);
+  }
+  if (manifests != 1U) {
+    throw std::runtime_error(
+        "An editor Resource Schema Catalog must contain "
+        "exactly one manifest schema.");
+  }
+}
+
+void collectAnnotatedDependencies(Json const& value,
+                                  std::vector<ResourceDependencyForm>& result) {
+  if (value.is_object()) {
+    if (value.contains("properties") && value.at("properties").is_object()) {
+      auto const& properties = value.at("properties");
+      bool const annotatedReference =
+          properties.contains("ref") && properties.at("ref").is_object() &&
+          properties.at("ref").value(std::string(widgetKeyword),
+                                     std::string{}) == "resource-reference";
+      bool const identifiesDependency =
+          properties.contains("id") && properties.at("id").is_object() &&
+          properties.at("id").contains("enum") &&
+          properties.at("id").at("enum").is_array() &&
+          properties.at("id").at("enum").size() == 1U &&
+          properties.at("id").at("enum").front().is_string();
+      if (annotatedReference && !identifiesDependency) {
+        throw std::runtime_error(
+            "A Resource-reference annotation must be paired with a single "
+            "dependency id enum.");
+      }
+      if (annotatedReference) {
+        ResourceDependencyForm dependency;
+        dependency.id =
+            properties.at("id").at("enum").front().get<std::string>();
+        dependency.allowedResourceTypes = properties.at("ref")
+                                              .at(allowedTypesKeyword)
+                                              .get<std::vector<std::string>>();
+        auto found = std::find_if(
+            result.begin(), result.end(),
+            [&](auto const& item) { return item.id == dependency.id; });
+        if (found == result.end()) {
+          result.push_back(std::move(dependency));
+        } else if (found->allowedResourceTypes !=
+                   dependency.allowedResourceTypes) {
+          throw std::runtime_error(
+              "conflicting Resource-reference annotations for dependency '" +
+              dependency.id + "'.");
+        }
+      }
+    }
+    for (auto const& [name, child] : value.items()) {
+      static_cast<void>(name);
+      collectAnnotatedDependencies(child, result);
+    }
+  } else if (value.is_array()) {
+    for (auto const& child : value) collectAnnotatedDependencies(child, result);
+  }
+}
+
+Json defaultDefinitionSchema(ResourceSchemaCatalogSnapshot const& catalog,
+                             ResourceSchema const& entry) {
+  auto schema = Json::parse(entry.contents);
+  auto definition = schema.at("definitions").at("defaultDefinition");
+  return expandSchema(catalog, std::move(definition), entry.schemaId,
+                      YAML::Node(YAML::NodeType::Map));
+}
+
+bool supportedScalarSchema(Json const& schema) {
+  if (!schema.is_object()) return false;
+  if (schema.contains("enum") && schema.at("enum").is_array() &&
+      !schema.at("enum").empty()) {
+    return std::all_of(schema.at("enum").begin(), schema.at("enum").end(),
+                       [](auto const& value) {
+                         return value.is_string() || value.is_boolean() ||
+                                value.is_number();
+                       });
+  }
+  auto const type = schema.value("type", std::string{});
+  return type == "string" || type == "integer" || type == "number" ||
+         type == "boolean";
+}
+
+bool supportedDefaultDefinition(ResourceSchemaCatalogSnapshot const& catalog,
+                                ResourceSchema const& entry) {
+  auto shape = defaultDefinitionSchema(catalog, entry);
+  if (shape.value("type", std::string{}) != "object" ||
+      !shape.contains("properties") || !shape.at("properties").is_object()) {
+    return false;
+  }
+  for (auto const& [name, rawProperty] : shape.at("properties").items()) {
+    static_cast<void>(name);
+    auto property =
+        expandSchema(catalog, rawProperty, entry.schemaId, YAML::Node());
+    if (!supportedScalarSchema(property)) return false;
+  }
+  return true;
+}
+
+void assignJsonScalar(YAML::Node target, std::string const& name,
+                      Json const& value) {
+  if (value.is_string())
+    target[name] = value.get<std::string>();
+  else if (value.is_boolean())
+    target[name] = value.get<bool>();
+  else if (value.is_number_integer())
+    target[name] = value.get<long long>();
+  else if (value.is_number())
+    target[name] = value.get<double>();
+  else
+    throw std::runtime_error("starter value is not a scalar");
+}
+
+YAML::Node applicationDefaultDefinition(
+    ResourceSchemaCatalogSnapshot const& catalog, ResourceSchema const& entry) {
+  auto shape = defaultDefinitionSchema(catalog, entry);
+  YAML::Node result(YAML::NodeType::Map);
+  auto required = shape.value("required", std::vector<std::string>{});
+  for (auto const& name : required) {
+    auto property = expandSchema(catalog, shape.at("properties").at(name),
+                                 entry.schemaId, YAML::Node());
+    if (property.contains("const")) {
+      assignJsonScalar(result, name, property.at("const"));
+    } else if (property.contains("default")) {
+      assignJsonScalar(result, name, property.at("default"));
+    } else if (property.contains("enum") && !property.at("enum").empty()) {
+      assignJsonScalar(result, name, property.at("enum").front());
+    } else {
+      auto const type = property.value("type", std::string{});
+      if (type == "string") {
+        auto length = property.value("minLength", 1U);
+        result[name] = std::string((std::max)(1U, length), 'x');
+      } else if (type == "boolean") {
+        result[name] = false;
+      } else if (type == "integer") {
+        auto value = property.value("minimum", 0.0);
+        if (property.contains("exclusiveMinimum") &&
+            property.at("exclusiveMinimum").is_number()) {
+          value = property.at("exclusiveMinimum").get<double>() + 1.0;
+        }
+        result[name] = static_cast<long long>(std::ceil(value));
+      } else if (type == "number") {
+        auto value = property.value("minimum", 0.0);
+        if (property.contains("exclusiveMinimum") &&
+            property.at("exclusiveMinimum").is_number()) {
+          value = property.at("exclusiveMinimum").get<double>() + 1.0;
+        }
+        result[name] = value;
+      } else {
+        throw std::runtime_error("required default Definition property '" +
+                                 name +
+                                 "' is outside the supported form subset");
+      }
+    }
+  }
+  return result;
+}
+
 std::vector<ResourceForm> loadResourceForms(
     ResourceSchemaCatalogSnapshot const& catalog) {
-  static std::set<std::string> const authoredTypes{
-      "TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet",
-      "AnimationSet", "Program", "Material"};
+  static std::set<std::string> const builtInTypes{
+      "TextFile", "XmlFile", "Shader", "AudioBank", "Image",
+      "ImageSet", "AnimationSet", "Program", "Material"};
   std::vector<ResourceForm> result;
   for (auto const& entry : catalog.entries()) {
     if (entry.kind != ResourceSchemaKind::resourceType ||
-        !entry.factoryType.empty() || !authoredTypes.contains(entry.resourceType)) {
+        !entry.factoryType.empty()) {
       continue;
     }
-    Json schema;
     try {
-      schema = Json::parse(entry.contents);
+      auto schema = Json::parse(entry.contents);
       auto const& resource = schema.at("definitions").at("resource");
-      auto const& ownProperties = resource.at("allOf").at(1).at("properties");
+      auto const& own = resource.at("allOf").at(1);
+      auto const& ownProperties = own.at("properties");
+      if (ownProperties.at("type").at("enum").size() != 1U ||
+          ownProperties.at("type").at("enum").front() != entry.resourceType) {
+        continue;
+      }
+
       ResourceForm form;
       form.resourceType = entry.resourceType;
       form.title = schema.value("title", entry.resourceType);
-      form.composite = entry.resourceType == "ImageSet" ||
-                       entry.resourceType == "AnimationSet" ||
-                       entry.resourceType == "Program" ||
-                       entry.resourceType == "Material";
-      if (form.composite) {
-        // Require the catalogued shapes consumed by the constrained renderer.
-        // The full validator remains authoritative for every committed edit.
-        auto const& definitions = schema.at("definitions");
-        static_cast<void>(definitions.at("defaultDefinition"));
-        static_cast<void>(definitions.at("definitionCollection"));
-        if (entry.resourceType == "ImageSet") {
-          static_cast<void>(definitions.at("imageDependency"));
-          static_cast<void>(definitions.at("image"));
-          static_cast<void>(definitions.at("imageSet"));
-          form.requiredDependencies.push_back({"Image", {"Image"}});
-        } else if (entry.resourceType == "AnimationSet") {
-          static_cast<void>(definitions.at("imageDependency"));
-          static_cast<void>(definitions.at("animation"));
-          static_cast<void>(definitions.at("explicitFrame"));
-          static_cast<void>(definitions.at("imageSetFrameOverride"));
-          static_cast<void>(definitions.at("tag"));
-          form.requiredDependencies.push_back({"Image", {"ImageSet"}});
-        } else if (entry.resourceType == "Program") {
-          static_cast<void>(definitions.at("attribs"));
-          static_cast<void>(definitions.at("meshSpecification"));
-          static_cast<void>(definitions.at("buffer"));
-          static_cast<void>(definitions.at("channel"));
-          form.requiredDependencies.push_back({"Vertex", {"Shader"}});
-          form.requiredDependencies.push_back({"Fragment", {"Shader"}});
-        } else {
-          static_cast<void>(definitions.at("texture"));
-          static_cast<void>(definitions.at("resourceTexture"));
-          static_cast<void>(definitions.at("defaultTexture"));
-          form.requiredDependencies.push_back({"Program", {"Program"}});
+      form.applicationOwned = !builtInTypes.contains(entry.resourceType);
+      auto required = own.value("required", std::vector<std::string>{});
+      form.requiresDefinition = std::find(required.begin(), required.end(),
+                                          "Definitions") != required.end();
+      form.composite = form.requiresDefinition;
+
+      for (auto const& [propertyName, property] : ownProperties.items()) {
+        if (!property.is_object() || property.value(std::string(widgetKeyword),
+                                                    std::string{}) != "file") {
+          continue;
         }
-      } else {
-        auto const& location = ownProperties.at("location");
-        if (location.at("x-willpower-editor-version") != "1.0" ||
-            location.at("x-willpower-widget") != "file" ||
-            !location.at("x-willpower-file-kind").is_string() ||
-            !location.at("x-willpower-file-extensions").is_array()) {
-          throw std::runtime_error("malformed file editor annotation");
+        if (!form.fileProperty.empty()) {
+          throw std::runtime_error(
+              "the supported form subset permits one file property");
         }
-        form.fileProperty = "location";
-        form.fileKind = location.at("x-willpower-file-kind").get<std::string>();
-        form.fileExtensions = location.at("x-willpower-file-extensions")
+        form.fileProperty = propertyName;
+        form.fileKind = property.at("x-willpower-file-kind").get<std::string>();
+        form.fileExtensions = property.at("x-willpower-file-extensions")
                                   .get<std::vector<std::string>>();
-        if (form.fileKind.empty() || form.fileExtensions.empty() ||
-            std::any_of(form.fileExtensions.begin(), form.fileExtensions.end(),
-                        [](std::string const& extension) {
-                          return extension.empty() || extension.front() == '.' ||
-                                 extension.find_first_of(";*\\/") !=
-                                     std::string::npos;
-                        })) {
-          throw std::runtime_error("invalid file selector metadata");
+      }
+      collectAnnotatedDependencies(schema, form.requiredDependencies);
+
+      if (builtInTypes.contains(entry.resourceType)) {
+        auto const advanced = entry.resourceType == "ImageSet" ||
+                              entry.resourceType == "AnimationSet" ||
+                              entry.resourceType == "Program" ||
+                              entry.resourceType == "Material";
+        form.composite = advanced;
+        form.requiresDefinition = advanced;
+        if (advanced && entry.resourceType == "ImageSet") {
+          static_cast<void>(schema.at("definitions").at("image"));
+          static_cast<void>(schema.at("definitions").at("imageSet"));
+        } else if (advanced && entry.resourceType == "AnimationSet") {
+          static_cast<void>(schema.at("definitions").at("animation"));
+          static_cast<void>(schema.at("definitions").at("explicitFrame"));
+          static_cast<void>(
+              schema.at("definitions").at("imageSetFrameOverride"));
+        } else if (advanced && entry.resourceType == "Program") {
+          static_cast<void>(schema.at("definitions").at("meshSpecification"));
+          static_cast<void>(schema.at("definitions").at("buffer"));
+          static_cast<void>(schema.at("definitions").at("channel"));
+        } else if (advanced) {
+          static_cast<void>(schema.at("definitions").at("texture"));
         }
+      } else if (form.requiresDefinition &&
+                 !supportedDefaultDefinition(catalog, entry)) {
+        continue;  // Valid for validation, but deliberately read-only for
+                   // authoring.
       }
 
       if (schema.at("definitions").contains("option")) {
-        for (auto const& branch :
-             schema.at("definitions").at("option").at("oneOf")) {
-          ResourceOptionForm option;
-          auto const& properties = branch.at("properties");
-          option.name = properties.at("name").at("enum").at(0).get<std::string>();
-          auto const& value = properties.at("value");
-          if (value.contains("enum")) {
-            option.values = value.at("enum").get<std::vector<std::string>>();
-          } else if (value.value("$ref", std::string{}).ends_with(
-                         "/definitions/boolean")) {
-            option.boolean = true;
+        try {
+          for (auto const& branch :
+               schema.at("definitions").at("option").at("oneOf")) {
+            ResourceOptionForm option;
+            auto const& properties = branch.at("properties");
+            option.name =
+                properties.at("name").at("enum").at(0).get<std::string>();
+            auto const& value = properties.at("value");
+            if (value.contains("enum")) {
+              option.values = value.at("enum").get<std::vector<std::string>>();
+            } else if (value.value("$ref", std::string{})
+                           .ends_with("/definitions/boolean")) {
+              option.boolean = true;
+            }
+            form.options.push_back(std::move(option));
           }
-          form.options.push_back(std::move(option));
+        } catch (...) {
+          form.options.clear();
         }
       }
       result.push_back(std::move(form));
-    } catch (std::exception const& error) {
-      throw std::runtime_error("Resource Type schema '" + entry.resourceType +
-                               "' cannot generate a file-backed form: " +
-                               error.what());
+    } catch (...) {
+      // Catalog validity and form support are separate. Valid Draft 7 shapes
+      // outside the documented subset remain visible but read-only.
     }
-  }
-  if (result.size() != authoredTypes.size()) {
-    throw std::runtime_error(
-        "The built-in catalog does not contain all nine authored Resource forms.");
   }
   return result;
 }
@@ -966,11 +1215,161 @@ bool hasYamlExtension(fs::path const& path) {
   return extension == ".yaml" || extension == ".yml";
 }
 
+EditorSchemaConfiguration readEditorSchemaConfiguration(
+    fs::path const& iniPath) {
+  std::ifstream input(iniPath);
+  if (!input) {
+    throw std::runtime_error("Could not open required deployment INI '" +
+                             displayPath(iniPath) + "'.");
+  }
+  auto trimValue = [](std::string value) {
+    auto const first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return std::string{};
+    return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1U);
+  };
+  std::error_code error;
+  auto absoluteIni = fs::absolute(iniPath, error).lexically_normal();
+  if (error) {
+    throw std::runtime_error("Could not resolve deployment INI path '" +
+                             displayPath(iniPath) + "': " + error.message());
+  }
+  auto resolveBundle = [&](std::string const& value,
+                           std::string const& location) {
+    if (value.empty())
+      throw std::runtime_error(location + ": bundle path cannot be empty.");
+    fs::path path(value);
+    if (path.is_relative()) path = absoluteIni.parent_path() / path;
+    return path.lexically_normal();
+  };
+
+  EditorSchemaConfiguration result;
+  result.iniPath = absoluteIni;
+  bool foundSection = false;
+  bool foundVersion = false;
+  bool foundBase = false;
+  std::string section;
+  std::string line;
+  for (std::size_t lineNumber = 1; std::getline(input, line); ++lineNumber) {
+    auto content = trimValue(line);
+    if (content.empty() || content.front() == ';' || content.front() == '#')
+      continue;
+    if (content.front() == '[' && content.back() == ']') {
+      section = trimValue(content.substr(1U, content.size() - 2U));
+      foundSection |= section == "ResourceManifestEditor";
+      continue;
+    }
+    if (section != "ResourceManifestEditor") continue;
+    auto const separator = content.find('=');
+    auto const location =
+        displayPath(absoluteIni) + ":" + std::to_string(lineNumber);
+    if (separator == std::string::npos) {
+      throw std::runtime_error(location + ": expected key=value.");
+    }
+    auto const key = trimValue(content.substr(0U, separator));
+    auto const value = trimValue(content.substr(separator + 1U));
+    if (key == "formatVersion") {
+      if (foundVersion) {
+        throw std::runtime_error(location +
+                                 ": duplicate setting 'formatVersion'.");
+      }
+      if (value != "1") {
+        throw std::runtime_error(location +
+                                 ": formatVersion must be exactly 1.");
+      }
+      foundVersion = true;
+    } else if (key == "baseBundle") {
+      if (foundBase) {
+        throw std::runtime_error(location +
+                                 ": duplicate setting 'baseBundle'.");
+      }
+      result.baseBundle = resolveBundle(value, location);
+      foundBase = true;
+    } else if (key == "bundle") {
+      result.extensionBundles.push_back(resolveBundle(value, location));
+    } else {
+      throw std::runtime_error(location +
+                               ": unknown Resource Manifest Editor setting '" +
+                               key + "'.");
+    }
+  }
+  if (!input.eof() && input.fail()) {
+    throw std::runtime_error("Could not read deployment INI '" +
+                             displayPath(absoluteIni) + "'.");
+  }
+  if (!foundSection || !foundVersion) {
+    throw std::runtime_error(
+        "Deployment INI must define [ResourceManifestEditor] formatVersion=1.");
+  }
+  return result;
+}
+
+ResourceSchemaCatalogSnapshot loadEditorSchemaCatalog(
+    EditorSchemaConfiguration const& configuration) {
+  auto catalog = configuration.baseBundle ? ResourceSchemaCatalog{}
+                                          : ResourceSchemaCatalog::builtIn();
+  std::vector<ResourceSchemaBundle> bundles;
+  if (configuration.baseBundle) {
+    bundles.push_back(
+        ResourceSchemaCatalog::readBundle(*configuration.baseBundle));
+  }
+  for (auto const& path : configuration.extensionBundles) {
+    bundles.push_back(ResourceSchemaCatalog::readBundle(path));
+  }
+
+  std::set<std::pair<std::string, std::string>> lookupKeys;
+  if (!configuration.baseBundle) {
+    for (auto const& entry : catalog.snapshot().entries()) {
+      if (entry.kind == ResourceSchemaKind::resourceType) {
+        lookupKeys.emplace(entry.resourceType, entry.factoryType);
+      }
+    }
+  }
+  for (std::size_t bundleIndex = 0; bundleIndex < bundles.size();
+       ++bundleIndex) {
+    // addBundles performs authoritative metadata validation. This preflight is
+    // intentionally stricter for editor deployment: even byte-identical lookup
+    // registrations are configuration errors rather than silently idempotent.
+    auto metadata = Json::parse(bundles[bundleIndex].catalogJson);
+    if (metadata.is_object() && metadata.contains("schemas") &&
+        metadata.at("schemas").is_array()) {
+      for (auto const& schema : metadata.at("schemas")) {
+        if (!schema.is_object() ||
+            schema.value("kind", std::string{}) != "resourceType" ||
+            !schema.contains("resourceType") ||
+            !schema.at("resourceType").is_string()) {
+          continue;
+        }
+        auto resourceType = schema.at("resourceType").get<std::string>();
+        std::string factoryType;
+        if (schema.contains("factoryType") &&
+            schema.at("factoryType").is_string()) {
+          factoryType = schema.at("factoryType").get<std::string>();
+        }
+        if (!lookupKeys.emplace(resourceType, factoryType).second) {
+          throw std::runtime_error(
+              "Duplicate editor Resource Schema lookup key ('" + resourceType +
+              "', '" +
+              (factoryType.empty() ? std::string("<default>") : factoryType) +
+              "') in configured bundle " + std::to_string(bundleIndex + 1U) +
+              ".");
+        }
+      }
+    }
+  }
+  if (!bundles.empty()) catalog.addBundles(bundles);
+  auto snapshot = catalog.snapshot();
+  validateEditorCatalog(snapshot);
+  return snapshot;
+}
+
 ManifestWorkspace::ManifestWorkspace()
     : ManifestWorkspace(ResourceSchemaCatalog::builtIn().snapshot()) {}
 
 ManifestWorkspace::ManifestWorkspace(ResourceSchemaCatalogSnapshot catalog)
-    : mCatalog(std::move(catalog)), mResourceForms(loadResourceForms(mCatalog)) {}
+    : mCatalog(std::move(catalog)) {
+  validateEditorCatalog(mCatalog);
+  mResourceForms = loadResourceForms(mCatalog);
+}
 
 bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
   fs::path canonicalBase;
@@ -1059,6 +1458,39 @@ bool ManifestWorkspace::saveAs(fs::path const& manifestPath) {
     return false;
   }
   return saveTo(manifestPath);
+}
+
+bool ManifestWorkspace::reloadSchemas(fs::path const& iniPath) {
+  try {
+    auto candidateCatalog =
+        loadEditorSchemaCatalog(readEditorSchemaConfiguration(iniPath));
+    auto candidateForms = loadResourceForms(candidateCatalog);
+    if (mDocument) {
+      auto validation = mDocument->validate(candidateCatalog);
+      if (!validation.valid()) {
+        mStructuralDiagnostics = std::move(validation.diagnostics);
+        setFailure("Schema reload was rejected because the open Resource Manifest "
+                   "is invalid under the candidate catalog: " +
+                   validationMessage(validation));
+        return false;
+      }
+    }
+
+    auto const wasDirty = dirty();
+    mCatalog = std::move(candidateCatalog);
+    mResourceForms = std::move(candidateForms);
+    mNamespaceDraft.reset();
+    mDraft.reset();
+    mCommands.clear();
+    if (wasDirty) mUnsavedDocument = true;
+    mStructuralDiagnostics.clear();
+    mOperationDiagnostic.clear();
+    return true;
+  } catch (std::exception const& error) {
+    setFailure("Schema reload failed; the previous catalog remains active: " +
+               std::string(error.what()));
+    return false;
+  }
 }
 
 bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
@@ -1179,6 +1611,18 @@ std::vector<ResourceSummary> ManifestWorkspace::resources() const {
       }
       if (summary.name.empty()) summary.name = summary.location;
       summary.editable = resourceForm(summary.resourceType) != nullptr;
+      summary.unknownType =
+          mCatalog.findExact({summary.resourceType, {}}) == nullptr;
+      if (summary.unknownType) {
+        summary.limitationWarning =
+            "No editing schema is loaded for this Resource Type. Its payload is "
+            "preserved, unknown Definitions are read-only, and unannotated "
+            "references cannot be checked or rewritten.";
+      } else if (!summary.editable) {
+        summary.limitationWarning =
+            "This catalogued schema uses an unsupported authoring shape. Its "
+            "payload and Definitions are preserved read-only.";
+      }
       result.push_back(std::move(summary));
     }
   };
@@ -1219,6 +1663,17 @@ std::vector<InlineResourceSummary> ManifestWorkspace::inlineResources(
     }
     if (summary.name.empty()) summary.name = summary.location;
     summary.editable = resourceForm(summary.resourceType) != nullptr;
+    summary.unknownType =
+        mCatalog.findExact({summary.resourceType, {}}) == nullptr;
+    if (summary.unknownType) {
+      summary.limitationWarning =
+          "No editing schema is loaded for this inline Resource Type. Its "
+          "payload and unknown Definitions are preserved read-only.";
+    } else if (!summary.editable) {
+      summary.limitationWarning =
+          "This inline Resource schema uses an unsupported authoring shape; its "
+          "payload is preserved read-only.";
+    }
     result.push_back(std::move(summary));
   }
   return result;
@@ -1250,6 +1705,16 @@ std::vector<ResourceReferenceSelector> ManifestWorkspace::resourceReferences(
     selector.reference = reference;
     selector.allowedResourceTypes =
         standardAllowedTypes(ownerType, selector.dependencyId);
+    if (auto const* form = resourceForm(ownerType)) {
+      auto annotated = std::find_if(
+          form->requiredDependencies.begin(), form->requiredDependencies.end(),
+          [&](auto const& dependency) {
+            return dependency.id == selector.dependencyId;
+          });
+      if (annotated != form->requiredDependencies.end()) {
+        selector.allowedResourceTypes = annotated->allowedResourceTypes;
+      }
+    }
     auto const selectedIdentity = parseReference(reference, ownerNamespace);
 
     for (auto const& declaration : declarations) {
@@ -1516,10 +1981,10 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
   if (!collection || resourceCount(*collection, name) != 1U) return result;
   auto resource = collection->resources[*findResourceIndex(*collection, name)];
   auto const type = scalar(resource, "type");
-  if (type != "ImageSet" && type != "AnimationSet" && type != "Program" &&
-      type != "Material") {
-    return result;
-  }
+  bool const builtInAdvanced =
+      type == "ImageSet" || type == "AnimationSet" || type == "Program" ||
+      type == "Material";
+  if (!builtInAdvanced && !resourceForm(type)) return result;
 
   auto definitions = collectionItems(resource["Definitions"]["Definition"]);
   for (std::size_t definitionIndex = 0; definitionIndex < definitions.size();
@@ -1579,6 +2044,51 @@ std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
           // A catalog accepted by ResourceSchemaCatalog remains valid for
           // validation. Unsupported authoring shapes stay read-only rather
           // than being guessed by the editor.
+        }
+      }
+      result.push_back(std::move(definitionItem));
+      continue;
+    }
+    if (!builtInAdvanced) {
+      auto const* entry = mCatalog.findExact({type, {}});
+      if (entry) {
+        try {
+          auto schema = defaultDefinitionSchema(mCatalog, *entry);
+          auto required = schema.value("required", std::vector<std::string>{});
+          for (auto const& [propertyName, rawPropertySchema] :
+               schema.at("properties").items()) {
+            auto propertySchema = expandSchema(
+                mCatalog, rawPropertySchema, entry->schemaId,
+                definition[propertyName]);
+            auto property = propertyForm(
+                definition, propertyName,
+                std::find(required.begin(), required.end(), propertyName) !=
+                    required.end());
+            auto schemaType = propertySchema.value("type", std::string{});
+            property.integer = schemaType == "integer";
+            property.number = schemaType == "number";
+            property.boolean = schemaType == "boolean";
+            if (propertySchema.contains("minimum")) {
+              property.hasMinimum = true;
+              property.minimum = propertySchema.at("minimum").get<double>();
+            } else if (propertySchema.contains("exclusiveMinimum") &&
+                       propertySchema.at("exclusiveMinimum").is_number()) {
+              property.hasMinimum = true;
+              property.exclusiveMinimum = true;
+              property.minimum =
+                  propertySchema.at("exclusiveMinimum").get<double>();
+            }
+            if (propertySchema.contains("enum") &&
+                propertySchema.at("enum").is_array()) {
+              for (auto const& value : propertySchema.at("enum")) {
+                if (value.is_string())
+                  property.enumValues.push_back(value.get<std::string>());
+              }
+            }
+            definitionItem.properties.push_back(std::move(property));
+          }
+        } catch (...) {
+          definitionItem.properties.clear();
         }
       }
       result.push_back(std::move(definitionItem));
@@ -2010,24 +2520,23 @@ void ManifestWorkspace::validateDraft() {
     mDraft->validationMessage = "The Resource Type form is no longer available.";
     return;
   }
-  if (form->composite) {
-    for (auto const& reference : mDraft->references) {
-      if (reference.name.empty()) {
-        mDraft->validationMessage =
-            "Select the required compatible " + reference.id + " dependency.";
-        return;
-      }
-      auto choices = draftReferenceChoices(reference.id);
-      if (std::none_of(choices.begin(), choices.end(),
-                       [](auto const& choice) {
-                         return choice.selected && !choice.disabled;
-                       })) {
-        mDraft->validationMessage = "The selected " + reference.id +
-                                    " dependency is no longer available.";
-        return;
-      }
+  for (auto const& reference : mDraft->references) {
+    if (reference.name.empty()) {
+      mDraft->validationMessage =
+          "Select the required compatible " + reference.id + " dependency.";
+      return;
     }
-  } else if (mDraft->location.empty()) {
+    auto choices = draftReferenceChoices(reference.id);
+    if (std::none_of(choices.begin(), choices.end(),
+                     [](auto const& choice) {
+                       return choice.selected && !choice.disabled;
+                     })) {
+      mDraft->validationMessage = "The selected " + reference.id +
+                                  " dependency is no longer available.";
+      return;
+    }
+  }
+  if (!form->fileProperty.empty() && mDraft->location.empty()) {
     mDraft->validationMessage = "Select the required source file.";
     return;
   }
@@ -2054,7 +2563,7 @@ bool ManifestWorkspace::commitDraft() {
   resource["type"] = mDraft->resourceType;
   resource["name"] = mDraft->name;
   auto const* form = resourceForm(mDraft->resourceType);
-  if (form && form->composite) {
+  if (form && !mDraft->references.empty()) {
     std::vector<YAML::Node> dependencies;
     for (auto const& selected : mDraft->references) {
       YAML::Node dependency(YAML::NodeType::Map);
@@ -2065,6 +2574,11 @@ bool ManifestWorkspace::commitDraft() {
     }
     setCollection(resource["DependentResources"], "DependentResource",
                   dependencies);
+  }
+  if (form && !form->fileProperty.empty()) {
+    resource[form->fileProperty] = mDraft->location;
+  }
+  if (form && form->requiresDefinition) {
     YAML::Node definition(YAML::NodeType::Map);
     if (mDraft->resourceType == "ImageSet") {
       definition["Images"]["Image"] =
@@ -2079,12 +2593,24 @@ bool ManifestWorkspace::commitDraft() {
       definition["MeshSpecification"]["storage"] = "STATIC";
       definition["MeshSpecification"]["Buffers"]["Buffer"] =
           defaultNestedItem(NestedCollectionKind::buffer);
-    } else {
+    } else if (mDraft->resourceType == "Material") {
       definition["Textures"] = YAML::Node(YAML::NodeType::Map);
+    } else {
+      auto const* schemaEntry =
+          mCatalog.findExact({mDraft->resourceType, {}});
+      if (!schemaEntry) {
+        setFailure("The application Resource Type schema is no longer available.");
+        return false;
+      }
+      try {
+        definition = applicationDefaultDefinition(mCatalog, *schemaEntry);
+      } catch (std::exception const& error) {
+        setFailure("Could not create the application default Definition: " +
+                   std::string(error.what()));
+        return false;
+      }
     }
     resource["Definitions"]["Definition"] = definition;
-  } else {
-    resource["location"] = mDraft->location;
   }
   if (createsNamespace) {
     auto resourcesRoot = root["Resources"];
@@ -2898,8 +3424,16 @@ bool ManifestWorkspace::addDefinition(std::string const& resourceNamespace,
     } else if (resourceType == "Material") {
       definition["Textures"] = YAML::Node(YAML::NodeType::Map);
     } else {
-      setFailure("The selected default Definition has no supported starter form.");
-      return false;
+      try {
+        if (!supportedDefaultDefinition(mCatalog, *schemaEntry)) {
+          throw std::runtime_error("schema is outside the supported form subset");
+        }
+        definition = applicationDefaultDefinition(mCatalog, *schemaEntry);
+      } catch (std::exception const& error) {
+        setFailure("The selected default Definition has no supported starter form: " +
+                   std::string(error.what()));
+        return false;
+      }
     }
   } else {
     try {
@@ -4868,6 +5402,285 @@ bool runAdvancedAuthoringTests(std::string* failure) {
         saved.serializeCanonical() != specialized.canonicalYaml() ||
         readBytes(finalOutput) != specialized.canonicalYaml()) {
       return fail("Advanced canonical output was invalid or unstable.");
+    }
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runSchemaIntegrationTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-schema-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  struct AddedSchema {
+    std::string resourceType;
+    std::string id;
+    std::string document;
+    std::string hash;
+    std::string contents;
+  };
+  auto makeBundle = [](std::vector<AddedSchema> const& added,
+                       bool dependencyBaseOnly) {
+    auto bundle = ResourceSchemaCatalog::builtIn().snapshot().exportBundle();
+    auto catalog = Json::parse(bundle.catalogJson);
+    if (dependencyBaseOnly) {
+      for (auto& entry : catalog.at("schemas")) {
+        if (entry.at("kind") == "resourceType") {
+          entry["kind"] = "dependency";
+          entry["resourceType"] = nullptr;
+          entry["factoryType"] = nullptr;
+        }
+      }
+    }
+    for (auto const& schema : added) {
+      catalog["schemas"].push_back(
+          Json{{"kind", "resourceType"},
+               {"resourceType", schema.resourceType},
+               {"factoryType", nullptr},
+               {"schemaId", schema.id},
+               {"document", schema.document},
+               {"documentHash", "sha256:" + schema.hash}});
+      bundle.documents.push_back({schema.document, schema.contents});
+    }
+    bundle.catalogJson = catalog.dump(2) + "\n";
+    return bundle;
+  };
+  auto writeBundle = [](fs::path const& directory,
+                        ResourceSchemaBundle const& bundle) {
+    fs::create_directories(directory);
+    std::ofstream(directory / "catalog.json", std::ios::binary)
+        << bundle.catalogJson;
+    for (auto const& document : bundle.documents) {
+      auto path = directory / fs::path(document.document);
+      fs::create_directories(path.parent_path());
+      std::ofstream(path, std::ios::binary) << document.contents;
+    }
+  };
+
+  std::string const widgetSchema =
+      R"JSON({"$schema":"http://json-schema.org/draft-07/schema#","$id":"https://schemas.example.test/editor-widget.schema.json","title":"Editor Widget Resource","$ref":"#/definitions/resource","definitions":{"defaultDefinition":{"type":"object","additionalProperties":false,"required":["size","mode"],"properties":{"size":{"type":"integer","minimum":1},"mode":{"enum":["fast","quality"]}}},"definition":{"oneOf":[{"$ref":"#/definitions/defaultDefinition"},{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/definition"},{"required":["factory"]}]}]},"definitionCollection":{"oneOf":[{"$ref":"#/definitions/definition"},{"type":"array","minItems":1,"items":{"$ref":"#/definitions/definition"}}]},"definitions":{"type":"object","additionalProperties":false,"required":["Definition"],"properties":{"Definition":{"$ref":"#/definitions/definitionCollection"}}},"targetDependency":{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/dependentResource"},{"required":["id"],"properties":{"id":{"enum":["Target"]},"ref":{"$ref":"https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString","x-willpower-editor-version":"1.0","x-willpower-widget":"resource-reference","x-willpower-allowed-resource-types":["TextFile"],"x-willpower-reference-scope":"manifest"}}}]},"dependentResources":{"type":"object","additionalProperties":false,"required":["DependentResource"],"properties":{"DependentResource":{"$ref":"#/definitions/targetDependency"}}},"resource":{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource"},{"required":["name","DependentResources","Definitions"],"properties":{"type":{"enum":["Widget"]},"DependentResources":{"$ref":"#/definitions/dependentResources"},"Definitions":{"$ref":"#/definitions/definitions"}},"not":{"required":["location"]}}]}}}
+)JSON";
+  std::string restrictiveWidget = widgetSchema;
+  auto minimum = restrictiveWidget.find("\"minimum\":1");
+  restrictiveWidget.replace(minimum, std::string("\"minimum\":1").size(),
+                            "\"minimum\":2");
+  std::string const unsupportedSchema =
+      R"JSON({"$schema":"http://json-schema.org/draft-07/schema#","$id":"https://schemas.example.test/unsupported.schema.json","title":"Unsupported Resource","$ref":"#/definitions/resource","definitions":{"defaultDefinition":{"type":"object","additionalProperties":false,"required":["matrix"],"properties":{"matrix":{"type":"array","minItems":1,"items":{"type":"number"}}}},"definitions":{"type":"object","additionalProperties":false,"required":["Definition"],"properties":{"Definition":{"$ref":"#/definitions/defaultDefinition"}}},"resource":{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource"},{"required":["name","Definitions"],"properties":{"type":{"enum":["Unsupported"]},"Definitions":{"$ref":"#/definitions/definitions"}},"not":{"required":["location"]}}]}}}
+)JSON";
+  std::string const extensionSchema =
+      R"JSON({"$schema":"http://json-schema.org/draft-07/schema#","$id":"https://schemas.example.test/extension.schema.json","title":"Extension Resource","$ref":"#/definitions/resource","definitions":{"resource":{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource"},{"required":["name"],"properties":{"type":{"enum":["ExtensionType"]}},"not":{"required":["location"]}}]}}}
+)JSON";
+  std::string const malformedAnnotationSchema =
+      R"JSON({"$schema":"http://json-schema.org/draft-07/schema#","$id":"https://schemas.example.test/bad-annotation.schema.json","title":"Bad Annotation Resource","$ref":"#/definitions/resource","definitions":{"resource":{"allOf":[{"$ref":"https://schemas.willpower.dev/resource-manifest/resource.schema.json#/definitions/resource"},{"required":["name","location"],"properties":{"type":{"enum":["BadAnnotation"]},"location":{"type":"string","x-willpower-editor-version":"1.0","x-willpower-widget":"file","x-willpower-file-kind":"Bad","x-willpower-file-extensions":[".bad"]}}}]}}}
+)JSON";
+
+  AddedSchema const widget{
+      "Widget", "https://schemas.example.test/editor-widget.schema.json",
+      "schemas/editor-widget.schema.json",
+      "138545901211f8dbd92ca20017e6bb5f195217ca69efa805a8e8715b16e6c98e",
+      widgetSchema};
+  AddedSchema const restrictive{
+      "Widget", "https://schemas.example.test/editor-widget.schema.json",
+      "schemas/editor-widget.schema.json",
+      "28c06a6062dc724b2e2299f474a75bbdd679ee7417212f653f15a884ceee3253",
+      restrictiveWidget};
+  AddedSchema const unsupported{
+      "Unsupported", "https://schemas.example.test/unsupported.schema.json",
+      "schemas/unsupported.schema.json",
+      "e55ee74e3c774b60b4b2b66d750bdbd2eb23a8e2cce063d374fc7a5a06dbe7ab",
+      unsupportedSchema};
+  AddedSchema const extension{
+      "ExtensionType", "https://schemas.example.test/extension.schema.json",
+      "schemas/extension.schema.json",
+      "8dbbb2ed7ed306fbbafaa5f62562a6984cfb2b5b65f135bc37f5880dc9379809",
+      extensionSchema};
+  AddedSchema const malformed{
+      "BadAnnotation",
+      "https://schemas.example.test/bad-annotation.schema.json",
+      "schemas/bad-annotation.schema.json",
+      "6592c6b7919981f416cd9a14b21e141c82a6165b2ebdd3af22829d597313463e",
+      malformedAnnotationSchema};
+
+  try {
+    fs::create_directories(root);
+    writeBundle(root / "complete", makeBundle({widget, unsupported}, false));
+    writeBundle(root / "custom-only", makeBundle({widget}, true));
+    writeBundle(root / "extension", makeBundle({extension}, true));
+    writeBundle(root / "restrictive",
+                makeBundle({restrictive, unsupported}, false));
+    writeBundle(root / "malformed", makeBundle({malformed}, false));
+
+    auto ini = root / "resource-manager.ini";
+    std::ofstream(ini) << "[ResourceManifestEditor]\nformatVersion=1\n"
+                          "baseBundle=custom-only\n";
+    auto customSources = readEditorSchemaConfiguration(ini);
+    auto customCatalog = loadEditorSchemaCatalog(customSources);
+    ManifestWorkspace customOnly(customCatalog);
+    if (!customOnly.resourceForm("Widget") ||
+        customOnly.resourceForm("TextFile")) {
+      return fail(
+          "A configured complete base bundle did not replace embedded "
+          "built-ins.");
+    }
+
+    std::ofstream(ini, std::ios::trunc)
+        << "[ResourceManifestEditor]\nformatVersion=1\n"
+           "baseBundle=complete\n"
+           "bundle=extension\n";
+    auto configured = readEditorSchemaConfiguration(ini);
+    if (!configured.baseBundle ||
+        configured.baseBundle->filename() != "complete" ||
+        configured.extensionBundles.size() != 1U ||
+        configured.extensionBundles.front().filename() != "extension") {
+      return fail(
+          "Relative base and ordered extension bundle paths were not "
+          "resolved from the INI.");
+    }
+    auto catalog = loadEditorSchemaCatalog(configured);
+    ManifestWorkspace workspace(catalog);
+    if (!workspace.resourceForm("Widget") ||
+        !workspace.resourceForm("ExtensionType") ||
+        workspace.resourceForm("Unsupported")) {
+      return fail(
+          "Complete, extension, or unsupported authoring forms were "
+          "classified incorrectly.");
+    }
+
+    std::ofstream(root / "source.txt") << "source";
+    auto manifestPath = root / "application.yaml";
+    std::ofstream(manifestPath) << R"YAML(Resources:
+  Resource:
+    - {type: TextFile, name: TargetFile, location: source.txt}
+    - type: Widget
+      name: ExistingWidget
+      DependentResources:
+        DependentResource: {id: Target, ref: TargetFile}
+      Definitions:
+        Definition: {size: 1, mode: fast}
+    - type: Unsupported
+      name: UnsupportedOne
+      Definitions:
+        Definition: {matrix: [1]}
+    - type: FutureType
+      name: Future
+      Definitions:
+        Definition: {future-token: preserve-me}
+)YAML";
+    if (!workspace.open(manifestPath)) {
+      return fail("Application and unknown Resource fixture did not open: " +
+                  workspace.operationDiagnostic());
+    }
+    auto resources = workspace.resources();
+    auto unknown = std::find_if(
+        resources.begin(), resources.end(),
+        [](auto const& item) { return item.resourceType == "FutureType"; });
+    auto unsupportedItem = std::find_if(
+        resources.begin(), resources.end(),
+        [](auto const& item) { return item.resourceType == "Unsupported"; });
+    if (unknown == resources.end() || !unknown->unknownType ||
+        unknown->editable ||
+        unknown->limitationWarning.find("preserved") == std::string::npos ||
+        unsupportedItem == resources.end() || unsupportedItem->editable ||
+        unsupportedItem->unknownType) {
+      return fail(
+          "Unknown and unsupported Resource limitations were not explicit.");
+    }
+    if (!workspace.renameResource({}, "Future", "FutureRenamed") ||
+        workspace.canonicalYaml().find("future-token") == std::string::npos ||
+        workspace.canonicalYaml().find("preserve-me") == std::string::npos) {
+      return fail(
+          "A safe common operation did not preserve an unknown payload.");
+    }
+
+    auto references = workspace.resourceReferences({}, "ExistingWidget");
+    if (references.size() != 1U || references.front().allowedResourceTypes !=
+                                       std::vector<std::string>{"TextFile"}) {
+      return fail(
+          "Application Resource-reference annotations did not generate "
+          "a typed selector.");
+    }
+    auto widgetItems = workspace.nestedFormItems({}, "ExistingWidget");
+    auto widgetDefinition = std::find_if(
+        widgetItems.begin(), widgetItems.end(), [](auto const& item) {
+          return item.kind == NestedCollectionKind::definition;
+        });
+    if (widgetDefinition == widgetItems.end() ||
+        widgetDefinition->properties.size() != 2U) {
+      return fail(
+          "Application default Definition did not generate a scalar form.");
+    }
+    if (!workspace.beginDraft("Widget"))
+      return fail("Could not begin application Resource draft.");
+    workspace.setDraftName("NewWidget");
+    if (!workspace.setDraftReference("Target", {}, "TargetFile") ||
+        !workspace.commitDraft() ||
+        workspace.canonicalYaml().find("name: \"NewWidget\"") ==
+            std::string::npos) {
+      return fail(
+          "Application-owned Resource could not be authored from bundle data.");
+    }
+    if (!workspace.deleteResource({}, "NewWidget")) {
+      return fail("Could not remove the application draft reload fixture.");
+    }
+
+    auto previousFormCount = workspace.resourceForms().size();
+    std::ofstream(ini, std::ios::trunc)
+        << "[ResourceManifestEditor]\nformatVersion=1\nbaseBundle=malformed\n";
+    if (workspace.reloadSchemas(ini) ||
+        workspace.resourceForms().size() != previousFormCount ||
+        !workspace.resourceForm("Widget")) {
+      return fail(
+          "Malformed annotations did not preserve the previous editor "
+          "catalog.");
+    }
+
+    std::ofstream(ini, std::ios::trunc)
+        << "[ResourceManifestEditor]\nformatVersion=1\nbaseBundle="
+           "restrictive\n";
+    if (workspace.reloadSchemas(ini) || !workspace.resourceForm("Widget") ||
+        workspace.operationDiagnostic().find("open Resource Manifest") ==
+            std::string::npos) {
+      return fail(
+          "Open-document validation failure did not reject schema "
+          "reload atomically.");
+    }
+
+    std::ofstream(ini, std::ios::trunc)
+        << "[ResourceManifestEditor]\nformatVersion=1\nbaseBundle=complete\n"
+           "bundle=extension\nbundle=extension\n";
+    bool duplicateRejected = false;
+    try {
+      static_cast<void>(
+          loadEditorSchemaCatalog(readEditorSchemaConfiguration(ini)));
+    } catch (std::exception const& error) {
+      duplicateRejected =
+          std::string(error.what()).find("Duplicate") != std::string::npos;
+    }
+    if (!duplicateRejected) {
+      return fail("A duplicate configured lookup key was silently ignored.");
+    }
+
+    std::ofstream(ini, std::ios::trunc)
+        << "[ResourceManifestEditor]\nformatVersion=1\nbaseBundle=complete\n"
+           "bundle=extension\n";
+    if (!workspace.reloadSchemas(ini) ||
+        !workspace.resourceForm("ExtensionType")) {
+      return fail(
+          "A corrected INI and bundle set could not be reloaded successfully.");
     }
     return true;
   } catch (std::exception const& exception) {

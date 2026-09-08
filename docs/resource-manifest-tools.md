@@ -35,6 +35,19 @@ resource-manager --validate Resources.yaml --base-directory assets \
   --canonical-output -
 ```
 
+Deployment schemas can be checked separately without opening SDL or a document:
+
+```sh
+resource-manager --verify-schemas --ini /installed/bin/resource-manager.ini
+```
+
+This rereads the INI, resolves its optional base and ordered extension bundle paths,
+and verifies metadata, versions, hashes, IDs, collisions, closed references, and editor
+annotations. It reports catalog and Resource Type counts on success. Usage errors return
+`2`; an INI, bundle, or annotation failure returns `3`. Bundle schema IDs never permit
+network retrieval, and this command does not load Resource Type Plugins or application
+code.
+
 Both the Resource Manifest and base directory are mandatory. `.yaml` and `.yml` are
 accepted case-insensitively. The base directory must exist and be a directory, but this
 structural command does not load source assets or perform the semantic checks reserved

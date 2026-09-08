@@ -130,7 +130,14 @@
         {
           "required": ["id"],
           "properties": {
-            "id": { "enum": ["Image"] }
+            "id": { "enum": ["Image"] },
+            "ref": {
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-widget": "resource-reference",
+              "x-willpower-allowed-resource-types": ["Image"],
+              "x-willpower-reference-scope": "manifest"
+            }
           }
         }
       ]

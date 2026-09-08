@@ -10,7 +10,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -54,12 +53,6 @@ struct SdlLifetime {
   ~SdlLifetime() { SDL_Quit(); }
 };
 
-std::string trim(std::string value) {
-  auto const first = value.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return {};
-  return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
-}
-
 std::string displayPath(fs::path const& path) {
   auto const utf8 = path.generic_u8string();
   return std::string(reinterpret_cast<char const*>(utf8.data()), utf8.size());
@@ -92,6 +85,8 @@ void printUsage(std::ostream& output) {
             "  resource-manager --dependency-tests\n"
             "  resource-manager --composite-tests\n"
             "  resource-manager --advanced-tests\n"
+            "  resource-manager --schema-tests\n"
+            "  resource-manager --verify-schemas [--ini FILE]\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -273,60 +268,13 @@ fs::path executableDirectory() {
 
 struct EditorConfiguration {
   mpp::RenderSystemOptions renderOptions;
+  ResourceSchemaCatalogSnapshot catalog;
 };
 
 EditorConfiguration loadConfiguration(fs::path const& path) {
-  std::ifstream input(path);
-  if (!input) {
-    throw std::runtime_error("Could not open required deployment INI '" +
-                             displayPath(path) + "'.");
-  }
-  bool foundEditorSection = false;
-  bool foundVersion = false;
-  std::set<std::string> editorKeys;
-  std::string section;
-  std::string line;
-  for (std::size_t lineNumber = 1; std::getline(input, line); ++lineNumber) {
-    auto content = trim(line);
-    if (content.empty() || content.front() == ';' || content.front() == '#') {
-      continue;
-    }
-    if (content.front() == '[' && content.back() == ']') {
-      section = trim(content.substr(1, content.size() - 2));
-      foundEditorSection |= section == "ResourceManifestEditor";
-      continue;
-    }
-    if (section != "ResourceManifestEditor") continue;
-    auto const separator = content.find('=');
-    auto const location = displayPath(path) + ":" + std::to_string(lineNumber);
-    if (separator == std::string::npos) {
-      throw std::runtime_error(location + ": expected key=value.");
-    }
-    auto const key = trim(content.substr(0, separator));
-    auto const value = trim(content.substr(separator + 1));
-    if (!editorKeys.insert(key).second) {
-      throw std::runtime_error(location + ": duplicate setting '" + key + "'.");
-    }
-    if (key != "formatVersion") {
-      throw std::runtime_error(location + ": unknown Resource Manifest Editor setting '" +
-                               key + "'.");
-    }
-    if (value != "1") {
-      throw std::runtime_error(location +
-                               ": formatVersion must be exactly 1.");
-    }
-    foundVersion = true;
-  }
-  if (!input.eof() && input.fail()) {
-    throw std::runtime_error("Could not read deployment INI '" +
-                             displayPath(path) + "'.");
-  }
-  if (!foundEditorSection || !foundVersion) {
-    throw std::runtime_error(
-        "Deployment INI must define [ResourceManifestEditor] formatVersion=1.");
-  }
-
   EditorConfiguration result;
+  auto schemaSources = resource_manager::readEditorSchemaConfiguration(path);
+  result.catalog = resource_manager::loadEditorSchemaCatalog(schemaSources);
   result.renderOptions = mpp::app::loadRenderSystemOptions(path);
   return result;
 }
@@ -531,7 +479,9 @@ struct WorkspaceFrameResult {
 
 WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                                    NativeDialog& dialog, SDL_Window* window,
-                                   mpp::Logger& logger, bool& running) {
+                                   mpp::Logger& logger,
+                                   fs::path const& deploymentIni,
+                                   bool& running) {
   WorkspaceFrameResult result;
   static std::string selectedNamespace;
   static std::string selectedName;
@@ -610,7 +560,18 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       ImGui::EndDisabled();
       ImGui::EndMenu();
     }
-    for (auto const* menu : {"Schemas", "View", "Help"}) {
+    if (ImGui::BeginMenu("Schemas")) {
+      if (ImGui::MenuItem("Reload configuration and bundles")) {
+        if (workspace.reloadSchemas(deploymentIni)) {
+          logger.info("Reloaded Resource Schema configuration: " +
+                      displayPath(deploymentIni));
+        } else {
+          report(logger, workspace.operationDiagnostic());
+        }
+      }
+      ImGui::EndMenu();
+    }
+    for (auto const* menu : {"View", "Help"}) {
       if (ImGui::BeginMenu(menu)) {
         ImGui::TextDisabled("No commands available.");
         ImGui::EndMenu();
@@ -853,39 +814,40 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                            draftNameBuffer.size()))
         workspace.setDraftName(draftNameBuffer.data());
       auto const* draftForm = workspace.resourceForm(draft->resourceType);
-      if (draftForm && draftForm->composite) {
-        for (auto const& reference : draft->references) {
-          auto choices = workspace.draftReferenceChoices(reference.id);
-          std::string preview = reference.name.empty()
-                                    ? "Select compatible Resource"
-                                    : (reference.resourceNamespace.empty()
-                                           ? reference.name
-                                           : reference.resourceNamespace + "/" +
-                                                 reference.name);
-          auto label = reference.id + " dependency";
-          if (ImGui::BeginCombo(label.c_str(), preview.c_str())) {
-            for (auto const& choice : choices) {
-              ImGui::BeginDisabled(choice.disabled);
-              if (ImGui::Selectable(choice.qualifiedIdentity.c_str(),
-                                    choice.selected)) {
-                workspace.setDraftReference(reference.id,
-                                            choice.resourceNamespace,
-                                            choice.name);
-              }
-              ImGui::EndDisabled();
+      for (auto const& reference : draft->references) {
+        auto choices = workspace.draftReferenceChoices(reference.id);
+        std::string preview = reference.name.empty()
+                                  ? "Select compatible Resource"
+                                  : (reference.resourceNamespace.empty()
+                                         ? reference.name
+                                         : reference.resourceNamespace + "/" +
+                                               reference.name);
+        auto label = reference.id + " dependency";
+        if (ImGui::BeginCombo(label.c_str(), preview.c_str())) {
+          for (auto const& choice : choices) {
+            ImGui::BeginDisabled(choice.disabled);
+            if (ImGui::Selectable(choice.qualifiedIdentity.c_str(),
+                                  choice.selected)) {
+              workspace.setDraftReference(reference.id,
+                                          choice.resourceNamespace,
+                                          choice.name);
             }
-            ImGui::EndCombo();
+            ImGui::EndDisabled();
           }
+          ImGui::EndCombo();
         }
-        ImGui::TextDisabled(
-            "A valid starter Definition is created and can be extended after creation.");
-      } else {
+      }
+      if (draftForm && !draftForm->fileProperty.empty()) {
         ImGui::Text("Source file: %s", draft->location.empty()
                                             ? "Not selected"
                                             : draft->location.c_str());
         if (ImGui::Button("Select source file...") && !dialog.busy()) {
-          if (draftForm) dialog.beginResourceFile(*draftForm, window, true);
+          dialog.beginResourceFile(*draftForm, window, true);
         }
+      }
+      if (draftForm && draftForm->requiresDefinition) {
+        ImGui::TextDisabled(
+            "A valid starter Definition is created and can be extended after creation.");
       }
       if (!draft->validationMessage.empty())
         ImGui::TextWrapped("%s", draft->validationMessage.c_str());
@@ -1033,7 +995,7 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
           }
         }
         if (!inlineResource.editable) {
-          ImGui::TextDisabled("This inline Resource payload is read-only.");
+          ImGui::TextWrapped("%s", inlineResource.limitationWarning.c_str());
         } else {
           ImGui::Text("Source file: %s", inlineResource.location.c_str());
           if (ImGui::Button("Select source file...") && !dialog.busy()) {
@@ -1116,8 +1078,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         }
         auto const* selectedForm = workspace.resourceForm(selected->resourceType);
         if (!selected->editable) {
+          ImGui::TextWrapped("%s", selected->limitationWarning.c_str());
           ImGui::TextDisabled(
-              "Type-specific properties are read-only; common organization is available.");
+              "Safe common rename, move, reorder, and delete operations remain available.");
         } else if (selectedForm && selectedForm->composite) {
           ImGui::Separator();
           ImGui::TextUnformatted("Definition");
@@ -1344,13 +1307,12 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
             }
             ImGui::PopID();
           }
-        } else {
+        } else if (selectedForm && !selectedForm->fileProperty.empty()) {
           ImGui::Text("Source file: %s", selected->location.c_str());
           if (ImGui::Button("Select source file...") && !dialog.busy()) {
-            if (selectedForm)
-              dialog.beginResourceFile(*selectedForm, window, false,
-                                       selected->resourceNamespace,
-                                       selected->name);
+            dialog.beginResourceFile(*selectedForm, window, false,
+                                     selected->resourceNamespace,
+                                     selected->name);
           }
           if (selectedForm) {
             for (auto const& option : selectedForm->options) {
@@ -1550,6 +1512,39 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   return result;
 }
 
+int verifySchemas(int argc, char const* const* argv) {
+  fs::path iniPath;
+  for (int index = 2; index < argc; ++index) {
+    if (std::string_view(argv[index]) != "--ini" || !iniPath.empty() ||
+        ++index == argc) {
+      printUsage(std::cerr);
+      return usageFailure;
+    }
+    iniPath = argv[index];
+  }
+  try {
+    if (iniPath.empty())
+      iniPath = executableDirectory() / "resource-manager.ini";
+    auto sources = resource_manager::readEditorSchemaConfiguration(iniPath);
+    auto catalog = resource_manager::loadEditorSchemaCatalog(sources);
+    auto resourceTypes = static_cast<std::size_t>(
+        std::count_if(catalog.entries().begin(), catalog.entries().end(),
+                      [](auto const& entry) {
+                        return entry.kind == ResourceSchemaKind::resourceType &&
+                               entry.factoryType.empty();
+                      }));
+    std::cout << "Verified Resource Schema configuration: "
+              << displayPath(sources.iniPath) << "; "
+              << catalog.entries().size() << " catalog entries, "
+              << resourceTypes << " Resource Types.\n";
+    return success;
+  } catch (std::exception const& error) {
+    std::cerr << "Resource Manifest Editor schema configuration failure: "
+              << error.what() << '\n';
+    return configurationFailure;
+  }
+}
+
 int runDesktop(DesktopArguments arguments) {
   mpp::Logger logger;
   fs::path logPath;
@@ -1584,7 +1579,7 @@ int runDesktop(DesktopArguments arguments) {
     return success;
   }
 
-  ManifestWorkspace workspace;
+  ManifestWorkspace workspace(configuration.catalog);
   fs::path smokeRoot;
   struct SmokeCleanup {
     fs::path* path;
@@ -1652,6 +1647,7 @@ int runDesktop(DesktopArguments arguments) {
     bool running = true;
     unsigned int smokeFrames = 0;
     bool smokeResized = false;
+    bool smokeSchemasReloaded = false;
     while (running) {
       bool const closeRequested = !window.processEvents(&input);
       imGuiHandleInput(&input, &backend);
@@ -1725,8 +1721,8 @@ int runDesktop(DesktopArguments arguments) {
 
       imGuiNewFrame(window.getWindow(), &backend);
       ImGui::NewFrame();
-      auto frame =
-          drawWorkspace(workspace, dialog, window.getWindow(), logger, running);
+      auto frame = drawWorkspace(workspace, dialog, window.getWindow(), logger,
+                                 arguments.iniPath, running);
       SDL_SetWindowTitle(
           window.getWindow(),
           workspace.hasDocument()
@@ -1751,14 +1747,21 @@ int runDesktop(DesktopArguments arguments) {
           throw std::runtime_error(
               "Persistent workspace did not fill the viewport beneath the toolbar.");
         }
+        if (smokeFrames == 0) {
+          if (!workspace.reloadSchemas(arguments.iniPath)) {
+            throw std::runtime_error(
+                "GUI schema reload failed: " + workspace.operationDiagnostic());
+          }
+          smokeSchemasReloaded = true;
+        }
         if (smokeFrames == 1) window.setSize(960, 700);
         if (window.getWidth() == 960 && window.getHeight() == 700) {
           smokeResized = true;
         }
         if (++smokeFrames >= 8) {
-          if (!smokeResized) {
+          if (!smokeResized || !smokeSchemasReloaded) {
             throw std::runtime_error(
-                "Native resize did not reach the Resource Manifest Editor workspace.");
+                "Native resize or schema reload did not reach the Resource Manifest Editor workspace.");
           }
           running = false;
         }
@@ -1775,8 +1778,8 @@ int runDesktop(DesktopArguments arguments) {
     renderSystem.destroyCoreResources();
     logger.info("Resource Manifest Editor shutdown.");
     if (arguments.smokeTest) {
-      std::cout << "Resource Manifest Editor smoke test passed: startup, new, "
-                   "save, open, resize, menu, toolbar, and persistent workspace.\n";
+      std::cout << "Resource Manifest Editor smoke test passed: startup, schema "
+                   "reload, new, save, open, resize, menu, toolbar, and persistent workspace.\n";
     }
     return success;
   } catch (std::exception const& exception) {
@@ -1795,6 +1798,9 @@ int main(int argc, char const* const* argv) {
          std::string_view(argv[1]) == "-h")) {
       printUsage(std::cout);
       return success;
+    }
+    if (argc >= 2 && std::string_view(argv[1]) == "--verify-schemas") {
+      return verifySchemas(argc, argv);
     }
     if (argc >= 2 && std::string_view(argv[1]) == "--validate") {
       ValidationArguments arguments;
@@ -1862,6 +1868,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor advanced authoring tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--schema-tests") {
+      std::string failure;
+      if (!resource_manager::runSchemaIntegrationTests(&failure)) {
+        std::cerr << "Resource Manifest Editor schema integration tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor schema integration tests passed.\n";
       return success;
     }
 

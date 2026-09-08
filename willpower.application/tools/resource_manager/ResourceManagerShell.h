@@ -17,6 +17,19 @@ namespace resource_manager {
 
 bool hasYamlExtension(std::filesystem::path const& path);
 
+// Bundle paths are absolute, lexically-normal paths resolved from the deployment
+// INI directory. A missing base bundle means that embedded built-ins are used.
+struct EditorSchemaConfiguration {
+  std::filesystem::path iniPath;
+  std::optional<std::filesystem::path> baseBundle;
+  std::vector<std::filesystem::path> extensionBundles;
+};
+
+EditorSchemaConfiguration readEditorSchemaConfiguration(
+    std::filesystem::path const& iniPath);
+wp::application::resourcesystem::ResourceSchemaCatalogSnapshot
+loadEditorSchemaCatalog(EditorSchemaConfiguration const& configuration);
+
 struct ResourceOptionForm {
   std::string name;
   std::vector<std::string> values;
@@ -40,6 +53,8 @@ struct ResourceForm {
   std::vector<ResourceOptionForm> options;
   std::vector<ResourceDependencyForm> requiredDependencies;
   bool composite = false;
+  bool applicationOwned = false;
+  bool requiresDefinition = false;
 };
 
 enum class NestedCollectionKind {
@@ -110,8 +125,10 @@ struct ResourceSummary {
   std::string resourceType;
   std::string location;
   std::vector<std::pair<std::string, std::string>> options;
+  std::string limitationWarning;
   bool explicitName = false;
   bool editable = false;
+  bool unknownType = false;
 };
 
 struct InlineResourceSummary : ResourceSummary {
@@ -186,6 +203,10 @@ class ManifestWorkspace {
   bool open(std::filesystem::path const& manifestPath);
   bool save();
   bool saveAs(std::filesystem::path const& manifestPath);
+  // Rereads the deployment INI and every configured bundle. Publication is
+  // atomic: malformed candidates and candidates that reject the open document
+  // leave the current catalog, forms, document, and history untouched.
+  bool reloadSchemas(std::filesystem::path const& iniPath);
   void reportFailure(std::string message);
 
   [[nodiscard]] bool hasDocument() const noexcept;
@@ -364,5 +385,6 @@ bool runOrganizationTests(std::string* failure);
 bool runDependencyAuthoringTests(std::string* failure);
 bool runCompositeAuthoringTests(std::string* failure);
 bool runAdvancedAuthoringTests(std::string* failure);
+bool runSchemaIntegrationTests(std::string* failure);
 
 }  // namespace resource_manager
