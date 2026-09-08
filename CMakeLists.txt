@@ -19,7 +19,10 @@ foreach(WILLPOWER_SHIPPING_LINKER EXE SHARED MODULE)
 endforeach()
 unset(WILLPOWER_SHIPPING_LINKER)
 mark_as_advanced(CMAKE_C_FLAGS_SHIPPING CMAKE_CXX_FLAGS_SHIPPING)
-set(CMAKE_MAP_IMPORTED_CONFIG_SHIPPING Release)
+
+# Imported targets that provide Shipping artifacts select them directly. Targets
+# without configurations (such as OpenGL::GL) must retain CMake's config-less
+# fallback instead of being globally forced to a possibly absent Release import.
 
 # Keep the documented no-options configure command usable with single-config
 # generators. MPP's output layout includes the configuration name, so an empty
