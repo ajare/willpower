@@ -12,6 +12,12 @@ _Avoid_: Resources file, resource definition file
 A named application asset declaration belonging to a Resource Type and optionally to a namespace.
 _Avoid_: Entry, item
 
+**Namespace**:
+A flat qualifier grouping Resources. The default namespace is permanent and unqualified;
+a named namespace exists only while it contains Resources. `/` separates a named
+namespace from a Resource name and is not part of either name.
+_Avoid_: Folder, nested namespace
+
 **Resource Type**:
 The registered kind of a Resource, such as `Image`, which determines its parameters and allowed values.
 _Avoid_: Resource name, factory type

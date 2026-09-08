@@ -161,6 +161,30 @@ void setCollection(YAML::Node parent, char const* key,
   }
 }
 
+// YAML::Node assignment mutates the aliased node rather than behaving like a
+// value assignment. Rebuild vectors when changing their shape so std::vector's
+// shifting assignments cannot duplicate or overwrite neighboring nodes.
+void eraseCollectionItem(std::vector<YAML::Node>& items, std::size_t index) {
+  std::vector<YAML::Node> replacement;
+  replacement.reserve(items.size() - 1U);
+  for (std::size_t itemIndex = 0; itemIndex < items.size(); ++itemIndex) {
+    if (itemIndex != index) replacement.push_back(YAML::Clone(items[itemIndex]));
+  }
+  items.swap(replacement);
+}
+
+void insertCollectionItem(std::vector<YAML::Node>& items, std::size_t index,
+                          YAML::Node const& item) {
+  std::vector<YAML::Node> replacement;
+  replacement.reserve(items.size() + 1U);
+  for (std::size_t itemIndex = 0; itemIndex <= items.size(); ++itemIndex) {
+    if (itemIndex == index) replacement.push_back(YAML::Clone(item));
+    if (itemIndex < items.size())
+      replacement.push_back(YAML::Clone(items[itemIndex]));
+  }
+  items.swap(replacement);
+}
+
 std::string scalar(YAML::Node const& node, char const* key) {
   auto value = node[key];
   return value && value.IsScalar() ? value.as<std::string>() : std::string{};
@@ -225,6 +249,122 @@ std::string emitYaml(YAML::Node const& root) {
 
 bool validResourceName(std::string const& name) {
   return !name.empty() && name.find('/') == std::string::npos;
+}
+
+bool validNamespaceName(std::string const& name) {
+  return !name.empty() && name.find('/') == std::string::npos;
+}
+
+struct ResourceIdentity {
+  std::string resourceNamespace;
+  std::string name;
+
+  bool operator==(ResourceIdentity const&) const = default;
+};
+
+ResourceIdentity parseReference(std::string const& reference,
+                                std::string const& ownerNamespace) {
+  auto const separator = reference.find('/');
+  if (separator == std::string::npos) return {ownerNamespace, reference};
+  return {reference.substr(0, separator), reference.substr(separator + 1U)};
+}
+
+std::string formatReference(ResourceIdentity const& target,
+                            std::string const& ownerNamespace) {
+  if (target.resourceNamespace == ownerNamespace) return target.name;
+  return target.resourceNamespace + "/" + target.name;
+}
+
+template <typename Visitor>
+void forEachStandardReference(YAML::Node const& root, Visitor visitor) {
+  auto visitCollection = [&](std::string const& resourceNamespace,
+                             YAML::Node const& collection) {
+    for (auto const& resource : collectionItems(collection)) {
+      ResourceIdentity const owner{resourceNamespace, resourceIdentity(resource)};
+      auto dependentResources = resource["DependentResources"];
+      if (!dependentResources || !dependentResources.IsMap()) continue;
+      for (auto const& dependency :
+           collectionItems(dependentResources["DependentResource"])) {
+        auto reference = scalar(dependency, "ref");
+        if (!reference.empty()) {
+          visitor(owner, parseReference(reference, resourceNamespace));
+        }
+      }
+    }
+  };
+
+  auto resourcesRoot = root["Resources"];
+  visitCollection({}, resourcesRoot["Resource"]);
+  for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
+    visitCollection(scalar(item, "name"), item["Resource"]);
+  }
+}
+
+template <typename Transform>
+void rewriteStandardReferences(YAML::Node root, Transform transform) {
+  auto rewriteCollection = [&](YAML::Node owner,
+                               std::string const& resourceNamespace) {
+    auto resources = collectionItems(owner["Resource"]);
+    for (auto& resource : resources) {
+      ResourceIdentity const oldOwner{resourceNamespace,
+                                      resourceIdentity(resource)};
+      auto const newOwner = transform(oldOwner);
+      auto dependentResources = resource["DependentResources"];
+      if (!dependentResources || !dependentResources.IsMap()) continue;
+      auto dependencies =
+          collectionItems(dependentResources["DependentResource"]);
+      for (auto& dependency : dependencies) {
+        auto reference = scalar(dependency, "ref");
+        if (reference.empty()) continue;
+        auto const oldTarget = parseReference(reference, resourceNamespace);
+        auto const newTarget = transform(oldTarget);
+        if (newOwner == oldOwner && newTarget == oldTarget) continue;
+        dependency["ref"] =
+            formatReference(newTarget, newOwner.resourceNamespace);
+      }
+      setCollection(dependentResources, "DependentResource", dependencies);
+      resource["DependentResources"] = dependentResources;
+    }
+    setCollection(owner, "Resource", resources);
+  };
+
+  auto resourcesRoot = root["Resources"];
+  rewriteCollection(resourcesRoot, {});
+  auto namespaces = collectionItems(resourcesRoot["Namespace"]);
+  for (auto& item : namespaces) {
+    rewriteCollection(item, scalar(item, "name"));
+  }
+  setCollection(resourcesRoot, "Namespace", namespaces);
+  root["Resources"] = resourcesRoot;
+}
+
+std::size_t namespaceCount(YAML::Node const& root, std::string const& name) {
+  auto const namespaces = collectionItems(root["Resources"]["Namespace"]);
+  return static_cast<std::size_t>(std::count_if(
+      namespaces.begin(), namespaces.end(), [&](YAML::Node const& item) {
+        return scalar(item, "name") == name;
+      }));
+}
+
+std::size_t resourceCount(ResourceCollection const& collection,
+                          std::string const& name) {
+  return static_cast<std::size_t>(std::count_if(
+      collection.resources.begin(), collection.resources.end(),
+      [&](YAML::Node const& resource) {
+        return resourceIdentity(resource) == name;
+      }));
+}
+
+bool hasIncomingReference(YAML::Node const& root,
+                          ResourceIdentity const& target,
+                          std::function<bool(ResourceIdentity const&)> sourceIsRemoved) {
+  bool incoming = false;
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source,
+                ResourceIdentity const& referenced) {
+        if (referenced == target && !sourceIsRemoved(source)) incoming = true;
+      });
+  return incoming;
 }
 
 bool equalPathComponent(fs::path const& left, fs::path const& right) {
@@ -394,6 +534,7 @@ bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
   mBaseDirectory = std::move(canonicalBase);
   mStructuralDiagnostics.clear();
   mOperationDiagnostic.clear();
+  mNamespaceDraft.reset();
   mDraft.reset();
   mCommands.clear();
   mUnsavedDocument = true;
@@ -435,6 +576,7 @@ bool ManifestWorkspace::open(fs::path const& manifestPath) {
   mBaseDirectory = std::move(canonicalBase);
   mStructuralDiagnostics.clear();
   mOperationDiagnostic.clear();
+  mNamespaceDraft.reset();
   mDraft.reset();
   mCommands.clear();
   mCommands.markSavePoint();
@@ -540,6 +682,23 @@ ResourceForm const* ManifestWorkspace::resourceForm(
   return found == mResourceForms.end() ? nullptr : &*found;
 }
 
+std::vector<NamespaceSummary> ManifestWorkspace::namespaces() const {
+  std::vector<NamespaceSummary> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto resourcesRoot = root["Resources"];
+  result.push_back(
+      NamespaceSummary{{}, collectionItems(resourcesRoot["Resource"]).size(), true});
+  for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
+    result.push_back(NamespaceSummary{scalar(item, "name"),
+                                      collectionItems(item["Resource"]).size()});
+  }
+  if (mNamespaceDraft) {
+    result.push_back(NamespaceSummary{mNamespaceDraft->name, 0, false, true});
+  }
+  return result;
+}
+
 std::vector<ResourceSummary> ManifestWorkspace::resources() const {
   std::vector<ResourceSummary> result;
   if (!mDocument) return result;
@@ -570,10 +729,63 @@ std::vector<ResourceSummary> ManifestWorkspace::resources() const {
   return result;
 }
 
+bool ManifestWorkspace::beginNamespaceDraft() {
+  if (!mDocument) {
+    setFailure("No Resource Manifest is open.");
+    return false;
+  }
+  if (mNamespaceDraft || mDraft) {
+    setFailure("Finish or cancel the current draft first.");
+    return false;
+  }
+  mNamespaceDraft.emplace();
+  validateNamespaceDraft();
+  mOperationDiagnostic.clear();
+  return true;
+}
+
+void ManifestWorkspace::setNamespaceDraftName(std::string name) {
+  if (!mNamespaceDraft || mDraft) return;
+  mNamespaceDraft->name = std::move(name);
+  validateNamespaceDraft();
+}
+
+NamespaceDraft const* ManifestWorkspace::namespaceDraft() const noexcept {
+  return mNamespaceDraft ? &*mNamespaceDraft : nullptr;
+}
+
+bool ManifestWorkspace::namespaceDraftValid() const noexcept {
+  return mNamespaceDraft && mNamespaceDraft->validationMessage.empty();
+}
+
+void ManifestWorkspace::cancelNamespaceDraft() noexcept {
+  mDraft.reset();
+  mNamespaceDraft.reset();
+}
+
+void ManifestWorkspace::validateNamespaceDraft() {
+  if (!mNamespaceDraft) return;
+  if (!validNamespaceName(mNamespaceDraft->name)) {
+    mNamespaceDraft->validationMessage =
+        "A namespace name is required and cannot contain '/'.";
+    return;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  if (namespaceCount(root, mNamespaceDraft->name) != 0U) {
+    mNamespaceDraft->validationMessage = "Namespace names must be unique.";
+    return;
+  }
+  mNamespaceDraft->validationMessage.clear();
+}
+
 bool ManifestWorkspace::beginDraft(std::string resourceType,
                                    std::string resourceNamespace) {
   if (!mDocument) {
     setFailure("No Resource Manifest is open.");
+    return false;
+  }
+  if (mDraft) {
+    setFailure("Finish or cancel the current Resource draft first.");
     return false;
   }
   if (!resourceForm(resourceType)) {
@@ -581,8 +793,22 @@ bool ManifestWorkspace::beginDraft(std::string resourceType,
                "' has no supported catalogued authoring form.");
     return false;
   }
+  if (mNamespaceDraft &&
+      (!namespaceDraftValid() || mNamespaceDraft->name != resourceNamespace)) {
+    setFailure("The namespace draft must receive the next Resource.");
+    return false;
+  }
   auto root = YAML::Load(canonicalYaml());
-  if (!findResourceCollection(root, resourceNamespace)) {
+  bool const pendingNamespace =
+      mNamespaceDraft && namespaceDraftValid() &&
+      mNamespaceDraft->name == resourceNamespace;
+  if (!resourceNamespace.empty() && !pendingNamespace &&
+      namespaceCount(root, resourceNamespace) != 1U) {
+    setFailure("Namespace '" + resourceNamespace +
+               "' was not found uniquely; duplicate namespaces are ambiguous.");
+    return false;
+  }
+  if (!findResourceCollection(root, resourceNamespace) && !pendingNamespace) {
     setFailure("Namespace '" + resourceNamespace + "' does not exist.");
     return false;
   }
@@ -659,25 +885,113 @@ bool ManifestWorkspace::commitDraft() {
 
   auto root = YAML::Load(canonicalYaml());
   auto collection = findResourceCollection(root, mDraft->resourceNamespace);
-  if (!collection) {
-    setFailure("The draft namespace no longer exists.");
-    return false;
-  }
+  bool const createsNamespace =
+      !collection && mNamespaceDraft && namespaceDraftValid() &&
+      mNamespaceDraft->name == mDraft->resourceNamespace;
   YAML::Node resource(YAML::NodeType::Map);
   resource["type"] = mDraft->resourceType;
   resource["name"] = mDraft->name;
   resource["location"] = mDraft->location;
-  collection->resources.push_back(std::move(resource));
-  publishCollection(root, *collection);
-  if (!executeYamlCommand("Create " + mDraft->resourceType + " Resource",
-                          emitYaml(root))) {
+  if (createsNamespace) {
+    auto resourcesRoot = root["Resources"];
+    auto namespaces = collectionItems(resourcesRoot["Namespace"]);
+    YAML::Node resourceNamespace(YAML::NodeType::Map);
+    resourceNamespace["name"] = mDraft->resourceNamespace;
+    setCollection(resourceNamespace, "Resource", {resource});
+    namespaces.push_back(std::move(resourceNamespace));
+    setCollection(resourcesRoot, "Namespace", namespaces);
+  } else if (collection) {
+    collection->resources.push_back(std::move(resource));
+    publishCollection(root, *collection);
+  } else {
+    setFailure("The draft namespace no longer exists.");
     return false;
   }
+  auto const commandName = createsNamespace
+                               ? "Create namespace and " + mDraft->resourceType +
+                                     " Resource"
+                               : "Create " + mDraft->resourceType + " Resource";
+  if (!executeYamlCommand(commandName, emitYaml(root))) return false;
   mDraft.reset();
+  if (createsNamespace) mNamespaceDraft.reset();
   return true;
 }
 
 void ManifestWorkspace::cancelDraft() noexcept { mDraft.reset(); }
+
+bool ManifestWorkspace::renameNamespace(std::string const& currentName,
+                                        std::string newName, bool continuous) {
+  if (currentName.empty()) {
+    setFailure("The default namespace is permanent and cannot be renamed.");
+    return false;
+  }
+  if (!validNamespaceName(newName)) {
+    setFailure("A namespace name is required and cannot contain '/'.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  if (namespaceCount(root, currentName) != 1U) {
+    setFailure("Namespace '" + currentName +
+               "' was not found uniquely; duplicate namespaces are ambiguous.");
+    return false;
+  }
+  if (newName != currentName && namespaceCount(root, newName) != 0U) {
+    setFailure("Namespace names must be unique.");
+    return false;
+  }
+  if (newName == currentName) return true;
+
+  auto beforeCollection = findResourceCollection(root, currentName);
+  auto const namespaceIndex = beforeCollection->namespaceIndex;
+  rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+    if (identity.resourceNamespace == currentName)
+      identity.resourceNamespace = newName;
+    return identity;
+  });
+  auto collection = findResourceCollection(root, currentName);
+  if (!collection) {
+    setFailure("Namespace '" + currentName + "' was not found.");
+    return false;
+  }
+  collection->owner["name"] = std::move(newName);
+  publishCollection(root, *collection);
+  return executeYamlCommand("Rename namespace", emitYaml(root),
+                            "namespace:" + std::to_string(namespaceIndex),
+                            continuous);
+}
+
+bool ManifestWorkspace::deleteNamespace(std::string const& name) {
+  if (name.empty()) {
+    setFailure("The default namespace is permanent and cannot be deleted.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  if (namespaceCount(root, name) != 1U) {
+    setFailure("Namespace '" + name +
+               "' was not found uniquely; duplicate namespaces are ambiguous.");
+    return false;
+  }
+  bool blocked = false;
+  forEachStandardReference(
+      root, [&](ResourceIdentity const& source,
+                ResourceIdentity const& target) {
+        if (source.resourceNamespace != name &&
+            target.resourceNamespace == name) {
+          blocked = true;
+        }
+      });
+  if (blocked) {
+    setFailure("Namespace '" + name +
+               "' cannot be deleted while Resources outside it reference its "
+               "contents.");
+    return false;
+  }
+
+  auto collection = findResourceCollection(root, name);
+  eraseCollectionItem(collection->namespaces, collection->namespaceIndex);
+  setCollection(root["Resources"], "Namespace", collection->namespaces);
+  return executeYamlCommand("Delete namespace", emitYaml(root));
+}
 
 bool ManifestWorkspace::renameResource(std::string const& resourceNamespace,
                                        std::string const& currentName,
@@ -687,33 +1001,178 @@ bool ManifestWorkspace::renameResource(std::string const& resourceNamespace,
     return false;
   }
   auto root = YAML::Load(canonicalYaml());
+  if (!resourceNamespace.empty() &&
+      namespaceCount(root, resourceNamespace) != 1U) {
+    setFailure("Resource namespace was not found uniquely; duplicate namespaces "
+               "are ambiguous.");
+    return false;
+  }
   auto collection = findResourceCollection(root, resourceNamespace);
   if (!collection) {
     setFailure("Resource namespace was not found.");
     return false;
   }
-  auto index = findResourceIndex(*collection, currentName);
-  if (!index) {
-    setFailure("Resource '" + currentName + "' was not found.");
+  if (resourceCount(*collection, currentName) != 1U) {
+    setFailure("Resource '" + currentName +
+               "' was not found uniquely; duplicate identities are ambiguous.");
     return false;
   }
-  if (std::any_of(collection->resources.begin(), collection->resources.end(),
-                  [&](YAML::Node const& resource) {
-                    return resourceIdentity(resource) == newName;
-                  }) && newName != currentName) {
+  auto index = findResourceIndex(*collection, currentName);
+  if (newName != currentName && resourceCount(*collection, newName) != 0U) {
     setFailure("Resource names must be unique within their namespace.");
     return false;
   }
-  auto const type = scalar(collection->resources[*index], "type");
-  if (!resourceForm(type)) {
-    setFailure("Resource Type '" + type + "' is read-only in this editor stage.");
-    return false;
-  }
+
+  ResourceIdentity const oldIdentity{resourceNamespace, currentName};
+  ResourceIdentity const newIdentity{resourceNamespace, newName};
+  rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+    return identity == oldIdentity ? newIdentity : identity;
+  });
+  collection = findResourceCollection(root, resourceNamespace);
   collection->resources[*index]["name"] = std::move(newName);
   publishCollection(root, *collection);
   return executeYamlCommand(
       "Rename Resource", emitYaml(root),
       "name:" + resourceNamespace + ":" + std::to_string(*index), continuous);
+}
+
+bool ManifestWorkspace::reorderResource(
+    std::string const& resourceNamespace, std::string const& name,
+    std::size_t newIndex, bool continuous) {
+  auto root = YAML::Load(canonicalYaml());
+  if (!resourceNamespace.empty() &&
+      namespaceCount(root, resourceNamespace) != 1U) {
+    setFailure("Resource namespace was not found uniquely; duplicate namespaces "
+               "are ambiguous.");
+    return false;
+  }
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection) {
+    setFailure("Resource namespace was not found.");
+    return false;
+  }
+  if (resourceCount(*collection, name) != 1U) {
+    setFailure("Resource '" + name +
+               "' was not found uniquely; duplicate identities are ambiguous.");
+    return false;
+  }
+  auto currentIndex = *findResourceIndex(*collection, name);
+  if (newIndex >= collection->resources.size()) {
+    setFailure("Resource reorder position is outside its namespace.");
+    return false;
+  }
+  if (newIndex == currentIndex) return true;
+  auto resource = YAML::Clone(collection->resources[currentIndex]);
+  eraseCollectionItem(collection->resources, currentIndex);
+  insertCollectionItem(collection->resources, newIndex, resource);
+  publishCollection(root, *collection);
+  return executeYamlCommand(
+      "Reorder Resource", emitYaml(root),
+      "order:" + resourceNamespace + ":" + name, continuous);
+}
+
+bool ManifestWorkspace::moveResource(
+    std::string const& sourceNamespace, std::string const& name,
+    std::string const& targetNamespace, std::size_t targetIndex,
+    bool continuous) {
+  if (sourceNamespace == targetNamespace) {
+    auto root = YAML::Load(canonicalYaml());
+    auto collection = findResourceCollection(root, sourceNamespace);
+    if (!collection || collection->resources.empty()) {
+      setFailure("Resource namespace was not found.");
+      return false;
+    }
+    if (targetIndex == static_cast<std::size_t>(-1))
+      targetIndex = collection->resources.size() - 1U;
+    return reorderResource(sourceNamespace, name, targetIndex, continuous);
+  }
+
+  auto root = YAML::Load(canonicalYaml());
+  if ((!sourceNamespace.empty() &&
+       namespaceCount(root, sourceNamespace) != 1U) ||
+      (!targetNamespace.empty() &&
+       !(mNamespaceDraft && namespaceDraftValid() &&
+         mNamespaceDraft->name == targetNamespace) &&
+       namespaceCount(root, targetNamespace) != 1U)) {
+    setFailure("Source or target namespace was not found uniquely; duplicate "
+               "namespaces are ambiguous.");
+    return false;
+  }
+  auto source = findResourceCollection(root, sourceNamespace);
+  if (!source) {
+    setFailure("Source Resource namespace was not found.");
+    return false;
+  }
+  if (resourceCount(*source, name) != 1U) {
+    setFailure("Resource '" + name +
+               "' was not found uniquely; duplicate identities are ambiguous.");
+    return false;
+  }
+  bool const createsNamespace =
+      mNamespaceDraft && namespaceDraftValid() &&
+      mNamespaceDraft->name == targetNamespace;
+  auto target = findResourceCollection(root, targetNamespace);
+  if (!target && !createsNamespace) {
+    setFailure("Target Resource namespace was not found.");
+    return false;
+  }
+  if (target && resourceCount(*target, name) != 0U) {
+    setFailure("Moving the Resource would create a duplicate identity.");
+    return false;
+  }
+
+  ResourceIdentity const oldIdentity{sourceNamespace, name};
+  ResourceIdentity const newIdentity{targetNamespace, name};
+  rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+    return identity == oldIdentity ? newIdentity : identity;
+  });
+
+  source = findResourceCollection(root, sourceNamespace);
+  auto sourceIndex = *findResourceIndex(*source, name);
+  auto movedResource = YAML::Clone(source->resources[sourceIndex]);
+  if (scalar(movedResource, "name").empty()) {
+    if (!validResourceName(name)) {
+      setFailure("An inferred Resource name containing '/' must be renamed before "
+                 "it can be moved.");
+      return false;
+    }
+    movedResource["name"] = name;
+  }
+  eraseCollectionItem(source->resources, sourceIndex);
+  if (source->named && source->resources.empty()) {
+    eraseCollectionItem(source->namespaces, source->namespaceIndex);
+    setCollection(root["Resources"], "Namespace", source->namespaces);
+  } else {
+    publishCollection(root, *source);
+  }
+
+  target = findResourceCollection(root, targetNamespace);
+  if (!target) {
+    auto resourcesRoot = root["Resources"];
+    auto namespaces = collectionItems(resourcesRoot["Namespace"]);
+    YAML::Node item(YAML::NodeType::Map);
+    item["name"] = targetNamespace;
+    setCollection(item, "Resource", {movedResource});
+    namespaces.push_back(std::move(item));
+    setCollection(resourcesRoot, "Namespace", namespaces);
+  } else {
+    if (targetIndex == static_cast<std::size_t>(-1) ||
+        targetIndex > target->resources.size()) {
+      targetIndex = target->resources.size();
+    }
+    insertCollectionItem(target->resources, targetIndex, movedResource);
+    publishCollection(root, *target);
+  }
+
+  auto const commandName = source->named && source->resources.empty()
+                               ? "Move Resource and remove namespace"
+                               : "Move Resource";
+  if (!executeYamlCommand(commandName, emitYaml(root),
+                          "move:" + name, continuous)) {
+    return false;
+  }
+  if (createsNamespace) mNamespaceDraft.reset();
+  return true;
 }
 
 bool ManifestWorkspace::setResourceFile(std::string const& resourceNamespace,
@@ -793,7 +1252,8 @@ bool ManifestWorkspace::setResourceOption(
   });
   if (!value) {
     if (found == options.end()) return true;
-    options.erase(found);
+    eraseCollectionItem(options,
+                        static_cast<std::size_t>(found - options.begin()));
   } else if (found == options.end()) {
     YAML::Node option(YAML::NodeType::Map);
     option["name"] = optionName;
@@ -815,32 +1275,44 @@ bool ManifestWorkspace::setResourceOption(
 bool ManifestWorkspace::deleteResource(std::string const& resourceNamespace,
                                        std::string const& name) {
   auto root = YAML::Load(canonicalYaml());
+  if (!resourceNamespace.empty() &&
+      namespaceCount(root, resourceNamespace) != 1U) {
+    setFailure("Resource namespace was not found uniquely; duplicate namespaces "
+               "are ambiguous.");
+    return false;
+  }
   auto collection = findResourceCollection(root, resourceNamespace);
   if (!collection) {
     setFailure("Resource namespace was not found.");
     return false;
   }
+  if (resourceCount(*collection, name) != 1U) {
+    setFailure("Resource '" + name +
+               "' was not found uniquely; duplicate identities are ambiguous.");
+    return false;
+  }
   auto index = findResourceIndex(*collection, name);
-  if (!index) {
-    setFailure("Resource '" + name + "' was not found.");
+  ResourceIdentity const target{resourceNamespace, name};
+  if (hasIncomingReference(
+          root, target,
+          [&](ResourceIdentity const& source) { return source == target; })) {
+    setFailure("Resource '" + name +
+               "' cannot be deleted while another Resource references it.");
     return false;
   }
-  auto const type = scalar(collection->resources[*index], "type");
-  if (!resourceForm(type)) {
-    setFailure("Resource Type '" + type + "' is read-only in this editor stage.");
-    return false;
-  }
-  collection->resources.erase(collection->resources.begin() +
-                              static_cast<std::ptrdiff_t>(*index));
-  if (collection->named && collection->resources.empty()) {
-    collection->namespaces.erase(
-        collection->namespaces.begin() +
-        static_cast<std::ptrdiff_t>(collection->namespaceIndex));
+
+  eraseCollectionItem(collection->resources, *index);
+  bool const removesNamespace = collection->named && collection->resources.empty();
+  if (removesNamespace) {
+    eraseCollectionItem(collection->namespaces, collection->namespaceIndex);
     setCollection(root["Resources"], "Namespace", collection->namespaces);
   } else {
     publishCollection(root, *collection);
   }
-  return executeYamlCommand("Delete Resource", emitYaml(root));
+  return executeYamlCommand(removesNamespace
+                                ? "Delete Resource and namespace"
+                                : "Delete Resource",
+                            emitYaml(root));
 }
 
 bool ManifestWorkspace::canUndo() const noexcept { return mCommands.canUndo(); }
@@ -878,6 +1350,7 @@ bool ManifestWorkspace::applyCommittedYaml(std::string const& yaml) {
   mDocument = std::move(candidate);
   mStructuralDiagnostics.clear();
   mOperationDiagnostic.clear();
+  if (mNamespaceDraft) validateNamespaceDraft();
   return true;
 }
 
@@ -1175,6 +1648,314 @@ bool runAuthoringTests(std::string* failure) {
         readBytes(output) != workspace.canonicalYaml()) {
       return fail("Authored canonical output was not externally valid and stable.");
     }
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runOrganizationTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-organization-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  try {
+    fs::create_directories(root / "base");
+    auto sourceFile = root / "base" / "source.txt";
+    std::ofstream(sourceFile) << "source";
+
+    ManifestWorkspace drafts;
+    if (!drafts.createNew(root / "base") || drafts.namespaces().size() != 1U ||
+        !drafts.namespaces().front().isDefault ||
+        drafts.renameNamespace({}, "Renamed") || drafts.deleteNamespace({})) {
+      return fail("The permanent default namespace was not presented or protected.");
+    }
+    auto empty = drafts.canonicalYaml();
+    if (!drafts.beginNamespaceDraft() || drafts.namespaceDraftValid()) {
+      return fail("An empty named namespace draft was accepted.");
+    }
+    drafts.setNamespaceDraftName("Nested/Invalid");
+    if (drafts.namespaceDraftValid()) {
+      return fail("A namespace containing the qualifier separator was accepted.");
+    }
+    drafts.setNamespaceDraftName("Group");
+    if (!drafts.namespaceDraftValid() || drafts.canonicalYaml() != empty ||
+        drafts.canUndo() || drafts.namespaces().back().name != "Group" ||
+        !drafts.namespaces().back().draft) {
+      return fail("A named namespace did not remain an uncommitted tree draft.");
+    }
+    if (!drafts.beginDraft("TextFile", "Group")) {
+      return fail("Could not begin the first Resource in a namespace draft.");
+    }
+    drafts.setDraftName("Alpha");
+    if (!drafts.selectDraftFile(sourceFile) || !drafts.commitDraft() ||
+        drafts.namespaceDraft() || drafts.namespaces().size() != 2U ||
+        !drafts.canUndo()) {
+      return fail("The first Resource did not commit its namespace atomically.");
+    }
+    auto groupYaml = drafts.canonicalYaml();
+    if (!drafts.undo() || drafts.canonicalYaml() != empty ||
+        drafts.namespaces().size() != 1U || !drafts.redo() ||
+        drafts.canonicalYaml() != groupYaml) {
+      return fail("Namespace-and-first-Resource undo/redo was not atomic.");
+    }
+
+    if (!drafts.beginNamespaceDraft())
+      return fail("Could not begin a duplicate namespace draft.");
+    drafts.setNamespaceDraftName("Group");
+    if (drafts.namespaceDraftValid()) {
+      return fail("A duplicate namespace name was accepted.");
+    }
+    drafts.cancelNamespaceDraft();
+
+    auto addFileResource = [&](std::string const& name) {
+      if (!drafts.beginDraft("TextFile")) return false;
+      drafts.setDraftName(name);
+      return drafts.selectDraftFile(sourceFile) && drafts.commitDraft();
+    };
+    if (!addFileResource("Alpha") || !addFileResource("Beta")) {
+      return fail("Namespace-unique Resource identities were not accepted.");
+    }
+    if (!drafts.beginDraft("TextFile"))
+      return fail("Could not begin a duplicate Resource draft.");
+    drafts.setDraftName("Alpha");
+    drafts.selectDraftFile(sourceFile);
+    if (drafts.commitDraft()) {
+      return fail("A duplicate Resource identity was accepted.");
+    }
+    drafts.cancelDraft();
+
+    if (!drafts.reorderResource({}, "Beta", 0U)) {
+      return fail("A valid Resource reorder was rejected.");
+    }
+    auto ordered = drafts.resources();
+    std::vector<std::string> defaultOrder;
+    for (auto const& resource : ordered) {
+      if (resource.resourceNamespace.empty()) defaultOrder.push_back(resource.name);
+    }
+    if (defaultOrder != std::vector<std::string>{"Beta", "Alpha"}) {
+      return fail("Resource order was not preserved after an explicit reorder: " +
+                  drafts.canonicalYaml());
+    }
+    auto reordered = drafts.canonicalYaml();
+    if (!drafts.undo() || drafts.canonicalYaml() == reordered || !drafts.redo() ||
+        drafts.canonicalYaml() != reordered) {
+      return fail("Resource reorder did not support undo and redo.");
+    }
+    if (drafts.moveResource("Group", "Alpha", {}) ||
+        drafts.renameNamespace("Group", "Nested/Invalid") ||
+        drafts.renameResource({}, "Alpha", "Nested/Invalid")) {
+      return fail("A duplicate move or qualifier-containing rename was accepted.");
+    }
+
+    if (!drafts.beginNamespaceDraft())
+      return fail("Could not begin a move-target namespace draft.");
+    drafts.setNamespaceDraftName("Moved");
+    auto beforeDraftMove = drafts.canonicalYaml();
+    if (!drafts.moveResource({}, "Beta", "Moved") || drafts.namespaceDraft() ||
+        drafts.canonicalYaml() == beforeDraftMove || !drafts.undo() ||
+        drafts.canonicalYaml() != beforeDraftMove || !drafts.redo()) {
+      return fail("Moving into a namespace draft was not one undoable command.");
+    }
+
+    auto referencesPath = root / "references.yaml";
+    std::ofstream(referencesPath) << R"(Resources:
+  Resource:
+    - type: TextFile
+      name: Root
+      location: source.txt
+    - type: Custom
+      name: RootConsumer
+      DependentResources:
+        DependentResource:
+          ref: Shared/Target
+  Namespace:
+    - name: Shared
+      Resource:
+        - type: TextFile
+          name: Target
+          location: source.txt
+        - type: Custom
+          name: LocalConsumer
+          DependentResources:
+            DependentResource:
+              ref: Target
+    - name: Other
+      Resource:
+        type: Custom
+        name: Observer
+        DependentResources:
+          DependentResource:
+            - ref: Shared/Target
+            - ref: Shared/LocalConsumer
+            - ref: /Root
+)";
+    ManifestWorkspace references;
+    if (!references.open(referencesPath)) {
+      return fail("Could not open the reference-rewrite fixture: " +
+                  references.operationDiagnostic());
+    }
+    auto const referenceNamespaces = references.namespaces();
+    if (referenceNamespaces.size() != 3U ||
+        referenceNamespaces[1].name != "Shared" ||
+        referenceNamespaces[2].name != "Other") {
+      return fail("Named namespace source order was not preserved in the tree.");
+    }
+    if (!references.renameResource("Shared", "Target", "Renamed")) {
+      return fail("Referenced Resource rename was rejected.");
+    }
+    auto renamed = references.canonicalYaml();
+    if (renamed.find("Shared/Renamed") == std::string::npos ||
+        renamed.find("ref: \"Renamed\"") == std::string::npos ||
+        references.deleteResource("Shared", "Renamed")) {
+      return fail("Resource rename did not rewrite incoming standard references or "
+                  "deletion was not blocked.");
+    }
+    if (!references.moveResource("Shared", "Renamed", "Other")) {
+      return fail("Referenced Resource move was rejected: " +
+                  references.operationDiagnostic());
+    }
+    auto moved = references.canonicalYaml();
+    if (moved.find("Other/Renamed") == std::string::npos ||
+        moved.find("ref: \"Renamed\"") == std::string::npos ||
+        moved.find("Shared/Renamed") != std::string::npos) {
+      return fail("Move did not use qualified cross-namespace and unqualified "
+                  "same-namespace references.");
+    }
+    if (!references.moveResource({}, "Root", "Other")) {
+      return fail("Moving a default-namespace reference target was rejected.");
+    }
+    auto movedRoot = references.canonicalYaml();
+    if (movedRoot.find("ref: \"/Root\"") != std::string::npos ||
+        movedRoot.find("ref: \"Root\"") == std::string::npos) {
+      return fail("Moving into the reference owner's namespace did not unqualify "
+                  "the reference.");
+    }
+    if (!references.moveResource("Other", "Root", {})) {
+      return fail("Moving a reference target back to the default namespace failed.");
+    }
+    auto defaultRoot = references.canonicalYaml();
+    if (defaultRoot.find("ref: \"/Root\"") == std::string::npos ||
+        !references.undo() || references.canonicalYaml() != movedRoot ||
+        !references.redo() || references.canonicalYaml() != defaultRoot) {
+      return fail("A cross-namespace reference to the default namespace was not "
+                  "qualified and undoable.");
+    }
+    auto beforeNamespaceRename = references.canonicalYaml();
+    if (!references.renameNamespace("Shared", "Common")) {
+      return fail("Referenced namespace rename was rejected.");
+    }
+    auto renamedNamespace = references.canonicalYaml();
+    if (renamedNamespace.find("Common/LocalConsumer") == std::string::npos ||
+        renamedNamespace.find("Shared/LocalConsumer") != std::string::npos ||
+        !references.undo() ||
+        references.canonicalYaml() != beforeNamespaceRename ||
+        !references.redo() ||
+        references.canonicalYaml() != renamedNamespace) {
+      return fail("Namespace rename and reference rewrites were not one undoable "
+                  "transaction.");
+    }
+    if (references.deleteNamespace("Other")) {
+      return fail("A populated namespace with external incoming references was deleted.");
+    }
+
+    auto deletionPath = root / "deletion.yaml";
+    std::ofstream(deletionPath) << R"(Resources:
+  Namespace:
+    - name: Trash
+      Resource:
+        - type: TextFile
+          name: One
+          location: source.txt
+        - type: Custom
+          name: InternalConsumer
+          DependentResources:
+            DependentResource:
+              ref: One
+    - name: Solo
+      Resource:
+        type: TextFile
+        name: Only
+        location: source.txt
+)";
+    ManifestWorkspace deletions;
+    if (!deletions.open(deletionPath)) {
+      return fail("Could not open the namespace-deletion fixture.");
+    }
+    auto beforePopulatedDelete = deletions.canonicalYaml();
+    if (!deletions.deleteNamespace("Trash") || !deletions.undo() ||
+        deletions.canonicalYaml() != beforePopulatedDelete ||
+        !deletions.redo()) {
+      return fail("Explicit populated namespace deletion was not undoable.");
+    }
+    if (!deletions.undo()) return fail("Could not restore populated namespace.");
+    auto beforeFinalMove = deletions.canonicalYaml();
+    if (!deletions.moveResource("Solo", "Only", {}) ||
+        !deletions.undo() || deletions.canonicalYaml() != beforeFinalMove ||
+        !deletions.redo() || !deletions.undo()) {
+      return fail("Moving a final Resource did not remove and restore its namespace "
+                  "as one command.");
+    }
+    auto beforeFinalDelete = deletions.canonicalYaml();
+    if (!deletions.deleteResource("Solo", "Only")) {
+      return fail("Final-Resource deletion was rejected.");
+    }
+    auto const afterFinalDeleteNamespaces = deletions.namespaces();
+    if (std::any_of(afterFinalDeleteNamespaces.begin(),
+                    afterFinalDeleteNamespaces.end(),
+                    [](NamespaceSummary const& item) {
+                      return item.name == "Solo";
+                    }) ||
+        !deletions.undo() || deletions.canonicalYaml() != beforeFinalDelete ||
+        !deletions.redo()) {
+      return fail("Final-Resource deletion did not remove and restore its namespace "
+                  "as one command.");
+    }
+
+    auto duplicatePath = root / "duplicates.yaml";
+    std::ofstream(duplicatePath) << R"(Resources:
+  Resource:
+    - {type: TextFile, name: Duplicate, location: source.txt}
+    - {type: TextFile, name: Duplicate, location: source.txt}
+  Namespace:
+    - {name: Repeated, Resource: {type: TextFile, name: A, location: source.txt}}
+    - {name: Repeated, Resource: {type: TextFile, name: B, location: source.txt}}
+)";
+    ManifestWorkspace duplicates;
+    if (!duplicates.open(duplicatePath) ||
+        duplicates.renameResource({}, "Duplicate", "Unique") ||
+        duplicates.deleteResource({}, "Duplicate") ||
+        duplicates.renameNamespace("Repeated", "Unique") ||
+        duplicates.moveResource("Repeated", "A", {})) {
+      return fail("Commands did not reject ambiguous duplicate identities.");
+    }
+
+    auto nestedPath = root / "nested.yaml";
+    std::ofstream(nestedPath) << R"(Resources:
+  Namespace:
+    name: Outer
+    Namespace:
+      name: Inner
+      Resource: {type: TextFile, name: A, location: source.txt}
+    Resource: {type: TextFile, name: B, location: source.txt}
+)";
+    ManifestWorkspace nested;
+    if (nested.open(nestedPath)) {
+      return fail("A nested namespace was accepted.");
+    }
+
     return true;
   } catch (std::exception const& exception) {
     return fail(exception.what());

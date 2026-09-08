@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -34,6 +35,13 @@ struct ResourceForm {
   std::vector<ResourceOptionForm> options;
 };
 
+struct NamespaceSummary {
+  std::string name;
+  std::size_t resourceCount = 0;
+  bool isDefault = false;
+  bool draft = false;
+};
+
 struct ResourceSummary {
   std::string resourceNamespace;
   std::string name;
@@ -42,6 +50,11 @@ struct ResourceSummary {
   std::vector<std::pair<std::string, std::string>> options;
   bool explicitName = false;
   bool editable = false;
+};
+
+struct NamespaceDraft {
+  std::string name;
+  std::string validationMessage;
 };
 
 struct ResourceDraft {
@@ -75,7 +88,16 @@ class ManifestWorkspace {
   [[nodiscard]] std::vector<ResourceForm> const& resourceForms() const noexcept;
   [[nodiscard]] ResourceForm const* resourceForm(
       std::string const& resourceType) const noexcept;
+  [[nodiscard]] std::vector<NamespaceSummary> namespaces() const;
   [[nodiscard]] std::vector<ResourceSummary> resources() const;
+
+  // A named namespace stays outside the document and command history until
+  // its first Resource is committed or moved into it.
+  bool beginNamespaceDraft();
+  void setNamespaceDraftName(std::string name);
+  [[nodiscard]] NamespaceDraft const* namespaceDraft() const noexcept;
+  [[nodiscard]] bool namespaceDraftValid() const noexcept;
+  void cancelNamespaceDraft() noexcept;
 
   // A draft is local UI state: it does not alter the committed document or
   // history until commitDraft succeeds.
@@ -88,9 +110,20 @@ class ManifestWorkspace {
   bool commitDraft();
   void cancelDraft() noexcept;
 
+  bool renameNamespace(std::string const& currentName, std::string newName,
+                       bool continuous = false);
+  bool deleteNamespace(std::string const& name);
   bool renameResource(std::string const& resourceNamespace,
                       std::string const& currentName, std::string newName,
                       bool continuous = false);
+  bool reorderResource(std::string const& resourceNamespace,
+                       std::string const& name, std::size_t newIndex,
+                       bool continuous = false);
+  bool moveResource(std::string const& sourceNamespace,
+                    std::string const& name,
+                    std::string const& targetNamespace,
+                    std::size_t targetIndex = static_cast<std::size_t>(-1),
+                    bool continuous = false);
   bool setResourceFile(std::string const& resourceNamespace,
                        std::string const& name,
                        std::filesystem::path const& selectedFile,
@@ -119,6 +152,7 @@ class ManifestWorkspace {
                           std::string mergeKey = {}, bool continuous = false);
   std::optional<std::string> portableSelectedFile(
       std::filesystem::path const& selectedFile);
+  void validateNamespaceDraft();
   void validateDraft();
 
   wp::application::resourcesystem::ResourceSchemaCatalogSnapshot mCatalog;
@@ -130,6 +164,7 @@ class ManifestWorkspace {
       mStructuralDiagnostics;
   std::string mOperationDiagnostic;
   std::vector<ResourceForm> mResourceForms;
+  std::optional<NamespaceDraft> mNamespaceDraft;
   std::optional<ResourceDraft> mDraft;
   mpp::app::CommandStack mCommands{256};
   bool mUnsavedDocument = false;
@@ -137,5 +172,6 @@ class ManifestWorkspace {
 
 bool runDocumentTests(std::string* failure);
 bool runAuthoringTests(std::string* failure);
+bool runOrganizationTests(std::string* failure);
 
 }  // namespace resource_manager

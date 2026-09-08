@@ -87,6 +87,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --startup-check [--ini FILE]\n"
             "  resource-manager --document-tests\n"
             "  resource-manager --authoring-tests\n"
+            "  resource-manager --organization-tests\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -520,15 +521,21 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   WorkspaceFrameResult result;
   static std::string selectedNamespace;
   static std::string selectedName;
+  static bool selectedNamespaceNode = false;
+  static bool selectedNamespaceIsDraft = false;
   static std::string editingIdentity;
+  static std::string editingNamespace;
   static std::array<char, 256> nameBuffer{};
+  static std::array<char, 256> namespaceBuffer{};
   static std::array<char, 256> draftNameBuffer{};
+  static std::array<char, 256> namespaceDraftNameBuffer{};
   auto setBuffer = [](auto& buffer, std::string const& value) {
     buffer.fill('\0');
     auto const length = (std::min)(value.size(), buffer.size() - 1U);
     std::copy_n(value.data(), length, buffer.data());
   };
   std::optional<std::string> beginDraftType;
+  bool requestNamespaceDraft = false;
   bool requestUndo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z,
                                      ImGuiInputFlags_RouteGlobal);
   bool requestRedo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y,
@@ -566,8 +573,14 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Resource")) {
-      ImGui::BeginDisabled(!workspace.hasDocument() || workspace.draft());
-      if (ImGui::BeginMenu("Add")) {
+      ImGui::BeginDisabled(!workspace.hasDocument() || workspace.draft() ||
+                           workspace.namespaceDraft());
+      requestNamespaceDraft |= ImGui::MenuItem("Add namespace...");
+      ImGui::EndDisabled();
+      ImGui::BeginDisabled(!workspace.hasDocument() || workspace.draft() ||
+                           (workspace.namespaceDraft() &&
+                            !workspace.namespaceDraftValid()));
+      if (ImGui::BeginMenu("Add Resource")) {
         for (auto const& form : workspace.resourceForms()) {
           if (ImGui::MenuItem(form.resourceType.c_str()))
             beginDraftType = form.resourceType;
@@ -613,8 +626,20 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
 
   if (requestUndo) workspace.undo();
   if (requestRedo) workspace.redo();
-  if (beginDraftType && workspace.beginDraft(*beginDraftType)) {
-    setBuffer(draftNameBuffer, {});
+  if (requestNamespaceDraft && workspace.beginNamespaceDraft()) {
+    setBuffer(namespaceDraftNameBuffer, {});
+    selectedNamespace.clear();
+    selectedName.clear();
+    selectedNamespaceNode = true;
+    selectedNamespaceIsDraft = true;
+    editingNamespace.clear();
+  }
+  if (beginDraftType) {
+    std::string targetNamespace = selectedNamespace;
+    if (!selectedNamespaceNode && selectedName.empty()) targetNamespace.clear();
+    if (workspace.beginDraft(*beginDraftType, targetNamespace)) {
+      setBuffer(draftNameBuffer, {});
+    }
   }
   if (requestNew && !dialog.busy()) {
     dialog.begin(NativeDialog::Purpose::createNew, window,
@@ -667,33 +692,99 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     float const treeWidth =
         (std::max)(180.0f, ImGui::GetContentRegionAvail().x * 0.32f);
     auto resources = workspace.resources();
+    auto namespaces = workspace.namespaces();
     ImGui::BeginChild("Manifest tree", ImVec2(treeWidth, upperHeight), true);
     ImGui::TextUnformatted("Resource Manifest");
     if (workspace.hasDocument()) {
-      auto drawNamespace = [&](std::string const& resourceNamespace,
-                               char const* label) {
-        if (!ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen)) return;
-        for (auto const& resource : resources) {
-          if (resource.resourceNamespace != resourceNamespace) continue;
-          bool const selected = selectedNamespace == resourceNamespace &&
-                                selectedName == resource.name;
-          auto itemLabel = resource.name + " [" + resource.resourceType + "]";
-          if (ImGui::Selectable(itemLabel.c_str(), selected)) {
-            selectedNamespace = resourceNamespace;
-            selectedName = resource.name;
-            editingIdentity.clear();
+      auto acceptResourceDrop = [&](std::string const& targetNamespace,
+                                    std::size_t targetIndex) {
+        if (!ImGui::BeginDragDropTarget()) return;
+        if (auto const* payload =
+                ImGui::AcceptDragDropPayload("RESOURCE_MANIFEST_RESOURCE")) {
+          std::string packed(static_cast<char const*>(payload->Data),
+                             static_cast<std::size_t>(payload->DataSize));
+          auto const separator = packed.find('\n');
+          if (separator != std::string::npos) {
+            auto sourceNamespace = packed.substr(0, separator);
+            auto sourceName = packed.substr(separator + 1U);
+            if (sourceNamespace == targetNamespace &&
+                targetIndex != static_cast<std::size_t>(-1)) {
+              std::size_t sourceIndex = 0;
+              for (auto const& resource : resources) {
+                if (resource.resourceNamespace != sourceNamespace) continue;
+                if (resource.name == sourceName) break;
+                ++sourceIndex;
+              }
+              if (sourceIndex < targetIndex) --targetIndex;
+            }
+            if (workspace.moveResource(sourceNamespace, sourceName,
+                                       targetNamespace, targetIndex)) {
+              selectedNamespace = targetNamespace;
+              selectedName = sourceName;
+              selectedNamespaceNode = false;
+              selectedNamespaceIsDraft = false;
+              editingIdentity.clear();
+            }
           }
         }
-        ImGui::TreePop();
+        ImGui::EndDragDropTarget();
       };
-      drawNamespace({}, "Default namespace");
-      std::set<std::string> namespaces;
-      for (auto const& resource : resources) {
-        if (!resource.resourceNamespace.empty())
-          namespaces.insert(resource.resourceNamespace);
+      for (auto const& item : namespaces) {
+        auto const label = item.isDefault
+                               ? std::string("Default namespace")
+                               : item.name + (item.draft ? " (draft)" : "");
+        ImGui::PushID(item.isDefault ? "##default-namespace"
+                                     : item.name.c_str());
+        auto const treeFlags = ImGuiTreeNodeFlags_DefaultOpen |
+                               ImGuiTreeNodeFlags_OpenOnArrow |
+                               ImGuiTreeNodeFlags_SpanAvailWidth |
+                               ((selectedNamespaceNode &&
+                                 selectedNamespaceIsDraft == item.draft &&
+                                 selectedNamespace == item.name)
+                                    ? ImGuiTreeNodeFlags_Selected
+                                    : 0);
+        bool const open = ImGui::TreeNodeEx(label.c_str(), treeFlags);
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+          selectedNamespace = item.name;
+          selectedName.clear();
+          selectedNamespaceNode = true;
+          selectedNamespaceIsDraft = item.draft;
+          editingIdentity.clear();
+          editingNamespace.clear();
+        }
+        if (!item.draft || workspace.namespaceDraftValid())
+          acceptResourceDrop(item.name, static_cast<std::size_t>(-1));
+        if (open) {
+          std::size_t resourceIndex = 0;
+          for (auto const& resource : resources) {
+            if (resource.resourceNamespace != item.name) continue;
+            bool const selected = !selectedNamespaceNode &&
+                                  selectedNamespace == item.name &&
+                                  selectedName == resource.name;
+            auto itemLabel =
+                resource.name + " [" + resource.resourceType + "]";
+            if (ImGui::Selectable(itemLabel.c_str(), selected)) {
+              selectedNamespace = item.name;
+              selectedName = resource.name;
+              selectedNamespaceNode = false;
+              selectedNamespaceIsDraft = false;
+              editingIdentity.clear();
+              editingNamespace.clear();
+            }
+            if (ImGui::BeginDragDropSource()) {
+              auto packed = item.name + "\n" + resource.name;
+              ImGui::SetDragDropPayload("RESOURCE_MANIFEST_RESOURCE",
+                                        packed.data(), packed.size());
+              ImGui::TextUnformatted(itemLabel.c_str());
+              ImGui::EndDragDropSource();
+            }
+            acceptResourceDrop(item.name, resourceIndex);
+            ++resourceIndex;
+          }
+          ImGui::TreePop();
+        }
+        ImGui::PopID();
       }
-      for (auto const& resourceNamespace : namespaces)
-        drawNamespace(resourceNamespace, resourceNamespace.c_str());
     } else {
       ImGui::TextDisabled("Choose New or Open to begin.");
     }
@@ -702,6 +793,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     ImGui::BeginChild("Inspector", ImVec2(0.0f, upperHeight), true);
     if (auto const* draft = workspace.draft()) {
       ImGui::TextUnformatted("New Resource draft");
+      ImGui::Text("Namespace: %s", draft->resourceNamespace.empty()
+                                       ? "Default namespace"
+                                       : draft->resourceNamespace.c_str());
       ImGui::Text("Resource Type: %s", draft->resourceType.c_str());
       ImGui::TextDisabled("Resource Type is immutable after creation.");
       if (ImGui::InputText("Name", draftNameBuffer.data(),
@@ -723,43 +817,130 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         if (workspace.commitDraft()) {
           selectedNamespace = std::move(resourceNamespace);
           selectedName = std::move(name);
+          selectedNamespaceNode = false;
+          selectedNamespaceIsDraft = false;
           editingIdentity.clear();
         }
       }
       ImGui::EndDisabled();
       ImGui::SameLine();
       if (ImGui::Button("Cancel")) workspace.cancelDraft();
+    } else if (auto const* namespaceDraft = workspace.namespaceDraft()) {
+      ImGui::TextUnformatted("New namespace draft");
+      ImGui::TextDisabled(
+          "The namespace is committed only with its first Resource.");
+      if (ImGui::InputText("Name", namespaceDraftNameBuffer.data(),
+                           namespaceDraftNameBuffer.size())) {
+        workspace.setNamespaceDraftName(namespaceDraftNameBuffer.data());
+        selectedNamespace = namespaceDraftNameBuffer.data();
+      }
+      if (!namespaceDraft->validationMessage.empty())
+        ImGui::TextWrapped("%s", namespaceDraft->validationMessage.c_str());
+      ImGui::BeginDisabled(!workspace.namespaceDraftValid());
+      ImGui::TextUnformatted("Add first Resource:");
+      for (auto const& form : workspace.resourceForms()) {
+        if (ImGui::Button(form.resourceType.c_str()) &&
+            workspace.beginDraft(form.resourceType, selectedNamespace)) {
+          setBuffer(draftNameBuffer, {});
+        }
+      }
+      ImGui::EndDisabled();
+      if (ImGui::Button("Cancel namespace")) {
+        workspace.cancelNamespaceDraft();
+        selectedNamespace.clear();
+        selectedNamespaceNode = false;
+        selectedNamespaceIsDraft = false;
+      }
     } else {
+      auto selectedNamespaceSummary = std::find_if(
+          namespaces.begin(), namespaces.end(), [&](auto const& item) {
+            return !item.draft && item.name == selectedNamespace;
+          });
       auto selected = std::find_if(
           resources.begin(), resources.end(), [&](auto const& resource) {
             return resource.resourceNamespace == selectedNamespace &&
                    resource.name == selectedName;
           });
-      if (selected != resources.end()) {
-        ImGui::Text("Resource Type: %s", selected->resourceType.c_str());
-        ImGui::TextDisabled("Resource Type is immutable; recreate it to change type.");
-        if (!selected->editable) {
-          ImGui::TextDisabled("This Resource Type is read-only in this editor stage.");
+      if (selectedNamespaceNode && selectedNamespaceSummary != namespaces.end()) {
+        auto const& item = *selectedNamespaceSummary;
+        ImGui::Text("Namespace: %s",
+                    item.isDefault ? "Default namespace" : item.name.c_str());
+        ImGui::Text("Resources: %zu", item.resourceCount);
+        if (item.isDefault) {
+          ImGui::TextDisabled(
+              "The default namespace is permanent and cannot be renamed or deleted.");
         } else {
-          auto identity = selected->resourceNamespace + "\n" + selected->name;
-          if (editingIdentity != identity) {
-            editingIdentity = identity;
-            setBuffer(nameBuffer, selected->name);
+          if (editingNamespace != item.name) {
+            editingNamespace = item.name;
+            setBuffer(namespaceBuffer, item.name);
           }
           bool commitName = ImGui::InputText(
-              "Name", nameBuffer.data(), nameBuffer.size(),
+              "Name", namespaceBuffer.data(), namespaceBuffer.size(),
               ImGuiInputTextFlags_EnterReturnsTrue);
           commitName |= ImGui::IsItemDeactivatedAfterEdit();
-          if (commitName && std::string(nameBuffer.data()) != selected->name) {
-            auto newName = std::string(nameBuffer.data());
-            if (workspace.renameResource(selected->resourceNamespace,
-                                         selected->name, newName)) {
-              selectedName = std::move(newName);
-              editingIdentity.clear();
+          if (commitName && std::string(namespaceBuffer.data()) != item.name) {
+            auto newName = std::string(namespaceBuffer.data());
+            if (workspace.renameNamespace(item.name, newName)) {
+              selectedNamespace = std::move(newName);
+              editingNamespace.clear();
             } else {
-              setBuffer(nameBuffer, selected->name);
+              setBuffer(namespaceBuffer, item.name);
             }
           }
+          if (ImGui::Button("Delete namespace..."))
+            ImGui::OpenPopup("Confirm namespace deletion");
+          if (ImGui::BeginPopupModal("Confirm namespace deletion", nullptr,
+                                     ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Delete namespace '%s' and all %zu Resources?",
+                        item.name.c_str(), item.resourceCount);
+            if (ImGui::Button("Delete")) {
+              if (workspace.deleteNamespace(item.name)) {
+                selectedNamespace.clear();
+                selectedName.clear();
+                selectedNamespaceNode = true;
+                selectedNamespaceIsDraft = false;
+              }
+              ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+          }
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted("Add Resource:");
+        for (auto const& form : workspace.resourceForms()) {
+          if (ImGui::Button(form.resourceType.c_str()) &&
+              workspace.beginDraft(form.resourceType, item.name)) {
+            setBuffer(draftNameBuffer, {});
+          }
+        }
+      } else if (selected != resources.end()) {
+        ImGui::Text("Resource Type: %s", selected->resourceType.c_str());
+        ImGui::TextDisabled("Resource Type is immutable; recreate it to change type.");
+        auto identity = selected->resourceNamespace + "\n" + selected->name;
+        if (editingIdentity != identity) {
+          editingIdentity = identity;
+          setBuffer(nameBuffer, selected->name);
+        }
+        bool commitName = ImGui::InputText(
+            "Name", nameBuffer.data(), nameBuffer.size(),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+        commitName |= ImGui::IsItemDeactivatedAfterEdit();
+        if (commitName && std::string(nameBuffer.data()) != selected->name) {
+          auto newName = std::string(nameBuffer.data());
+          if (workspace.renameResource(selected->resourceNamespace,
+                                       selected->name, newName)) {
+            selectedName = std::move(newName);
+            editingIdentity.clear();
+          } else {
+            setBuffer(nameBuffer, selected->name);
+          }
+        }
+        if (!selected->editable) {
+          ImGui::TextDisabled(
+              "Type-specific properties are read-only; common organization is available.");
+        } else {
           ImGui::Text("Source file: %s", selected->location.c_str());
           if (ImGui::Button("Select source file...") && !dialog.busy()) {
             if (auto const* form = workspace.resourceForm(selected->resourceType))
@@ -771,7 +952,9 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
             for (auto const& option : form->options) {
               auto value = std::find_if(
                   selected->options.begin(), selected->options.end(),
-                  [&](auto const& item) { return item.first == option.name; });
+                  [&](auto const& optionValue) {
+                    return optionValue.first == option.name;
+                  });
               std::string current = value == selected->options.end()
                                         ? std::string{}
                                         : value->second;
@@ -795,23 +978,36 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
               }
             }
           }
-          if (ImGui::Button("Delete Resource..."))
-            ImGui::OpenPopup("Confirm Resource deletion");
-          if (ImGui::BeginPopupModal("Confirm Resource deletion", nullptr,
-                                     ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Delete Resource '%s'?", selected->name.c_str());
-            if (ImGui::Button("Delete")) {
-              if (workspace.deleteResource(selected->resourceNamespace,
-                                           selected->name)) {
-                selectedNamespace.clear();
-                selectedName.clear();
-              }
-              ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+        }
+        if (ImGui::Button("Delete Resource..."))
+          ImGui::OpenPopup("Confirm Resource deletion");
+        if (ImGui::BeginPopupModal("Confirm Resource deletion", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+          ImGui::Text("Delete Resource '%s'?", selected->name.c_str());
+          auto namespaceEntry = std::find_if(
+              namespaces.begin(), namespaces.end(), [&](auto const& item) {
+                return item.name == selected->resourceNamespace;
+              });
+          if (!selected->resourceNamespace.empty() &&
+              namespaceEntry != namespaces.end() &&
+              namespaceEntry->resourceCount == 1U) {
+            ImGui::TextWrapped(
+                "This is the final Resource; namespace '%s' will also be removed.",
+                selected->resourceNamespace.c_str());
           }
+          if (ImGui::Button("Delete")) {
+            if (workspace.deleteResource(selected->resourceNamespace,
+                                         selected->name)) {
+              selectedNamespace.clear();
+              selectedName.clear();
+              selectedNamespaceNode = true;
+              selectedNamespaceIsDraft = false;
+            }
+            ImGui::CloseCurrentPopup();
+          }
+          ImGui::SameLine();
+          if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+          ImGui::EndPopup();
         }
       } else {
         ImGui::TextUnformatted("Document");
@@ -1113,6 +1309,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor authoring tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--organization-tests") {
+      std::string failure;
+      if (!resource_manager::runOrganizationTests(&failure)) {
+        std::cerr << "Resource Manifest Editor organization tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor organization tests passed.\n";
       return success;
     }
 

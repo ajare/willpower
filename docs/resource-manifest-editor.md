@@ -74,6 +74,30 @@ changes coalesce, while incomplete text remains local to the inspector until com
 Deleting the final Resource in a named namespace removes that otherwise-invalid
 namespace in the same command.
 
+## Flat namespace organization
+
+The tree always shows the permanent default namespace followed by named namespaces in
+document order. Named namespaces are flat, unique, non-empty, and cannot contain the
+`/` qualifier separator. Creating one starts a tree draft; no YAML or history entry is
+created until the user authors or moves its first Resource into it.
+
+Namespace and Resource names can be edited in the inspector. Resources can be dragged
+onto another Resource to reorder them or onto a namespace to move them. These operations
+reject ambiguous duplicate identities and destination collisions. Moving an inferred-name
+Resource materializes an explicit name when that name is valid.
+
+Rename and move commands rewrite every standard
+`DependentResources/DependentResource/ref` that is affected. A target in the reference
+owner's namespace is unqualified; a target in another named namespace uses
+`Namespace/Resource`, and a target in the default namespace from a named namespace uses
+`/Resource`. The declaration change and all rewrites are one validated undoable command.
+
+Resource deletion is blocked by known incoming standard references. Deleting the final
+Resource confirms and removes its named namespace in the same command. Populated
+namespace deletion has a separate confirmation, is undoable, and is blocked when a
+standard reference arrives from outside that namespace. The default namespace cannot be
+renamed or deleted.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -82,13 +106,17 @@ The headless validation command remains documented in
 ```sh
 resource-manager --document-tests
 resource-manager --authoring-tests
+resource-manager --organization-tests
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
 `--document-tests` covers empty New, valid and rejected Open, canonical atomic Save, and
 YAML-extension enforcement without initializing SDL. `--authoring-tests` covers all five
 file-backed built-ins, drafts, native-selector metadata, path containment, canonical
-relative output, and create/property/rename/delete undo and redo. `--smoke-test` executes New,
+relative output, and create/property/rename/delete undo and redo.
+`--organization-tests` covers namespace drafts, duplicate identities, default-namespace
+protection, ordering, moves, standard-reference rewrites, deletion rules, and compound
+undo/redo. `--smoke-test` executes New,
 Save, and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.

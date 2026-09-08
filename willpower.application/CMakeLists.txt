@@ -375,6 +375,8 @@ if(BUILD_TESTING)
         COMMAND resource_manager --document-tests)
     willpower_add_test(NAME willpower_resource_manager_authoring
         COMMAND resource_manager --authoring-tests)
+    willpower_add_test(NAME willpower_resource_manager_organization
+        COMMAND resource_manager --organization-tests)
     willpower_add_test(NAME willpower_resource_manager_startup
         COMMAND "${CMAKE_COMMAND}"
             "-DTOOL=$<TARGET_FILE:resource_manager>"
