@@ -44,6 +44,13 @@
           "required": ["location"],
           "properties": {
             "type": { "enum": ["AudioBank"] },
+            "location": {
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-widget": "file",
+              "x-willpower-file-kind": "FMOD banks",
+              "x-willpower-file-extensions": ["bank"]
+            },
             "Definitions": { "$ref": "#/definitions/definitions" }
           },
           "not": {

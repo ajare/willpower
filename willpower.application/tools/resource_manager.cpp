@@ -86,6 +86,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --smoke-test [--ini FILE]\n"
             "  resource-manager --startup-check [--ini FILE]\n"
             "  resource-manager --document-tests\n"
+            "  resource-manager --authoring-tests\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -385,11 +386,14 @@ void report(mpp::Logger& logger, std::string const& message) {
 
 class NativeDialog {
  public:
-  enum class Purpose { none, createNew, open, saveAs };
+  enum class Purpose { none, createNew, open, saveAs, resourceFile };
   struct Result {
     Purpose purpose = Purpose::none;
     std::optional<fs::path> path;
     std::string error;
+    bool draftFile = false;
+    std::string resourceNamespace;
+    std::string resourceName;
   };
 
   bool busy() const {
@@ -426,6 +430,35 @@ class NativeDialog {
     }
   }
 
+  void beginResourceFile(resource_manager::ResourceForm const& form,
+                         SDL_Window* owner, bool draft,
+                         std::string resourceNamespace = {},
+                         std::string resourceName = {}) {
+    {
+      std::lock_guard lock(mState->mutex);
+      if (mState->pending) return;
+      mState->pending = true;
+      mState->purpose = Purpose::resourceFile;
+      mState->draftFile = draft;
+      mState->resourceNamespace = std::move(resourceNamespace);
+      mState->resourceName = std::move(resourceName);
+      mState->result.reset();
+    }
+    mResourceFilterName = form.fileKind;
+    mResourceFilterPattern.clear();
+    for (auto const& extension : form.fileExtensions) {
+      if (!mResourceFilterPattern.empty()) mResourceFilterPattern += ';';
+      mResourceFilterPattern += extension;
+    }
+    mResourceFilters = {{{mResourceFilterName.c_str(),
+                          mResourceFilterPattern.c_str()},
+                         {"All files", "*"}}};
+    auto holder = new std::shared_ptr<State>(mState);
+    SDL_ShowOpenFileDialog(callback, holder, owner, mResourceFilters.data(),
+                           static_cast<int>(mResourceFilters.size()), nullptr,
+                           false);
+  }
+
   std::optional<Result> poll() {
     std::lock_guard lock(mState->mutex);
     if (!mState->result) return {};
@@ -439,6 +472,9 @@ class NativeDialog {
     mutable std::mutex mutex;
     bool pending = false;
     Purpose purpose = Purpose::none;
+    bool draftFile = false;
+    std::string resourceNamespace;
+    std::string resourceName;
     std::optional<Result> result;
   };
 
@@ -449,6 +485,9 @@ class NativeDialog {
     {
       std::lock_guard lock((*holder)->mutex);
       result.purpose = (*holder)->purpose;
+      result.draftFile = (*holder)->draftFile;
+      result.resourceNamespace = (*holder)->resourceNamespace;
+      result.resourceName = (*holder)->resourceName;
     }
     if (!files) {
       result.error = SDL_GetError();
@@ -463,6 +502,9 @@ class NativeDialog {
   inline static std::array<SDL_DialogFileFilter, 2> const yamlFilters{{
       {"Resource Manifests", "yaml;yml"}, {"All files", "*"}}};
   std::shared_ptr<State> mState = std::make_shared<State>();
+  std::string mResourceFilterName;
+  std::string mResourceFilterPattern;
+  std::array<SDL_DialogFileFilter, 2> mResourceFilters{};
 };
 
 struct WorkspaceFrameResult {
@@ -476,6 +518,21 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
                                    NativeDialog& dialog, SDL_Window* window,
                                    mpp::Logger& logger, bool& running) {
   WorkspaceFrameResult result;
+  static std::string selectedNamespace;
+  static std::string selectedName;
+  static std::string editingIdentity;
+  static std::array<char, 256> nameBuffer{};
+  static std::array<char, 256> draftNameBuffer{};
+  auto setBuffer = [](auto& buffer, std::string const& value) {
+    buffer.fill('\0');
+    auto const length = (std::min)(value.size(), buffer.size() - 1U);
+    std::copy_n(value.data(), length, buffer.data());
+  };
+  std::optional<std::string> beginDraftType;
+  bool requestUndo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z,
+                                     ImGuiInputFlags_RouteGlobal);
+  bool requestRedo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y,
+                                     ImGuiInputFlags_RouteGlobal);
   bool requestNew = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N,
                                     ImGuiInputFlags_RouteGlobal);
   bool requestOpen = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O,
@@ -501,9 +558,28 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       if (ImGui::MenuItem("Exit")) running = false;
       ImGui::EndMenu();
     }
-    for (auto const* menu : {"Edit", "Resource", "Schemas", "View", "Help"}) {
+    if (ImGui::BeginMenu("Edit")) {
+      requestUndo |= ImGui::MenuItem("Undo", "Ctrl+Z", false,
+                                     workspace.canUndo());
+      requestRedo |= ImGui::MenuItem("Redo", "Ctrl+Y", false,
+                                     workspace.canRedo());
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Resource")) {
+      ImGui::BeginDisabled(!workspace.hasDocument() || workspace.draft());
+      if (ImGui::BeginMenu("Add")) {
+        for (auto const& form : workspace.resourceForms()) {
+          if (ImGui::MenuItem(form.resourceType.c_str()))
+            beginDraftType = form.resourceType;
+        }
+        ImGui::EndMenu();
+      }
+      ImGui::EndDisabled();
+      ImGui::EndMenu();
+    }
+    for (auto const* menu : {"Schemas", "View", "Help"}) {
       if (ImGui::BeginMenu(menu)) {
-        ImGui::TextDisabled("Commands will be available in later editor stages.");
+        ImGui::TextDisabled("No commands available.");
         ImGui::EndMenu();
       }
     }
@@ -524,9 +600,22 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
     ImGui::SameLine();
     if (ImGui::Button("Save As")) requestSaveAs = true;
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!workspace.canUndo());
+    if (ImGui::Button("Undo")) requestUndo = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!workspace.canRedo());
+    if (ImGui::Button("Redo")) requestRedo = true;
+    ImGui::EndDisabled();
   }
   ImGui::End();
 
+  if (requestUndo) workspace.undo();
+  if (requestRedo) workspace.redo();
+  if (beginDraftType && workspace.beginDraft(*beginDraftType)) {
+    setBuffer(draftNameBuffer, {});
+  }
   if (requestNew && !dialog.busy()) {
     dialog.begin(NativeDialog::Purpose::createNew, window,
                  workspace.baseDirectory().string());
@@ -577,28 +666,168 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
         (std::max)(80.0f, ImGui::GetContentRegionAvail().y - diagnosticsHeight);
     float const treeWidth =
         (std::max)(180.0f, ImGui::GetContentRegionAvail().x * 0.32f);
+    auto resources = workspace.resources();
     ImGui::BeginChild("Manifest tree", ImVec2(treeWidth, upperHeight), true);
     ImGui::TextUnformatted("Resource Manifest");
     if (workspace.hasDocument()) {
-      ImGui::BulletText("Default namespace");
-      ImGui::TextDisabled("Resource editing is introduced by follow-up tickets.");
+      auto drawNamespace = [&](std::string const& resourceNamespace,
+                               char const* label) {
+        if (!ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen)) return;
+        for (auto const& resource : resources) {
+          if (resource.resourceNamespace != resourceNamespace) continue;
+          bool const selected = selectedNamespace == resourceNamespace &&
+                                selectedName == resource.name;
+          auto itemLabel = resource.name + " [" + resource.resourceType + "]";
+          if (ImGui::Selectable(itemLabel.c_str(), selected)) {
+            selectedNamespace = resourceNamespace;
+            selectedName = resource.name;
+            editingIdentity.clear();
+          }
+        }
+        ImGui::TreePop();
+      };
+      drawNamespace({}, "Default namespace");
+      std::set<std::string> namespaces;
+      for (auto const& resource : resources) {
+        if (!resource.resourceNamespace.empty())
+          namespaces.insert(resource.resourceNamespace);
+      }
+      for (auto const& resourceNamespace : namespaces)
+        drawNamespace(resourceNamespace, resourceNamespace.c_str());
     } else {
       ImGui::TextDisabled("Choose New or Open to begin.");
     }
     ImGui::EndChild();
     ImGui::SameLine();
     ImGui::BeginChild("Inspector", ImVec2(0.0f, upperHeight), true);
-    ImGui::TextUnformatted("Document");
-    if (workspace.hasDocument()) {
-      ImGui::TextWrapped("Manifest: %s",
-                         workspace.hasPath()
-                             ? displayPath(workspace.path()).c_str()
-                             : "Unsaved Resource Manifest");
-      ImGui::TextWrapped("Base directory: %s",
-                         displayPath(workspace.baseDirectory()).c_str());
-      ImGui::Text("State: %s", workspace.dirty() ? "Unsaved changes" : "Saved");
+    if (auto const* draft = workspace.draft()) {
+      ImGui::TextUnformatted("New Resource draft");
+      ImGui::Text("Resource Type: %s", draft->resourceType.c_str());
+      ImGui::TextDisabled("Resource Type is immutable after creation.");
+      if (ImGui::InputText("Name", draftNameBuffer.data(),
+                           draftNameBuffer.size()))
+        workspace.setDraftName(draftNameBuffer.data());
+      ImGui::Text("Source file: %s", draft->location.empty()
+                                          ? "Not selected"
+                                          : draft->location.c_str());
+      if (ImGui::Button("Select source file...") && !dialog.busy()) {
+        if (auto const* form = workspace.resourceForm(draft->resourceType))
+          dialog.beginResourceFile(*form, window, true);
+      }
+      if (!draft->validationMessage.empty())
+        ImGui::TextWrapped("%s", draft->validationMessage.c_str());
+      ImGui::BeginDisabled(!workspace.draftValid());
+      if (ImGui::Button("Create")) {
+        auto resourceNamespace = draft->resourceNamespace;
+        auto name = draft->name;
+        if (workspace.commitDraft()) {
+          selectedNamespace = std::move(resourceNamespace);
+          selectedName = std::move(name);
+          editingIdentity.clear();
+        }
+      }
+      ImGui::EndDisabled();
+      ImGui::SameLine();
+      if (ImGui::Button("Cancel")) workspace.cancelDraft();
     } else {
-      ImGui::TextDisabled("No Resource Manifest is open.");
+      auto selected = std::find_if(
+          resources.begin(), resources.end(), [&](auto const& resource) {
+            return resource.resourceNamespace == selectedNamespace &&
+                   resource.name == selectedName;
+          });
+      if (selected != resources.end()) {
+        ImGui::Text("Resource Type: %s", selected->resourceType.c_str());
+        ImGui::TextDisabled("Resource Type is immutable; recreate it to change type.");
+        if (!selected->editable) {
+          ImGui::TextDisabled("This Resource Type is read-only in this editor stage.");
+        } else {
+          auto identity = selected->resourceNamespace + "\n" + selected->name;
+          if (editingIdentity != identity) {
+            editingIdentity = identity;
+            setBuffer(nameBuffer, selected->name);
+          }
+          bool commitName = ImGui::InputText(
+              "Name", nameBuffer.data(), nameBuffer.size(),
+              ImGuiInputTextFlags_EnterReturnsTrue);
+          commitName |= ImGui::IsItemDeactivatedAfterEdit();
+          if (commitName && std::string(nameBuffer.data()) != selected->name) {
+            auto newName = std::string(nameBuffer.data());
+            if (workspace.renameResource(selected->resourceNamespace,
+                                         selected->name, newName)) {
+              selectedName = std::move(newName);
+              editingIdentity.clear();
+            } else {
+              setBuffer(nameBuffer, selected->name);
+            }
+          }
+          ImGui::Text("Source file: %s", selected->location.c_str());
+          if (ImGui::Button("Select source file...") && !dialog.busy()) {
+            if (auto const* form = workspace.resourceForm(selected->resourceType))
+              dialog.beginResourceFile(*form, window, false,
+                                       selected->resourceNamespace,
+                                       selected->name);
+          }
+          if (auto const* form = workspace.resourceForm(selected->resourceType)) {
+            for (auto const& option : form->options) {
+              auto value = std::find_if(
+                  selected->options.begin(), selected->options.end(),
+                  [&](auto const& item) { return item.first == option.name; });
+              std::string current = value == selected->options.end()
+                                        ? std::string{}
+                                        : value->second;
+              auto const* preview = current.empty() ? "Not set" : current.c_str();
+              if (ImGui::BeginCombo(option.name.c_str(), preview)) {
+                if (ImGui::Selectable("Not set", current.empty()))
+                  workspace.setResourceOption(selected->resourceNamespace,
+                                              selected->name, option.name, {});
+                auto drawChoice = [&](std::string const& choice) {
+                  if (ImGui::Selectable(choice.c_str(), current == choice))
+                    workspace.setResourceOption(selected->resourceNamespace,
+                                                selected->name, option.name,
+                                                choice);
+                };
+                for (auto const& choice : option.values) drawChoice(choice);
+                if (option.boolean) {
+                  drawChoice("true");
+                  drawChoice("false");
+                }
+                ImGui::EndCombo();
+              }
+            }
+          }
+          if (ImGui::Button("Delete Resource..."))
+            ImGui::OpenPopup("Confirm Resource deletion");
+          if (ImGui::BeginPopupModal("Confirm Resource deletion", nullptr,
+                                     ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Delete Resource '%s'?", selected->name.c_str());
+            if (ImGui::Button("Delete")) {
+              if (workspace.deleteResource(selected->resourceNamespace,
+                                           selected->name)) {
+                selectedNamespace.clear();
+                selectedName.clear();
+              }
+              ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+          }
+        }
+      } else {
+        ImGui::TextUnformatted("Document");
+        if (workspace.hasDocument()) {
+          ImGui::TextWrapped("Manifest: %s",
+                             workspace.hasPath()
+                                 ? displayPath(workspace.path()).c_str()
+                                 : "Unsaved Resource Manifest");
+          ImGui::TextWrapped("Base directory: %s",
+                             displayPath(workspace.baseDirectory()).c_str());
+          ImGui::Text("State: %s",
+                      workspace.dirty() ? "Unsaved changes" : "Saved");
+        } else {
+          ImGui::TextDisabled("No Resource Manifest is open.");
+        }
+      }
     }
     ImGui::EndChild();
     ImGui::BeginChild("Diagnostics", ImVec2(0.0f, 0.0f), true);
@@ -749,6 +978,13 @@ int runDesktop(DesktopArguments arguments) {
             case NativeDialog::Purpose::saveAs:
               completed = workspace.saveAs(*result->path);
               break;
+            case NativeDialog::Purpose::resourceFile:
+              completed = result->draftFile
+                              ? workspace.selectDraftFile(*result->path)
+                              : workspace.setResourceFile(
+                                    result->resourceNamespace,
+                                    result->resourceName, *result->path);
+              break;
             case NativeDialog::Purpose::none:
               break;
           }
@@ -767,6 +1003,9 @@ int runDesktop(DesktopArguments arguments) {
               case NativeDialog::Purpose::saveAs:
                 logger.info("Saved Resource Manifest: " +
                             displayPath(workspace.path()));
+                break;
+              case NativeDialog::Purpose::resourceFile:
+                logger.info("Selected a contained Resource source file.");
                 break;
               case NativeDialog::Purpose::none:
                 break;
@@ -864,6 +1103,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor document tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--authoring-tests") {
+      std::string failure;
+      if (!resource_manager::runAuthoringTests(&failure)) {
+        std::cerr << "Resource Manifest Editor authoring tests failed: " << failure
+                  << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor authoring tests passed.\n";
       return success;
     }
 

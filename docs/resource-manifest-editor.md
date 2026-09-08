@@ -54,6 +54,26 @@ editor does not display error dialogs.
 
 A manifest path can be supplied at launch. Its parent is the initial base directory.
 
+## File-backed Resource authoring
+
+The Resource menu creates `TextFile`, `XmlFile`, `Shader`, `AudioBank`, and `Image`
+Resources from the loaded built-in catalog. A new Resource remains an inspector draft
+until it has an explicit namespace-unique name and a selected source file. Resource Type
+is displayed read-only after creation. Image options are generated from its schema.
+
+The built-in schemas use the versioned
+[Resource Schema editor annotations](specifications/resource-schema-editor-annotations.md)
+to request native file controls and provide their filters. Source locations have no
+free-text editor. Both the base and selection are canonicalised; missing files,
+traversal outside the base, and symbolic-link or junction escapes are rejected. Accepted
+locations are committed with `/` separators relative to the base directory.
+
+Create, rename, source-file, Image-option, and delete changes are commands available
+through Edit/Undo and Edit/Redo (also Ctrl+Z/Ctrl+Y and toolbar buttons). Continuous
+changes coalesce, while incomplete text remains local to the inspector until commit.
+Deleting the final Resource in a named namespace removes that otherwise-invalid
+namespace in the same command.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -61,11 +81,14 @@ The headless validation command remains documented in
 
 ```sh
 resource-manager --document-tests
+resource-manager --authoring-tests
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
 `--document-tests` covers empty New, valid and rejected Open, canonical atomic Save, and
-YAML-extension enforcement without initializing SDL. `--smoke-test` executes New,
+YAML-extension enforcement without initializing SDL. `--authoring-tests` covers all five
+file-backed built-ins, drafts, native-selector metadata, path containment, canonical
+relative output, and create/property/rename/delete undo and redo. `--smoke-test` executes New,
 Save, and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.

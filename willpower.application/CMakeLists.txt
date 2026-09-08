@@ -195,10 +195,12 @@ add_executable(resource_manager
     tools/resource_manager.cpp
     tools/resource_manager/ResourceManagerShell.cpp
     tools/resource_manager/ResourceManagerShell.h)
-target_include_directories(resource_manager PRIVATE tools/resource_manager)
+target_include_directories(resource_manager PRIVATE
+    tools/resource_manager
+    "${WILLPOWER_NLOHMANN_JSON_INCLUDE_DIR}")
 target_compile_features(resource_manager PRIVATE cxx_std_20)
 target_link_libraries(resource_manager PRIVATE
-    Willpower.Application ext::mpp-app-support OpenGL::GL)
+    Willpower.Application ext::mpp-app-support ext::yaml-cpp OpenGL::GL)
 willpower_target_defaults(resource_manager)
 willpower_output_dirs(resource_manager)
 willpower_deploy_runtime_dlls(resource_manager)
@@ -371,6 +373,8 @@ if(BUILD_TESTING)
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_manager_cli_tests.cmake")
     willpower_add_test(NAME willpower_resource_manager_document_workflow
         COMMAND resource_manager --document-tests)
+    willpower_add_test(NAME willpower_resource_manager_authoring
+        COMMAND resource_manager --authoring-tests)
     willpower_add_test(NAME willpower_resource_manager_startup
         COMMAND "${CMAKE_COMMAND}"
             "-DTOOL=$<TARGET_FILE:resource_manager>"

@@ -105,6 +105,13 @@
           "required": ["location"],
           "properties": {
             "type": { "enum": ["Image"] },
+            "location": {
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-widget": "file",
+              "x-willpower-file-kind": "Images",
+              "x-willpower-file-extensions": ["png", "jpg", "jpeg", "bmp", "tga"]
+            },
             "Option": { "$ref": "#/definitions/optionCollection" },
             "Definitions": { "$ref": "#/definitions/definitions" }
           },

@@ -171,6 +171,12 @@ willpower_import_mpp_static(ext::imgui ImGui
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/ext/imgui/include;${WILLPOWER_MPP_SOURCE_DIR}/ext/imgui/include/imgui")
 willpower_import_mpp_static(ext::mpp-app-support MppAppSupport
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/mpp-app-support/include")
+# Resource Manifest Editor keeps yaml-cpp private to its implementation. It is
+# built by Utils in MPP's dependency build and no YAML type crosses a public ABI.
+willpower_import_mpp_static(ext::yaml-cpp yaml-cpp
+    INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/ext/utils/vendor/yaml-cpp/include")
+set_property(TARGET ext::yaml-cpp APPEND PROPERTY
+    INTERFACE_COMPILE_DEFINITIONS YAML_CPP_STATIC_DEFINE)
 
 willpower_import_mpp(ext::sdl SDL3
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/ext/sdl/include")

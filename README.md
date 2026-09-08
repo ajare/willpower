@@ -255,8 +255,10 @@ for the API, limits, command syntax, diagnostics, and exit codes.
 Launching `resource-manager` normally opens the first Resource Manifest Editor desktop
 shell. Its persistent SDL3/ImGui workspace can select a base directory for a valid empty
 manifest, open one structurally valid YAML document, and save canonical YAML through
-atomic replacement. The normal build and install include the required deployment INI
-and runtime dependencies. See the
+atomic replacement. It authors the five source-backed built-in Resource Types through
+catalogued forms, native annotated file selectors, contained portable paths, and
+undoable create/edit/rename/delete commands. The normal build and install include the
+required deployment INI and runtime dependencies. See the
 [Resource Manifest Editor desktop shell guide](docs/resource-manifest-editor.md) for
 startup logging and status codes, document commands, deployment, and smoke tests.
 

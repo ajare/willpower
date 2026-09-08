@@ -44,6 +44,13 @@
           "required": ["location"],
           "properties": {
             "type": { "enum": ["Shader"] },
+            "location": {
+              "$ref": "https://schemas.willpower.dev/resource-manifest/common.schema.json#/definitions/nonEmptyString",
+              "x-willpower-editor-version": "1.0",
+              "x-willpower-widget": "file",
+              "x-willpower-file-kind": "Shader source",
+              "x-willpower-file-extensions": ["vert", "frag", "geom", "comp", "glsl"]
+            },
             "Definitions": { "$ref": "#/definitions/definitions" }
           },
           "not": {
