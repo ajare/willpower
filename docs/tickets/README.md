@@ -114,3 +114,15 @@ Static bundles are the interoperability contract; native schema plugins are opti
 3. WP-034 integrates custom schemas into runtime validation; WP-035 adds export tooling after the catalog and composition APIs exist.
 4. WP-037 is the end-to-end acceptance and documentation gate.
 5. WP-036 is optional P2 work and can proceed after WP-032 without blocking static bundle support.
+
+---
+
+## Resource Manifest Editor initiative
+
+The parent product is [#24](https://github.com/ajare/willpower/issues/24). Its first,
+headless foundation is intentionally independent of the later desktop shell and editing
+work.
+
+| Ticket | Issue | Phase | Priority | Difficulty | Title | Blocked by | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [WP-038](WP-038.md) | [#38](https://github.com/ajare/willpower/issues/38) | Foundation | P1 | hard | Validate and round-trip manifests from the CLI | — | done |

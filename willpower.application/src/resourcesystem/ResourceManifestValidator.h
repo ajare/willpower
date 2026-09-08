@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -32,10 +33,11 @@ class ResourceManifestValidator {
 
   [[nodiscard]] bool contains(SchemaKey const& key) const;
   [[nodiscard]] std::vector<Failure> validate(
-      utils::YamlReader const& reader, std::string const& manifestPath) const;
+      utils::YamlReader const& reader, std::string const& manifestPath,
+      std::size_t maximumFailures = 100) const;
   [[nodiscard]] std::vector<Failure> validate(
       utils::YamlReader const& reader, std::string const& manifestPath,
-      SchemaKey const& key) const;
+      SchemaKey const& key, std::size_t maximumFailures = 100) const;
 
  private:
   ResourceSchemaCatalogSnapshot mCatalog;

@@ -244,6 +244,14 @@ complete [application integration guide](docs/resource-schema-integration.md) co
 schema authoring, CMake and runtime registration, installed-package use, export,
 compatibility, and security boundaries.
 
+The public `ResourceManifestDocument` API parses, structurally validates, and
+canonically serializes one bounded YAML Resource Manifest without exposing parser or
+validator types. The headless `resource-manager --validate FILE --base-directory DIR`
+command uses the embedded catalog and can optionally write verified canonical output;
+it does not initialize SDL or load source assets. See
+[Resource Manifest document and headless validation](docs/resource-manifest-tools.md)
+for the API, limits, command syntax, diagnostics, and exit codes.
+
 For schemas unavailable when an application bundle is generated, the tool and
 `ResourceSchemaCatalog::addPlugin()` optionally accept exact, explicitly supplied native
 Resource Type Plugin paths. The versioned C ABI copies a bundle from the plugin and

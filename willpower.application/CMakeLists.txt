@@ -72,6 +72,7 @@ install(DIRECTORY "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/"
     PATTERN "generated.stamp" EXCLUDE)
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/include/willpower/application/resourcesystem/ResourceSchemaPlugin.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/willpower/application/resourcesystem/ResourceManifestDocument.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/willpower/application/resourcesystem"
     COMPONENT Willpower_Application)
 install(FILES
@@ -131,6 +132,7 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/ResourceDefinitionFactory.cpp
     src/resourcesystem/ResourceLocation.cpp
     src/resourcesystem/ResourceManager.cpp
+    src/resourcesystem/ResourceManifestDocument.cpp
     src/resourcesystem/ResourceSchemaCatalog.cpp
     src/resourcesystem/ResourceSchemaExporter.cpp
     src/resourcesystem/ResourceSchemaPlugin.cpp
@@ -186,6 +188,20 @@ set_target_properties(willpower_resource_schemas PROPERTIES
     OUTPUT_NAME willpower-resource-schemas
     FOLDER Willpower/Tools)
 install(TARGETS willpower_resource_schemas
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT Willpower_Application)
+
+add_executable(resource_manager tools/resource_manager.cpp)
+target_compile_features(resource_manager PRIVATE cxx_std_20)
+target_link_libraries(resource_manager PRIVATE Willpower.Application)
+willpower_target_defaults(resource_manager)
+willpower_output_dirs(resource_manager)
+willpower_deploy_runtime_dlls(resource_manager)
+willpower_deploy_vendor_dlls(resource_manager)
+set_target_properties(resource_manager PROPERTIES
+    OUTPUT_NAME resource-manager
+    FOLDER Willpower/Tools)
+install(TARGETS resource_manager
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Willpower_Application)
 
@@ -285,6 +301,26 @@ if(BUILD_TESTING)
     willpower_add_test(NAME willpower_application_resource_yaml
         COMMAND willpower_application_resource_yaml_tests
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml")
+
+    add_executable(willpower_application_resource_manifest_document_tests
+        tests/resource_manifest_document_tests.cpp)
+    target_compile_features(willpower_application_resource_manifest_document_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_resource_manifest_document_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_resource_manifest_document_tests)
+    willpower_output_dirs(willpower_application_resource_manifest_document_tests)
+    set_target_properties(willpower_application_resource_manifest_document_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_resource_manifest_document_tests)
+    willpower_deploy_vendor_dlls(willpower_application_resource_manifest_document_tests)
+    willpower_add_test(NAME willpower_application_resource_manifest_document
+        COMMAND willpower_application_resource_manifest_document_tests
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml")
+
+    willpower_add_test(NAME willpower_resource_manager_cli
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTOOL=$<TARGET_FILE:resource_manager>"
+            "-DVALID_MANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/resource-manager-cli-test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_manager_cli_tests.cmake")
 
     add_executable(willpower_application_resource_definition_tests
         tests/resource_definition_tests.cpp)

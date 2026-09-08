@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
 #include <string_view>
@@ -15,7 +16,6 @@ namespace {
 using Json = nlohmann::json;
 
 ResourceManifestValidator::SchemaKey const manifestSchemaKey{"ResourceManifest", ""};
-constexpr std::size_t maximumValidationFailures = 100;
 constexpr std::string_view commonSchemaId =
     "https://schemas.willpower.dev/resource-manifest/common.schema.json";
 constexpr std::string_view resourceSchemaId =
@@ -290,11 +290,14 @@ bool ResourceManifestValidator::contains(SchemaKey const& key) const {
 }
 
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
-    utils::YamlReader const& reader, std::string const& manifestPath) const {
+    utils::YamlReader const& reader, std::string const& manifestPath,
+    std::size_t maximumFailures) const {
+  if (maximumFailures == 0) return {};
+
   auto const catalog = schemaDocuments(mCatalog);
   auto failures = validateSchema(reader, manifestPath, manifestSchemaKey,
                                  commonManifestSchema().dump(), catalog,
-                                 maximumValidationFailures);
+                                 maximumFailures);
 
   // Dispatch is a distinct second pass. Running it even when common validation
   // found errors preserves aggregate diagnostics for other declarations in the
@@ -302,13 +305,16 @@ std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::valid
   // oneOf reports branch bookkeeping as well as the useful leaf failures. Give
   // the dispatch pass room for every catalog branch, then de-duplicate and
   // enforce the public diagnostic bound below.
+  auto const branchCount = mCatalog.entries().size() + 1U;
+  auto const dispatchMaximum =
+      maximumFailures > (std::numeric_limits<std::size_t>::max)() / branchCount
+          ? (std::numeric_limits<std::size_t>::max)()
+          : maximumFailures * branchCount;
   auto dispatched = validateSchema(reader, manifestPath, manifestSchemaKey,
                                    dispatchManifestSchema(mCatalog,
                                                           resourceTypesInDocument(reader))
                                        .dump(),
-                                   catalog,
-                                   maximumValidationFailures *
-                                       (mCatalog.entries().size() + 1U));
+                                   catalog, dispatchMaximum);
   failures.insert(failures.end(), std::make_move_iterator(dispatched.begin()),
                   std::make_move_iterator(dispatched.end()));
   sortFailures(failures);
@@ -319,20 +325,21 @@ std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::valid
                           left.message == right.message;
                  }),
                  failures.end());
-  if (failures.size() > maximumValidationFailures) {
-    failures.resize(maximumValidationFailures);
+  if (failures.size() > maximumFailures) {
+    failures.resize(maximumFailures);
   }
   return failures;
 }
 
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
     utils::YamlReader const& reader, std::string const& manifestPath,
-    SchemaKey const& key) const {
+    SchemaKey const& key, std::size_t maximumFailures) const {
+  if (maximumFailures == 0) return {};
   auto const* root = findSchema(mCatalog, key);
   if (!root) return {};
 
   auto failures = validateSchema(reader, manifestPath, key, root->contents,
-                                 schemaDocuments(mCatalog), maximumValidationFailures);
+                                 schemaDocuments(mCatalog), maximumFailures);
   sortFailures(failures);
   return failures;
 }
