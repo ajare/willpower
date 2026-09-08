@@ -119,10 +119,11 @@ Static bundles are the interoperability contract; native schema plugins are opti
 
 ## Resource Manifest Editor initiative
 
-The parent product is [#24](https://github.com/ajare/willpower/issues/24). Its first,
-headless foundation is intentionally independent of the later desktop shell and editing
-work.
+The parent product is [#24](https://github.com/ajare/willpower/issues/24). Its shared
+document foundation remains usable headlessly while the desktop shell and later editing
+work build on the same validation contract.
 
 | Ticket | Issue | Phase | Priority | Difficulty | Title | Blocked by | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [WP-038](WP-038.md) | [#38](https://github.com/ajare/willpower/issues/38) | Foundation | P1 | hard | Validate and round-trip manifests from the CLI | — | done |
+| [WP-039](WP-039.md) | [#39](https://github.com/ajare/willpower/issues/39) | Desktop shell | P1 | hard | Create, open, and save manifests in the desktop shell | WP-038 | done |

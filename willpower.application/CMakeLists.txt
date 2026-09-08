@@ -191,9 +191,14 @@ install(TARGETS willpower_resource_schemas
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Willpower_Application)
 
-add_executable(resource_manager tools/resource_manager.cpp)
+add_executable(resource_manager
+    tools/resource_manager.cpp
+    tools/resource_manager/ResourceManagerShell.cpp
+    tools/resource_manager/ResourceManagerShell.h)
+target_include_directories(resource_manager PRIVATE tools/resource_manager)
 target_compile_features(resource_manager PRIVATE cxx_std_20)
-target_link_libraries(resource_manager PRIVATE Willpower.Application)
+target_link_libraries(resource_manager PRIVATE
+    Willpower.Application ext::mpp-app-support OpenGL::GL)
 willpower_target_defaults(resource_manager)
 willpower_output_dirs(resource_manager)
 willpower_deploy_runtime_dlls(resource_manager)
@@ -201,9 +206,52 @@ willpower_deploy_vendor_dlls(resource_manager)
 set_target_properties(resource_manager PROPERTIES
     OUTPUT_NAME resource-manager
     FOLDER Willpower/Tools)
+add_custom_command(TARGET resource_manager POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/resource-manager.ini"
+        "$<TARGET_FILE_DIR:resource_manager>/resource-manager.ini"
+    VERBATIM)
 install(TARGETS resource_manager
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Willpower_Application)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resource-manager.ini"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT Willpower_Application)
+if(WIN32)
+    set(_resource_manager_runtime_destination "${CMAKE_INSTALL_BINDIR}")
+else()
+    set(_resource_manager_runtime_destination "${CMAKE_INSTALL_LIBDIR}")
+    set_property(TARGET resource_manager PROPERTY
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif()
+install(FILES
+    "$<TARGET_FILE:Willpower.Application>"
+    "$<TARGET_FILE:Willpower.Common>"
+    "$<TARGET_FILE:ext::mpp>"
+    "$<TARGET_FILE:ext::mpp-data>"
+    "$<TARGET_FILE:ext::mpp-mesh>"
+    "$<TARGET_FILE:ext::mpp-program>"
+    "$<TARGET_FILE:ext::Utils>"
+    "$<TARGET_FILE:ext::glew>"
+    "$<TARGET_FILE:ext::sdl>"
+    DESTINATION "${_resource_manager_runtime_destination}"
+    COMPONENT Willpower_Application)
+if(WILLPOWER_ENABLE_FMOD)
+    install(FILES
+        "$<TARGET_FILE:vendor::fmod>"
+        "$<TARGET_FILE:vendor::fmodstudio>"
+        DESTINATION "${_resource_manager_runtime_destination}"
+        COMPONENT Willpower_Application)
+endif()
+if(NOT WIN32)
+    # SDL and GLEW use versioned SONAME links on Linux. Install the complete
+    # link chains rather than only the unversioned imported-target path.
+    install(DIRECTORY "${_mpp_bin}/${CMAKE_BUILD_TYPE}/"
+        DESTINATION "${_resource_manager_runtime_destination}"
+        COMPONENT Willpower_Application
+        FILES_MATCHING REGEX "/lib(SDL3|GLEW)\\.so(\\..*)?$")
+endif()
+unset(_resource_manager_runtime_destination)
 
 if(BUILD_TESTING)
     willpower_add_test(NAME willpower_resource_schema_bundle
@@ -321,6 +369,20 @@ if(BUILD_TESTING)
             "-DVALID_MANIFEST=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/Resources.yaml"
             "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/resource-manager-cli-test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_manager_cli_tests.cmake")
+    willpower_add_test(NAME willpower_resource_manager_document_workflow
+        COMMAND resource_manager --document-tests)
+    willpower_add_test(NAME willpower_resource_manager_startup
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTOOL=$<TARGET_FILE:resource_manager>"
+            "-DINI=$<TARGET_FILE_DIR:resource_manager>/resource-manager.ini"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/resource-manager-startup-test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_manager_startup_tests.cmake")
+    willpower_add_test(NAME willpower_resource_manager_gui_smoke
+        COMMAND resource_manager --smoke-test
+            --ini "$<TARGET_FILE_DIR:resource_manager>/resource-manager.ini")
+    set_tests_properties(willpower_resource_manager_gui_smoke PROPERTIES
+        SKIP_RETURN_CODE 77
+        LABELS "gui;smoke")
 
     add_executable(willpower_application_resource_definition_tests
         tests/resource_definition_tests.cpp)

@@ -2,6 +2,8 @@ include_guard(GLOBAL)
 include(ExternalProject)
 include(FetchContent)
 
+find_package(OpenGL REQUIRED)
+
 # Fetch once in the top-level build, then hand the pinned header-only source to
 # Utils' independent build. Utils has the same pinned fallback for standalone
 # MassivePolyPusher builds.
@@ -79,6 +81,7 @@ ExternalProject_Add(willpower_mpp_external
     BUILD_COMMAND
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG> --parallel
         --target MassivePolyPusher MppMesh MppHelper MppProgram MppData Utils glew
+                 MppAppSupport ImGui SDL3-shared
     # MPP is consumed directly from its build tree; make the no-op explicit
     # rather than having ExternalProject print a misleading "No install step".
     INSTALL_COMMAND "${CMAKE_COMMAND}" -E true
@@ -144,6 +147,33 @@ willpower_import_mpp(ext::mpp-program MppProgram
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/mpp-program/include")
 willpower_import_mpp(ext::mpp-data MppData
     INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/mpp-data/include")
+
+function(willpower_import_mpp_static target stem)
+    cmake_parse_arguments(ARG "" "" "INCLUDE" ${ARGN})
+    add_library(${target} STATIC IMPORTED GLOBAL)
+    if(WIN32)
+        set_target_properties(${target} PROPERTIES
+            IMPORTED_CONFIGURATIONS "Debug;Release;Shipping;MemCheck"
+            IMPORTED_LOCATION_RELEASE "${_mpp_lib}/Release/${stem}.lib"
+            IMPORTED_LOCATION_SHIPPING "${_mpp_lib}/Shipping/${stem}.lib"
+            IMPORTED_LOCATION_DEBUG "${_mpp_lib}/Debug/${stem}d.lib"
+            IMPORTED_LOCATION_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
+            INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
+    else()
+        set_target_properties(${target} PROPERTIES
+            IMPORTED_LOCATION "${_mpp_lib}/${CMAKE_BUILD_TYPE}/lib${stem}.a"
+            INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
+    endif()
+    add_dependencies(${target} willpower_mpp_external)
+endfunction()
+
+willpower_import_mpp_static(ext::imgui ImGui
+    INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/ext/imgui/include;${WILLPOWER_MPP_SOURCE_DIR}/ext/imgui/include/imgui")
+willpower_import_mpp_static(ext::mpp-app-support MppAppSupport
+    INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/mpp-app-support/include")
+
+willpower_import_mpp(ext::sdl SDL3
+    INCLUDE "${WILLPOWER_MPP_SOURCE_DIR}/ext/sdl/include")
 willpower_import_mpp(ext::glew glew32
     LINUX_STEM GLEW
     INCLUDE "${_mpp_glew_include}")
@@ -153,6 +183,13 @@ set_property(TARGET ext::glew APPEND PROPERTY
 # Runtime dependencies which cannot be inferred from an imported DLL alone.
 set_property(TARGET ext::mpp APPEND PROPERTY
     INTERFACE_LINK_LIBRARIES "ext::mpp-data;ext::glew")
+set_property(TARGET ext::mpp-app-support APPEND PROPERTY
+    INTERFACE_LINK_LIBRARIES
+        "ext::mpp;ext::mpp-mesh;ext::mpp-program;ext::Utils;ext::imgui;ext::sdl;ext::glew;${CMAKE_DL_LIBS}")
+if(WIN32)
+    set_property(TARGET ext::mpp-app-support APPEND PROPERTY
+        INTERFACE_LINK_LIBRARIES "comdlg32;shell32;ole32")
+endif()
 
 set(_poly2tri_dir "${WILLPOWER_MPP_SOURCE_DIR}/ext/assimp/contrib/poly2tri")
 add_library(vendor_poly2tri STATIC

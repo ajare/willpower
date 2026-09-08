@@ -252,6 +252,14 @@ it does not initialize SDL or load source assets. See
 [Resource Manifest document and headless validation](docs/resource-manifest-tools.md)
 for the API, limits, command syntax, diagnostics, and exit codes.
 
+Launching `resource-manager` normally opens the first Resource Manifest Editor desktop
+shell. Its persistent SDL3/ImGui workspace can select a base directory for a valid empty
+manifest, open one structurally valid YAML document, and save canonical YAML through
+atomic replacement. The normal build and install include the required deployment INI
+and runtime dependencies. See the
+[Resource Manifest Editor desktop shell guide](docs/resource-manifest-editor.md) for
+startup logging and status codes, document commands, deployment, and smoke tests.
+
 For schemas unavailable when an application bundle is generated, the tool and
 `ResourceSchemaCatalog::addPlugin()` optionally accept exact, explicitly supplied native
 Resource Type Plugin paths. The versioned C ABI copies a bundle from the plugin and
