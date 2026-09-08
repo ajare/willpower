@@ -269,9 +269,14 @@ can select a complete application Resource Schema Bundle plus ordered extensions
 relative paths use the INI directory and embedded built-ins are used only when no base
 is configured. Supported application forms are authored entirely from trusted bundle
 data, while unknown or unsupported payloads are preserved with explicit read-only
-warnings. `--verify-schemas` validates this configuration headlessly, and the Schemas
-menu reloads it atomically without replacing a working catalog on failure. The editor
-loads no application code, plugins, or network schemas. The normal build and install
+warnings. Structurally valid documents open even with semantic errors; selectable
+semantic diagnostics cover names, known references, cycles, annotated target types,
+and annotated file existence/containment. Repairs may leave existing errors but cannot
+introduce unrelated ones, and Save/Save As remain unavailable until only non-blocking
+warnings remain. Changing the base directory rewrites annotated file values while
+preserving their absolute targets. `--verify-schemas` validates configuration
+headlessly, and the Schemas menu reloads it atomically without replacing a working
+catalog on failure. The editor loads no application code, plugins, or network schemas. The normal build and install
 include the required deployment INI and runtime dependencies. See the
 [Resource Manifest Editor desktop shell guide](docs/resource-manifest-editor.md) for
 startup logging and status codes, document commands, schema annotations, deployment,
@@ -356,7 +361,7 @@ The schemas preserve the loader's compatibility forms:
   manifests remain loadable.
 
 Structural validation covers document shape, required and unknown fields, supported
-enums, and scalar syntax/ranges. Semantic validation remains separate and later:
+enums, and scalar syntax/ranges. Semantic validation remains outside JSON Schema:
 `validateResourceDefinitions()` and `ResourceManager` check source-file existence,
 duplicate declarations, dependency resolution and cycles, loaded image bounds, and
 references into other Resources. Source asset contents (for example XML, image, shader,

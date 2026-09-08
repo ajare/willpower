@@ -318,17 +318,14 @@ std::vector<ResourceDeclaration> resourceDeclarations(YAML::Node const& root) {
 std::vector<std::string> standardAllowedTypes(std::string const& ownerType,
                                                std::string const& dependencyId) {
   if (ownerType == "ImageSet" && dependencyId == "Image") return {"Image"};
-  if (ownerType == "AnimationSet" && dependencyId == "Image") {
+  if (ownerType == "AnimationSet" && dependencyId == "Image")
     return {"ImageSet"};
-  }
   if (ownerType == "Program" &&
-      (dependencyId == "Vertex" || dependencyId == "Fragment")) {
+      (dependencyId == "Vertex" || dependencyId == "Fragment"))
     return {"Shader"};
-  }
-  if (ownerType == "Material") {
+  if (ownerType == "Material")
     return dependencyId == "Program" ? std::vector<std::string>{"Program"}
                                      : std::vector<std::string>{"Image"};
-  }
   return {};
 }
 
@@ -1168,6 +1165,439 @@ std::vector<ResourceForm> loadResourceForms(
   return result;
 }
 
+struct FileAnnotation {
+  std::string property;
+  std::vector<std::string> extensions;
+};
+
+void collectFileAnnotations(Json const& value,
+                            std::vector<FileAnnotation>& result) {
+  if (value.is_object()) {
+    if (value.contains("properties") && value.at("properties").is_object()) {
+      for (auto const& [name, property] : value.at("properties").items()) {
+        if (!property.is_object() ||
+            property.value(std::string(widgetKeyword), std::string{}) != "file") {
+          continue;
+        }
+        FileAnnotation annotation;
+        annotation.property = name;
+        annotation.extensions =
+            property.at("x-willpower-file-extensions")
+                .get<std::vector<std::string>>();
+        auto found = std::find_if(
+            result.begin(), result.end(), [&](auto const& existing) {
+              return existing.property == annotation.property;
+            });
+        if (found == result.end()) result.push_back(std::move(annotation));
+      }
+    }
+    for (auto const& [name, child] : value.items()) {
+      static_cast<void>(name);
+      collectFileAnnotations(child, result);
+    }
+  } else if (value.is_array()) {
+    for (auto const& child : value) collectFileAnnotations(child, result);
+  }
+}
+
+std::vector<FileAnnotation> fileAnnotations(
+    ResourceSchemaCatalogSnapshot const& catalog,
+    std::string const& resourceType) {
+  std::vector<FileAnnotation> result;
+  auto const* schema = catalog.findExact({resourceType, {}});
+  if (schema) collectFileAnnotations(Json::parse(schema->contents), result);
+  return result;
+}
+
+std::vector<ResourceDependencyForm> dependencyAnnotations(
+    ResourceSchemaCatalogSnapshot const& catalog,
+    std::string const& resourceType) {
+  std::vector<ResourceDependencyForm> result;
+  auto const* schema = catalog.findExact({resourceType, {}});
+  if (schema)
+    collectAnnotatedDependencies(Json::parse(schema->contents), result);
+  return result;
+}
+
+struct SemanticResource {
+  YAML::Node node;
+  ResourceIdentity identity;
+  ResourceIdentity owner;
+  std::string resourceType;
+  std::string path;
+  std::string navigationPath;
+  std::string navigationName;
+  bool inlineResource = false;
+  std::size_t dependencyIndex = 0;
+};
+
+struct SemanticNamespace {
+  YAML::Node node;
+  std::string name;
+  std::string path;
+};
+
+void collectSemanticDocument(
+    YAML::Node const& root, std::vector<SemanticNamespace>& namespaces,
+    std::vector<SemanticResource>& declarations) {
+  auto appendResources = [&](std::string const& resourceNamespace,
+                             YAML::Node const& collection,
+                             std::string const& collectionPath) {
+    auto resources = collectionItems(collection);
+    for (std::size_t index = 0; index < resources.size(); ++index) {
+      auto path = collectionPath + "/" + std::to_string(index);
+      ResourceIdentity owner{resourceNamespace, resourceIdentity(resources[index])};
+      declarations.push_back({resources[index], owner, {},
+                              scalar(resources[index], "type"), path, path,
+                              owner.name, false});
+      auto dependencies = standardDependencyItems(resources[index]);
+      for (std::size_t dependencyIndex = 0;
+           dependencyIndex < dependencies.size(); ++dependencyIndex) {
+        auto const& dependency = dependencies[dependencyIndex];
+        if (!scalar(dependency, "ref").empty() ||
+            scalar(dependency, "type").empty()) {
+          continue;
+        }
+        auto dependencyPath =
+            path + "/DependentResources/DependentResource/" +
+            std::to_string(dependencyIndex);
+        declarations.push_back(
+            {dependency,
+             {resourceNamespace, resourceIdentity(dependency)}, owner,
+             scalar(dependency, "type"), std::move(dependencyPath), path,
+             owner.name, true, dependencyIndex});
+      }
+    }
+  };
+
+  auto resourcesRoot = root["Resources"];
+  appendResources({}, resourcesRoot["Resource"], "/Resources/Resource");
+  auto namespaceItems = collectionItems(resourcesRoot["Namespace"]);
+  for (std::size_t index = 0; index < namespaceItems.size(); ++index) {
+    auto path = "/Resources/Namespace/" + std::to_string(index);
+    auto name = scalar(namespaceItems[index], "name");
+    namespaces.push_back({namespaceItems[index], name, path});
+    appendResources(name, namespaceItems[index]["Resource"],
+                    path + "/Resource");
+  }
+}
+
+bool sameExtension(std::string left, std::string right) {
+  auto lower = [](std::string& value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) {
+                     return static_cast<char>(std::tolower(character));
+                   });
+  };
+  lower(left);
+  lower(right);
+  return left == right;
+}
+
+std::vector<SemanticDiagnostic> semanticDiagnosticsFor(
+    YAML::Node const& root, ResourceSchemaCatalogSnapshot const& catalog,
+    fs::path const& baseDirectory) {
+  std::vector<SemanticDiagnostic> result;
+  std::vector<SemanticNamespace> namespaces;
+  std::vector<SemanticResource> declarations;
+  collectSemanticDocument(root, namespaces, declarations);
+
+  auto add = [&](SemanticDiagnosticKind kind, SemanticResource const& resource,
+                 std::string instancePath, std::string message,
+                 std::string subject,
+                 SemanticDiagnosticSeverity severity =
+                     SemanticDiagnosticSeverity::error) {
+    result.push_back({severity,
+                      kind,
+                      resource.identity.resourceNamespace,
+                      resource.navigationName,
+                      resource.navigationPath,
+                      std::move(instancePath),
+                      std::move(message),
+                      std::move(subject)});
+    result.back().inlineResource = resource.inlineResource;
+    result.back().dependencyIndex = resource.dependencyIndex;
+  };
+
+  std::map<std::string, std::size_t> namespaceCounts;
+  for (auto const& item : namespaces) ++namespaceCounts[item.name];
+  for (auto const& item : namespaces) {
+    SemanticResource navigation;
+    navigation.identity.resourceNamespace = item.name;
+    navigation.path = item.path;
+    navigation.navigationPath = item.path;
+    if (!validNamespaceName(item.name)) {
+      add(SemanticDiagnosticKind::invalidName, navigation, item.path + "/name",
+          "Namespace name is invalid; names cannot be empty or contain '/'.",
+          "namespace:" + item.name);
+    }
+    if (namespaceCounts[item.name] > 1U) {
+      add(SemanticDiagnosticKind::duplicateName, navigation,
+          item.path + "/name", "Namespace name '" + item.name +
+                                   "' is duplicated.",
+          "namespace:" + item.name);
+    }
+  }
+
+  std::map<ResourceIdentity, std::size_t> identityCounts;
+  for (auto const& resource : declarations) ++identityCounts[resource.identity];
+  for (auto const& resource : declarations) {
+    auto const namePath = resource.path + "/name";
+    if (!validResourceName(resource.identity.name)) {
+      add(SemanticDiagnosticKind::invalidName, resource, namePath,
+          "Resource name '" + resource.identity.name +
+              "' is invalid; names cannot be empty or contain '/'.",
+          "resource:" + qualifiedIdentity(resource.identity));
+    }
+    if (identityCounts[resource.identity] > 1U) {
+      add(SemanticDiagnosticKind::duplicateName, resource, namePath,
+          "Resource identity '" + qualifiedIdentity(resource.identity) +
+              "' is duplicated.",
+          "resource:" + qualifiedIdentity(resource.identity));
+    }
+
+    auto duplicateProperties = [&](YAML::Node const& collection,
+                                   char const* property,
+                                   std::string const& collectionPath,
+                                   std::string const& label,
+                                   bool includeEmpty) {
+      auto items = collectionItems(collection);
+      std::map<std::string, std::size_t> counts;
+      for (auto const& item : items) {
+        auto value = scalar(item, property);
+        if (includeEmpty || !value.empty()) ++counts[value];
+      }
+      for (std::size_t index = 0; index < items.size(); ++index) {
+        auto value = scalar(items[index], property);
+        if ((!includeEmpty && value.empty()) || counts[value] < 2U) continue;
+        add(SemanticDiagnosticKind::duplicateName, resource,
+            resource.path + collectionPath + "/" + std::to_string(index) +
+                "/" + property,
+            label + " '" + (value.empty() ? std::string("<default>") : value) +
+                "' is duplicated.",
+            label + ":" + value);
+      }
+    };
+    duplicateProperties(resource.node["Option"], "name", "/Option",
+                        "Option name", false);
+    auto dependentResources = resource.node["DependentResources"];
+    if (dependentResources && dependentResources.IsMap()) {
+      duplicateProperties(dependentResources["DependentResource"], "id",
+                          "/DependentResources/DependentResource",
+                          "Dependency ID", false);
+    }
+    auto definitions = resource.node["Definitions"];
+    if (definitions && definitions.IsMap()) {
+      duplicateProperties(definitions["Definition"], "factory",
+                          "/Definitions/Definition", "Definition factory", true);
+    }
+
+    auto duplicateNestedNames = [&](std::vector<std::pair<YAML::Node, std::string>>
+                                        const& namedItems,
+                                    std::string const& label) {
+      std::map<std::string, std::size_t> counts;
+      for (auto const& [item, path] : namedItems) {
+        static_cast<void>(path);
+        ++counts[scalar(item, "name")];
+      }
+      for (auto const& [item, path] : namedItems) {
+        auto name = scalar(item, "name");
+        if (counts[name] < 2U) continue;
+        add(SemanticDiagnosticKind::duplicateName, resource, path + "/name",
+            label + " name '" + name + "' is duplicated.",
+            label + ":" + name);
+      }
+    };
+    if (resource.resourceType == "ImageSet") {
+      for (std::size_t definitionIndex = 0;
+           definitionIndex < collectionItems(
+                                 resource.node["Definitions"]["Definition"])
+                                 .size();
+           ++definitionIndex) {
+        auto definitionItems =
+            collectionItems(resource.node["Definitions"]["Definition"]);
+        auto images = definitionItems[definitionIndex]["Images"];
+        std::vector<std::pair<YAML::Node, std::string>> namedItems;
+        for (auto const* key : {"Image", "ImageSet"}) {
+          auto items = collectionItems(images[key]);
+          for (std::size_t index = 0; index < items.size(); ++index) {
+            namedItems.emplace_back(
+                items[index], resource.path + "/Definitions/Definition/" +
+                                  std::to_string(definitionIndex) + "/Images/" +
+                                  key + "/" + std::to_string(index));
+          }
+        }
+        duplicateNestedNames(namedItems, "Image");
+      }
+    } else if (resource.resourceType == "AnimationSet") {
+      auto definitionItems =
+          collectionItems(resource.node["Definitions"]["Definition"]);
+      for (std::size_t definitionIndex = 0;
+           definitionIndex < definitionItems.size(); ++definitionIndex) {
+        auto animations = collectionItems(
+            definitionItems[definitionIndex]["Animations"]["Animation"]);
+        std::vector<std::pair<YAML::Node, std::string>> namedItems;
+        for (std::size_t index = 0; index < animations.size(); ++index) {
+          namedItems.emplace_back(
+              animations[index],
+              resource.path + "/Definitions/Definition/" +
+                  std::to_string(definitionIndex) +
+                  "/Animations/Animation/" + std::to_string(index));
+        }
+        duplicateNestedNames(namedItems, "Animation");
+      }
+    }
+
+    if (catalog.findExact({resource.resourceType, {}}) == nullptr) {
+      add(SemanticDiagnosticKind::unvalidatedData, resource,
+          resource.path + "/type",
+          "No Resource Type schema is loaded; unannotated strings are preserved "
+          "without guessed file or reference semantics.",
+          "unknown:" + resource.resourceType,
+          SemanticDiagnosticSeverity::warning);
+    }
+
+    for (auto const& annotation : fileAnnotations(catalog, resource.resourceType)) {
+      auto valueNode = resource.node[annotation.property];
+      if (!valueNode || !valueNode.IsScalar()) continue;
+      auto value = valueNode.as<std::string>();
+      auto stored = fs::path(value);
+      auto target = stored.is_absolute() ? stored : baseDirectory / stored;
+      std::error_code error;
+      auto resolved = fs::weakly_canonical(target, error);
+      if (error) resolved = fs::absolute(target, error).lexically_normal();
+      auto instancePath = resource.path + "/" + annotation.property;
+      if (stored.is_absolute() || error || !containedBy(baseDirectory, resolved)) {
+        add(SemanticDiagnosticKind::pathContainment, resource, instancePath,
+            "Annotated file target '" + value +
+                "' is outside the canonical base directory or cannot be "
+                "represented safely.",
+            "file:" + value);
+        continue;
+      }
+      error.clear();
+      if (!fs::is_regular_file(resolved, error)) {
+        add(SemanticDiagnosticKind::missingFile, resource, instancePath,
+            "Annotated file target '" + value +
+                "' does not exist as a regular file.",
+            "file:" + value);
+        continue;
+      }
+      auto extension = resolved.extension().string();
+      if (!extension.empty() && extension.front() == '.') extension.erase(0, 1U);
+      if (std::none_of(annotation.extensions.begin(), annotation.extensions.end(),
+                       [&](auto const& allowed) {
+                         return sameExtension(extension, allowed);
+                       })) {
+        add(SemanticDiagnosticKind::invalidFileTarget, resource, instancePath,
+            "Annotated file target '" + value +
+                "' does not match its schema file extensions.",
+            "file-extension:" + value);
+      }
+    }
+  }
+
+  struct ReferenceEdge {
+    ResourceIdentity owner;
+    ResourceIdentity target;
+    SemanticResource const* resource = nullptr;
+    std::size_t dependencyIndex = 0;
+    std::string reference;
+  };
+  std::vector<ReferenceEdge> edges;
+  std::map<ResourceIdentity, std::vector<ResourceIdentity>> graph;
+  for (auto const& resource : declarations) {
+    if (resource.inlineResource) {
+      if (identityCounts[resource.owner] == 1U &&
+          identityCounts[resource.identity] == 1U)
+        graph[resource.owner].push_back(resource.identity);
+      continue;
+    }
+    auto dependencies = standardDependencyItems(resource.node);
+    auto annotations = dependencyAnnotations(catalog, resource.resourceType);
+    for (std::size_t index = 0; index < dependencies.size(); ++index) {
+      auto reference = scalar(dependencies[index], "ref");
+      if (reference.empty()) continue;
+      auto target = parseReference(reference, resource.identity.resourceNamespace);
+      auto matches = identityCounts[target];
+      auto path = resource.path + "/DependentResources/DependentResource/" +
+                  std::to_string(index) + "/ref";
+      if (matches != 1U) {
+        add(SemanticDiagnosticKind::unresolvedReference, resource, path,
+            "Known Resource reference '" + reference + "' is " +
+                (matches == 0U ? "unresolved." : "ambiguous."),
+            "reference:" + scalar(dependencies[index], "id") + ":" +
+                qualifiedIdentity(target));
+        continue;
+      }
+      auto declaration = std::find_if(
+          declarations.begin(), declarations.end(), [&](auto const& candidate) {
+            return candidate.identity == target;
+          });
+      auto annotation = std::find_if(
+          annotations.begin(), annotations.end(), [&](auto const& candidate) {
+            return candidate.id == scalar(dependencies[index], "id");
+          });
+      auto allowedTypes =
+          standardAllowedTypes(resource.resourceType,
+                               scalar(dependencies[index], "id"));
+      if (annotation != annotations.end())
+        allowedTypes = annotation->allowedResourceTypes;
+      if (!allowedTypes.empty() &&
+          !allowedResourceType(allowedTypes, declaration->resourceType)) {
+        add(SemanticDiagnosticKind::referenceTypeMismatch, resource, path,
+            "Typed Resource reference '" + reference + "' targets type '" +
+                declaration->resourceType + "'; expected " +
+                allowedTypes.front() + ".",
+            "reference-type:" + scalar(dependencies[index], "id") + ":" +
+                qualifiedIdentity(target));
+      }
+      graph[resource.identity].push_back(target);
+      edges.push_back({resource.identity, target, &resource, index,
+                       std::move(reference)});
+    }
+  }
+
+  auto reaches = [&](ResourceIdentity start, ResourceIdentity target) {
+    std::set<ResourceIdentity> visited;
+    std::vector<ResourceIdentity> pending{std::move(start)};
+    while (!pending.empty()) {
+      auto current = std::move(pending.back());
+      pending.pop_back();
+      if (current == target) return true;
+      if (!visited.insert(current).second) continue;
+      auto found = graph.find(current);
+      if (found != graph.end())
+        pending.insert(pending.end(), found->second.begin(), found->second.end());
+    }
+    return false;
+  };
+  for (auto const& edge : edges) {
+    if (!reaches(edge.target, edge.owner)) continue;
+    auto path = edge.resource->path +
+                "/DependentResources/DependentResource/" +
+                std::to_string(edge.dependencyIndex) + "/ref";
+    add(SemanticDiagnosticKind::dependencyCycle, *edge.resource, path,
+        "Resource reference '" + edge.reference +
+            "' participates in a dependency cycle.",
+        "cycle");
+  }
+  return result;
+}
+
+std::string semanticKey(SemanticDiagnostic const& diagnostic) {
+  return std::to_string(static_cast<int>(diagnostic.kind)) + "\n" +
+         diagnostic.subject;
+}
+
+bool hasSemanticErrors(std::vector<SemanticDiagnostic> const& diagnostics) {
+  return std::any_of(diagnostics.begin(), diagnostics.end(),
+                     [](auto const& diagnostic) {
+                       return diagnostic.severity ==
+                              SemanticDiagnosticSeverity::error;
+                     });
+}
+
 class ReplaceYamlCommand final : public mpp::app::EditorCommand {
  public:
   using Apply = std::function<bool(std::string const&)>;
@@ -1398,6 +1828,7 @@ bool ManifestWorkspace::createNew(fs::path const& baseDirectory) {
   mDraft.reset();
   mCommands.clear();
   mUnsavedDocument = true;
+  refreshSemanticDiagnostics();
   return true;
 }
 
@@ -1441,6 +1872,7 @@ bool ManifestWorkspace::open(fs::path const& manifestPath) {
   mCommands.clear();
   mCommands.markSavePoint();
   mUnsavedDocument = false;
+  refreshSemanticDiagnostics();
   return true;
 }
 
@@ -1458,6 +1890,128 @@ bool ManifestWorkspace::saveAs(fs::path const& manifestPath) {
     return false;
   }
   return saveTo(manifestPath);
+}
+
+bool ManifestWorkspace::changeBaseDirectory(fs::path const& baseDirectory) {
+  if (!mDocument) {
+    setFailure("No Resource Manifest is open.");
+    return false;
+  }
+  fs::path canonicalBase;
+  std::string failure;
+  if (!accessibleDirectory(baseDirectory, canonicalBase, failure)) {
+    setFailure(std::move(failure));
+    return false;
+  }
+
+  auto root = YAML::Load(canonicalYaml());
+  bool changedFile = false;
+  std::string migrationFailure;
+  auto migrateCollection = [&](YAML::Node owner) {
+    auto resources = collectionItems(owner["Resource"]);
+    for (auto& resource : resources) {
+      auto migrate = [&](YAML::Node node) {
+        for (auto const& annotation :
+             fileAnnotations(mCatalog, scalar(node, "type"))) {
+          auto valueNode = node[annotation.property];
+          if (!valueNode || !valueNode.IsScalar()) continue;
+          auto value = valueNode.as<std::string>();
+          auto stored = fs::path(value);
+          auto target = stored.is_absolute() ? stored : mBaseDirectory / stored;
+          std::error_code error;
+          auto absoluteTarget = fs::canonical(target, error);
+          if (error || !fs::is_regular_file(absoluteTarget, error)) {
+            migrationFailure = "Annotated file target '" + value +
+                               "' must exist before changing the base directory.";
+            return false;
+          }
+          if (!containedBy(canonicalBase, absoluteTarget)) {
+            migrationFailure = "Changing the base directory would place annotated "
+                               "file target '" + value + "' outside the new base.";
+            return false;
+          }
+          auto relative = absoluteTarget.lexically_relative(canonicalBase);
+          if (relative.empty() || relative.is_absolute() ||
+              std::any_of(relative.begin(), relative.end(),
+                          [](fs::path const& part) { return part == ".."; })) {
+            migrationFailure = "Annotated file target '" + value +
+                               "' is not representable relative to the new base.";
+            return false;
+          }
+          auto portable = displayPath(relative);
+          changedFile |= portable != value;
+          node[annotation.property] = std::move(portable);
+        }
+        return true;
+      };
+      if (!migrate(resource)) return false;
+      auto dependencies = standardDependencyItems(resource);
+      for (auto& dependency : dependencies) {
+        if (scalar(dependency, "ref").empty() &&
+            !scalar(dependency, "type").empty() && !migrate(dependency)) {
+          return false;
+        }
+      }
+      if (!dependencies.empty()) {
+        setCollection(resource["DependentResources"], "DependentResource",
+                      dependencies);
+      }
+    }
+    setCollection(owner, "Resource", resources);
+    return true;
+  };
+
+  auto resourcesRoot = root["Resources"];
+  if (!migrateCollection(resourcesRoot)) {
+    setFailure(std::move(migrationFailure));
+    return false;
+  }
+  auto namespaces = collectionItems(resourcesRoot["Namespace"]);
+  for (auto& item : namespaces) {
+    if (!migrateCollection(item)) {
+      setFailure(std::move(migrationFailure));
+      return false;
+    }
+  }
+  setCollection(resourcesRoot, "Namespace", namespaces);
+  root["Resources"] = resourcesRoot;
+
+  auto candidate = std::make_unique<ResourceManifestDocument>(
+      ResourceManifestDocument::parse(emitYaml(root), "Base directory migration"));
+  auto structural = candidate->validate(mCatalog);
+  if (!structural.valid()) {
+    setFailure("Changing the base directory produced an invalid Resource Manifest: " +
+               validationMessage(structural));
+    return false;
+  }
+  auto semantic = semanticDiagnosticsFor(
+      YAML::Load(candidate->serializeCanonical()), mCatalog, canonicalBase);
+  auto fileError = std::find_if(
+      semantic.begin(), semantic.end(), [](auto const& item) {
+        return item.severity == SemanticDiagnosticSeverity::error &&
+               (item.kind == SemanticDiagnosticKind::missingFile ||
+                item.kind == SemanticDiagnosticKind::pathContainment ||
+                item.kind == SemanticDiagnosticKind::invalidFileTarget);
+      });
+  if (fileError != semantic.end()) {
+    setFailure("Changing the base directory was rejected: " +
+               fileError->message);
+    return false;
+  }
+
+  bool const changedBase = canonicalBase != mBaseDirectory;
+  mDocument = std::move(candidate);
+  mBaseDirectory = std::move(canonicalBase);
+  mSemanticDiagnostics = std::move(semantic);
+  mStructuralDiagnostics.clear();
+  mOperationDiagnostic.clear();
+  mNamespaceDraft.reset();
+  mDraft.reset();
+  if (changedBase || changedFile) {
+    mCommands.clear();
+    mUnsavedDocument = true;
+  }
+  return true;
 }
 
 bool ManifestWorkspace::reloadSchemas(fs::path const& iniPath) {
@@ -1485,6 +2039,7 @@ bool ManifestWorkspace::reloadSchemas(fs::path const& iniPath) {
     if (wasDirty) mUnsavedDocument = true;
     mStructuralDiagnostics.clear();
     mOperationDiagnostic.clear();
+    refreshSemanticDiagnostics();
     return true;
   } catch (std::exception const& error) {
     setFailure("Schema reload failed; the previous catalog remains active: " +
@@ -1509,6 +2064,11 @@ bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
     setFailure("Resource Manifest is not structurally valid and cannot be saved.");
     return false;
   }
+  refreshSemanticDiagnostics();
+  if (hasSemanticErrors(mSemanticDiagnostics)) {
+    setFailure("Resource Manifest has semantic errors and cannot be saved.");
+    return false;
+  }
 
   try {
     auto canonical = mDocument->serializeCanonical();
@@ -1528,6 +2088,7 @@ bool ManifestWorkspace::saveTo(fs::path const& manifestPath) {
     mPath = std::move(canonicalPath);
     mStructuralDiagnostics.clear();
     mOperationDiagnostic.clear();
+    refreshSemanticDiagnostics();
     mCommands.markSavePoint();
     mUnsavedDocument = false;
     return true;
@@ -1547,6 +2108,12 @@ bool ManifestWorkspace::hasPath() const noexcept { return !mPath.empty(); }
 bool ManifestWorkspace::dirty() const noexcept {
   return mDocument && (mUnsavedDocument || mCommands.dirty());
 }
+bool ManifestWorkspace::canSave() const {
+  // Every published workspace document has already passed structural
+  // validation; rejected previews never replace it. Save revalidates before I/O.
+  return mDocument && !hasSemanticErrors(mSemanticDiagnostics);
+}
+bool ManifestWorkspace::canSaveAs() const { return canSave(); }
 fs::path const& ManifestWorkspace::path() const noexcept { return mPath; }
 fs::path const& ManifestWorkspace::baseDirectory() const noexcept {
   return mBaseDirectory;
@@ -1557,6 +2124,10 @@ std::string const& ManifestWorkspace::operationDiagnostic() const noexcept {
 std::vector<ResourceManifestDiagnostic> const&
 ManifestWorkspace::structuralDiagnostics() const noexcept {
   return mStructuralDiagnostics;
+}
+std::vector<SemanticDiagnostic> const&
+ManifestWorkspace::semanticDiagnostics() const noexcept {
+  return mSemanticDiagnostics;
 }
 std::string ManifestWorkspace::canonicalYaml() const {
   return mDocument ? mDocument->serializeCanonical() : std::string{};
@@ -1580,14 +2151,20 @@ std::vector<NamespaceSummary> ManifestWorkspace::namespaces() const {
   if (!mDocument) return result;
   auto root = YAML::Load(canonicalYaml());
   auto resourcesRoot = root["Resources"];
-  result.push_back(
-      NamespaceSummary{{}, collectionItems(resourcesRoot["Resource"]).size(), true});
-  for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
-    result.push_back(NamespaceSummary{scalar(item, "name"),
-                                      collectionItems(item["Resource"]).size()});
+  result.push_back(NamespaceSummary{{}, "/Resources",
+                                    collectionItems(resourcesRoot["Resource"]).size(),
+                                    true});
+  auto namespaceItems = collectionItems(resourcesRoot["Namespace"]);
+  for (std::size_t index = 0; index < namespaceItems.size(); ++index) {
+    auto const& item = namespaceItems[index];
+    result.push_back(NamespaceSummary{
+        scalar(item, "name"),
+        "/Resources/Namespace/" + std::to_string(index),
+        collectionItems(item["Resource"]).size()});
   }
   if (mNamespaceDraft) {
-    result.push_back(NamespaceSummary{mNamespaceDraft->name, 0, false, true});
+    result.push_back(
+        NamespaceSummary{mNamespaceDraft->name, {}, 0, false, true});
   }
   return result;
 }
@@ -1597,10 +2174,14 @@ std::vector<ResourceSummary> ManifestWorkspace::resources() const {
   if (!mDocument) return result;
   auto root = YAML::Load(canonicalYaml());
   auto append = [&](std::string const& resourceNamespace,
-                    YAML::Node const& collection) {
-    for (auto const& resource : collectionItems(collection)) {
+                    YAML::Node const& collection,
+                    std::string const& collectionPath) {
+    auto items = collectionItems(collection);
+    for (std::size_t index = 0; index < items.size(); ++index) {
+      auto const& resource = items[index];
       ResourceSummary summary;
       summary.resourceNamespace = resourceNamespace;
+      summary.instancePath = collectionPath + "/" + std::to_string(index);
       summary.resourceType = scalar(resource, "type");
       summary.name = scalar(resource, "name");
       summary.explicitName = !summary.name.empty();
@@ -1627,9 +2208,12 @@ std::vector<ResourceSummary> ManifestWorkspace::resources() const {
     }
   };
   auto resourcesRoot = root["Resources"];
-  append({}, resourcesRoot["Resource"]);
-  for (auto const& item : collectionItems(resourcesRoot["Namespace"])) {
-    append(scalar(item, "name"), item["Resource"]);
+  append({}, resourcesRoot["Resource"], "/Resources/Resource");
+  auto namespaceItems = collectionItems(resourcesRoot["Namespace"]);
+  for (std::size_t index = 0; index < namespaceItems.size(); ++index) {
+    auto const& item = namespaceItems[index];
+    append(scalar(item, "name"), item["Resource"],
+           "/Resources/Namespace/" + std::to_string(index) + "/Resource");
   }
   return result;
 }
@@ -1650,6 +2234,8 @@ std::vector<InlineResourceSummary> ManifestWorkspace::inlineResources(
     }
     InlineResourceSummary summary;
     summary.resourceNamespace = ownerNamespace;
+    summary.instancePath = "/DependentResources/DependentResource/" +
+                           std::to_string(index);
     summary.ownerName = ownerName;
     summary.dependencyIndex = index;
     summary.dependencyId = scalar(dependency, "id");
@@ -1705,15 +2291,13 @@ std::vector<ResourceReferenceSelector> ManifestWorkspace::resourceReferences(
     selector.reference = reference;
     selector.allowedResourceTypes =
         standardAllowedTypes(ownerType, selector.dependencyId);
-    if (auto const* form = resourceForm(ownerType)) {
-      auto annotated = std::find_if(
-          form->requiredDependencies.begin(), form->requiredDependencies.end(),
-          [&](auto const& dependency) {
-            return dependency.id == selector.dependencyId;
-          });
-      if (annotated != form->requiredDependencies.end()) {
-        selector.allowedResourceTypes = annotated->allowedResourceTypes;
-      }
+    auto annotations = dependencyAnnotations(mCatalog, ownerType);
+    auto annotated = std::find_if(
+        annotations.begin(), annotations.end(), [&](auto const& dependency) {
+          return dependency.id == selector.dependencyId;
+        });
+    if (annotated != annotations.end()) {
+      selector.allowedResourceTypes = annotated->allowedResourceTypes;
     }
     auto const selectedIdentity = parseReference(reference, ownerNamespace);
 
@@ -2320,8 +2904,21 @@ std::optional<DiagnosticNavigation> ManifestWorkspace::diagnosticNavigation(
   if (diagnosticIndex >= mStructuralDiagnostics.size()) return {};
   auto const& diagnostic = mStructuralDiagnostics[diagnosticIndex];
   return DiagnosticNavigation{diagnostic.resourceNamespace,
-                              diagnostic.resourceName,
+                              diagnostic.resourceName, {},
                               diagnostic.instancePath};
+}
+
+std::optional<DiagnosticNavigation>
+ManifestWorkspace::semanticDiagnosticNavigation(
+    std::size_t diagnosticIndex) const {
+  if (diagnosticIndex >= mSemanticDiagnostics.size()) return {};
+  auto const& diagnostic = mSemanticDiagnostics[diagnosticIndex];
+  return DiagnosticNavigation{diagnostic.resourceNamespace,
+                              diagnostic.resourceName,
+                              diagnostic.resourcePath,
+                              diagnostic.instancePath,
+                              diagnostic.inlineResource,
+                              diagnostic.dependencyIndex};
 }
 
 bool ManifestWorkspace::beginNamespaceDraft() {
@@ -2436,7 +3033,7 @@ bool ManifestWorkspace::selectDraftFile(fs::path const& selectedFile) {
     setFailure("This Resource draft has no source-file property.");
     return false;
   }
-  auto relative = portableSelectedFile(selectedFile);
+  auto relative = portableSelectedFile(selectedFile, *form);
   if (!relative) {
     validateDraft();
     return false;
@@ -2680,6 +3277,39 @@ bool ManifestWorkspace::renameNamespace(std::string const& currentName,
                             continuous);
 }
 
+bool ManifestWorkspace::renameNamespaceAtPath(
+    std::string const& namespacePath, std::string newName, bool continuous) {
+  if (!validNamespaceName(newName)) {
+    setFailure("A namespace name is required and cannot contain '/'.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto item = nodeAtPath(root, pathParts(namespacePath),
+                         pathParts(namespacePath).size());
+  if (!item || !item.IsMap()) {
+    setFailure("The diagnostic namespace path is no longer available.");
+    return false;
+  }
+  auto oldName = scalar(item, "name");
+  if (newName != oldName && namespaceCount(root, newName) != 0U) {
+    setFailure("Namespace names must be unique.");
+    return false;
+  }
+  if (newName == oldName) return true;
+  if (namespaceCount(root, oldName) == 1U) {
+    rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+      if (identity.resourceNamespace == oldName)
+        identity.resourceNamespace = newName;
+      return identity;
+    });
+    item = nodeAtPath(root, pathParts(namespacePath),
+                      pathParts(namespacePath).size());
+  }
+  item["name"] = std::move(newName);
+  return executeYamlCommand("Repair namespace name", emitYaml(root),
+                            "namespace-path:" + namespacePath, continuous);
+}
+
 bool ManifestWorkspace::deleteNamespace(std::string const& name) {
   if (name.empty()) {
     setFailure("The default namespace is permanent and cannot be deleted.");
@@ -2754,6 +3384,53 @@ bool ManifestWorkspace::renameResource(std::string const& resourceNamespace,
   return executeYamlCommand(
       "Rename Resource", emitYaml(root),
       "name:" + resourceNamespace + ":" + std::to_string(*index), continuous);
+}
+
+bool ManifestWorkspace::renameResourceAtPath(
+    std::string const& resourcePath, std::string newName, bool continuous) {
+  if (!validResourceName(newName)) {
+    setFailure("A Resource name is required and cannot contain '/'.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  std::vector<SemanticNamespace> namespaceItems;
+  std::vector<SemanticResource> declarations;
+  collectSemanticDocument(root, namespaceItems, declarations);
+  auto declaration = std::find_if(
+      declarations.begin(), declarations.end(), [&](auto const& item) {
+        return !item.inlineResource && item.path == resourcePath;
+      });
+  if (declaration == declarations.end()) {
+    setFailure("The diagnostic Resource path is no longer available.");
+    return false;
+  }
+  auto const oldIdentity = declaration->identity;
+  auto const newIdentity =
+      ResourceIdentity{oldIdentity.resourceNamespace, newName};
+  if (newIdentity != oldIdentity &&
+      std::any_of(declarations.begin(), declarations.end(),
+                  [&](auto const& item) { return item.identity == newIdentity; })) {
+    setFailure("Resource names must be unique within their namespace.");
+    return false;
+  }
+  auto const oldCount = static_cast<std::size_t>(std::count_if(
+      declarations.begin(), declarations.end(), [&](auto const& item) {
+        return item.identity == oldIdentity;
+      }));
+  if (oldCount == 1U) {
+    rewriteStandardReferences(root, [&](ResourceIdentity identity) {
+      return identity == oldIdentity ? newIdentity : identity;
+    });
+  }
+  auto parts = pathParts(resourcePath);
+  auto resource = nodeAtPath(root, parts, parts.size());
+  if (!resource || !resource.IsMap()) {
+    setFailure("The diagnostic Resource path is no longer available.");
+    return false;
+  }
+  resource["name"] = std::move(newName);
+  return executeYamlCommand("Repair Resource name", emitYaml(root),
+                            "resource-path:" + resourcePath, continuous);
 }
 
 bool ManifestWorkspace::reorderResource(
@@ -2926,8 +3603,6 @@ bool ManifestWorkspace::setResourceFile(std::string const& resourceNamespace,
                                         std::string const& name,
                                         fs::path const& selectedFile,
                                         bool continuous) {
-  auto relative = portableSelectedFile(selectedFile);
-  if (!relative) return false;
   auto root = YAML::Load(canonicalYaml());
   auto collection = findResourceCollection(root, resourceNamespace);
   if (!collection) {
@@ -2941,11 +3616,13 @@ bool ManifestWorkspace::setResourceFile(std::string const& resourceNamespace,
   }
   auto const type = scalar(collection->resources[*index], "type");
   auto const* form = resourceForm(type);
-  if (!form || form->fileProperty != "location") {
+  if (!form || form->fileProperty.empty()) {
     setFailure("Resource Type '" + type +
                "' has no editable file property.");
     return false;
   }
+  auto relative = portableSelectedFile(selectedFile, *form);
+  if (!relative) return false;
   collection->resources[*index][form->fileProperty] = *relative;
   publishCollection(root, *collection);
   return executeYamlCommand(
@@ -3165,8 +3842,6 @@ bool ManifestWorkspace::setInlineResourceFile(
     std::string const& ownerNamespace, std::string const& ownerName,
     std::size_t dependencyIndex, fs::path const& selectedFile,
     bool continuous) {
-  auto relative = portableSelectedFile(selectedFile);
-  if (!relative) return false;
   auto root = YAML::Load(canonicalYaml());
   auto collection = findResourceCollection(root, ownerNamespace);
   if (!collection || resourceCount(*collection, ownerName) != 1U) {
@@ -3183,10 +3858,12 @@ bool ManifestWorkspace::setInlineResourceFile(
     return false;
   }
   auto const* form = resourceForm(scalar(dependencies[dependencyIndex], "type"));
-  if (!form || form->fileProperty != "location") {
+  if (!form || form->fileProperty.empty()) {
     setFailure("Inline Resource Type has no editable file property.");
     return false;
   }
+  auto relative = portableSelectedFile(selectedFile, *form);
+  if (!relative) return false;
   dependencies[dependencyIndex][form->fileProperty] = *relative;
   setCollection(resource["DependentResources"], "DependentResource",
                 dependencies);
@@ -3714,7 +4391,20 @@ bool ManifestWorkspace::addNestedItem(
     return false;
   }
   auto items = collectionItems(target->first[target->second]);
-  items.push_back(defaultNestedItem(kind));
+  auto added = defaultNestedItem(kind);
+  auto addedName = scalar(added, "name");
+  if (!addedName.empty()) {
+    auto baseName = addedName;
+    for (std::size_t suffix = 2U;
+         std::any_of(items.begin(), items.end(), [&](auto const& item) {
+           return scalar(item, "name") == addedName;
+         });
+         ++suffix) {
+      addedName = baseName + " " + std::to_string(suffix);
+    }
+    added["name"] = addedName;
+  }
+  items.push_back(std::move(added));
   setCollection(target->first, target->second.c_str(), items);
   collection->resources[resourceIndex] = resource;
   publishCollection(root, *collection);
@@ -3754,7 +4444,21 @@ bool ManifestWorkspace::duplicateNestedItem(
     setFailure("A Resource cannot contain duplicate Definition factories.");
     return false;
   }
-  insertCollectionItem(items, index + 1U, items[index]);
+  auto duplicated = YAML::Clone(items[index]);
+  auto duplicatedName = scalar(duplicated, "name");
+  if (!duplicatedName.empty()) {
+    auto baseName = duplicatedName + " copy";
+    duplicatedName = baseName;
+    for (std::size_t suffix = 2U;
+         std::any_of(items.begin(), items.end(), [&](auto const& item) {
+           return scalar(item, "name") == duplicatedName;
+         });
+         ++suffix) {
+      duplicatedName = baseName + " " + std::to_string(suffix);
+    }
+    duplicated["name"] = duplicatedName;
+  }
+  insertCollectionItem(items, index + 1U, duplicated);
   setCollection(target->first, target->second.c_str(), items);
   collection->resources[resourceIndex] = resource;
   publishCollection(root, *collection);
@@ -3983,6 +4687,7 @@ bool ManifestWorkspace::applyCommittedYaml(std::string const& yaml) {
   mDocument = std::move(candidate);
   mStructuralDiagnostics.clear();
   mOperationDiagnostic.clear();
+  refreshSemanticDiagnostics();
   if (mNamespaceDraft) validateNamespaceDraft();
   return true;
 }
@@ -4002,6 +4707,25 @@ bool ManifestWorkspace::executeYamlCommand(std::string name, std::string yaml,
     return false;
   }
   auto after = candidate.serializeCanonical();
+  auto candidateSemantic = semanticDiagnosticsFor(
+      YAML::Load(after), mCatalog, mBaseDirectory);
+  std::multiset<std::string> preservedErrors;
+  for (auto const& diagnostic : mSemanticDiagnostics) {
+    if (diagnostic.severity == SemanticDiagnosticSeverity::error)
+      preservedErrors.insert(semanticKey(diagnostic));
+  }
+  for (auto const& diagnostic : candidateSemantic) {
+    if (diagnostic.severity != SemanticDiagnosticSeverity::error) continue;
+    auto found = preservedErrors.find(semanticKey(diagnostic));
+    if (found != preservedErrors.end()) {
+      preservedErrors.erase(found);
+      continue;
+    }
+    setFailure("Resource edit was rejected because it would introduce an "
+               "unrelated semantic error: " + diagnostic.message);
+    return false;
+  }
+
   auto before = canonicalYaml();
   if (after == before) {
     if (!continuous) mCommands.endCoalescing();
@@ -4024,7 +4748,7 @@ bool ManifestWorkspace::executeYamlCommand(std::string name, std::string yaml,
 }
 
 std::optional<std::string> ManifestWorkspace::portableSelectedFile(
-    fs::path const& selectedFile) {
+    fs::path const& selectedFile, ResourceForm const& form) {
   if (!mDocument) {
     setFailure("No Resource Manifest is open.");
     return {};
@@ -4047,6 +4771,16 @@ std::optional<std::string> ManifestWorkspace::portableSelectedFile(
                "traversal and link escapes are not allowed.");
     return {};
   }
+  auto extension = canonicalTarget.extension().string();
+  if (!extension.empty() && extension.front() == '.') extension.erase(0, 1U);
+  if (std::none_of(form.fileExtensions.begin(), form.fileExtensions.end(),
+                   [&](auto const& allowed) {
+                     return sameExtension(extension, allowed);
+                   })) {
+    setFailure("Selected Resource file does not match the extensions declared "
+               "by its Resource Schema annotation.");
+    return {};
+  }
   auto relative = canonicalTarget.lexically_relative(mBaseDirectory);
   if (relative.empty() || relative.is_absolute() ||
       std::any_of(relative.begin(), relative.end(), [](fs::path const& part) {
@@ -4056,6 +4790,15 @@ std::optional<std::string> ManifestWorkspace::portableSelectedFile(
     return {};
   }
   return displayPath(relative);
+}
+
+void ManifestWorkspace::refreshSemanticDiagnostics() {
+  if (!mDocument) {
+    mSemanticDiagnostics.clear();
+    return;
+  }
+  mSemanticDiagnostics = semanticDiagnosticsFor(
+      YAML::Load(canonicalYaml()), mCatalog, mBaseDirectory);
 }
 
 void ManifestWorkspace::setFailure(std::string message) {
@@ -4114,6 +4857,7 @@ bool runDocumentTests(std::string* failure) {
       return fail("Save As accepted a non-YAML extension.");
     }
 
+    std::ofstream(root / "notes.txt") << "notes";
     std::ofstream(yamlPath, std::ios::binary | std::ios::trunc)
         << "Resources:\n  Resource:\n    type: TextFile\n    name: notes\n"
            "    location: notes.txt\n";
@@ -4859,7 +5603,7 @@ bool runCompositeAuthoringTests(std::string* failure) {
     auto manifest = root / "composites.yaml";
     std::ofstream(manifest) << R"(Resources:
   Resource:
-    - {type: Image, name: Texture, location: image.png}
+    - {type: Image, name: Texture, location: base/image.png}
     - type: ImageSet
       name: Atlas
       DependentResources:
@@ -5296,7 +6040,7 @@ bool runAdvancedAuthoringTests(std::string* failure) {
       return fail("Material texture selectors, constraints, or alternative cleanup failed.");
     }
 
-    auto output = root / "advanced.yaml";
+    auto output = base / "advanced.yaml";
     if (!workspace.saveAs(output)) return fail("Could not save advanced fixture.");
 
     auto bundle = ResourceSchemaCatalog::builtIn().snapshot().exportBundle();
@@ -5393,7 +6137,7 @@ bool runAdvancedAuthoringTests(std::string* failure) {
         !specialized.redo()) {
       return fail("Definition deletion validity or history was incorrect.");
     }
-    auto finalOutput = root / "specialized.yaml";
+    auto finalOutput = base / "specialized.yaml";
     if (!specialized.saveAs(finalOutput)) {
       return fail("Could not save canonical specialized output.");
     }
@@ -5681,6 +6425,223 @@ bool runSchemaIntegrationTests(std::string* failure) {
         !workspace.resourceForm("ExtensionType")) {
       return fail(
           "A corrected INI and bundle set could not be reloaded successfully.");
+    }
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runSemanticRepairTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-semantic-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  try {
+    auto base = root / "base";
+    fs::create_directories(base / "nested");
+    fs::create_directories(root / "blocked-base");
+    for (auto const& file : {"valid.txt", "fixed.txt", "fixed2.txt"})
+      std::ofstream(base / file) << file;
+    std::ofstream(base / "nested" / "implicit.txt") << "implicit";
+    std::ofstream(base / "image.png", std::ios::binary) << "image";
+    std::ofstream(base / "shader.vert") << "shader";
+    std::ofstream(root / "outside.txt") << "outside";
+
+    auto manifest = base / "Resources.yaml";
+    std::ofstream(manifest) << R"YAML(Resources:
+  Resource:
+    - {type: TextFile, name: Duplicate, location: valid.txt}
+    - {type: TextFile, name: Duplicate, location: valid.txt}
+    - {type: TextFile, name: Missing, location: missing.txt}
+    - {type: TextFile, name: Escaping, location: ../outside.txt}
+    - {type: TextFile, location: nested/implicit.txt}
+    - {type: Image, name: ImageTarget, location: image.png}
+    - {type: Shader, name: ShaderTarget, location: shader.vert}
+    - type: ImageSet
+      name: AtlasMissing
+      DependentResources:
+        DependentResource: {id: Image, ref: DoesNotExist}
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: Pixel, x: 0, y: 0, width: 1, height: 1}
+    - type: ImageSet
+      name: AtlasWrong
+      DependentResources:
+        DependentResource: {id: Image, ref: ShaderTarget}
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: Pixel, x: 0, y: 0, width: 1, height: 1}
+    - type: FutureType
+      name: CycleA
+      DependentResources:
+        DependentResource: {id: Link, ref: CycleB}
+    - type: FutureType
+      name: CycleB
+      DependentResources:
+        DependentResource: {id: Link, ref: CycleA}
+  Namespace:
+    - name: Bad/Namespace
+      Resource: {type: FutureType, name: BadNamespaceResource}
+    - name: Repeated
+      Resource: {type: FutureType, name: FirstRepeated}
+    - name: Repeated
+      Resource: {type: FutureType, name: SecondRepeated}
+)YAML";
+    auto original = readBytes(manifest);
+
+    ManifestWorkspace workspace;
+    if (!workspace.open(manifest) || !workspace.operationDiagnostic().empty()) {
+      return fail("A structurally valid manifest with semantic errors did not open.");
+    }
+    std::set<SemanticDiagnosticKind> errorKinds;
+    for (auto const& diagnostic : workspace.semanticDiagnostics()) {
+      if (diagnostic.severity == SemanticDiagnosticSeverity::error)
+        errorKinds.insert(diagnostic.kind);
+    }
+    for (auto kind : {SemanticDiagnosticKind::duplicateName,
+                      SemanticDiagnosticKind::invalidName,
+                      SemanticDiagnosticKind::unresolvedReference,
+                      SemanticDiagnosticKind::referenceTypeMismatch,
+                      SemanticDiagnosticKind::dependencyCycle,
+                      SemanticDiagnosticKind::missingFile,
+                      SemanticDiagnosticKind::pathContainment}) {
+      if (!errorKinds.contains(kind))
+        return fail("Semantic diagnostics omitted a required error category.");
+    }
+    auto unresolved = std::find_if(
+        workspace.semanticDiagnostics().begin(),
+        workspace.semanticDiagnostics().end(), [](auto const& diagnostic) {
+          return diagnostic.kind == SemanticDiagnosticKind::unresolvedReference;
+        });
+    if (unresolved == workspace.semanticDiagnostics().end())
+      return fail("Missing reference diagnostic was not available.");
+    auto navigation = workspace.semanticDiagnosticNavigation(
+        static_cast<std::size_t>(unresolved -
+                                 workspace.semanticDiagnostics().begin()));
+    if (!navigation || navigation->resourceName != "AtlasMissing" ||
+        navigation->resourcePath.empty() ||
+        !navigation->instancePath.ends_with("/ref")) {
+      return fail("Semantic diagnostic navigation did not retain its Resource and property path.");
+    }
+    if (workspace.canSave() || workspace.canSaveAs() || workspace.save() ||
+        readBytes(manifest) != original) {
+      return fail("Semantic errors did not gate Save and Save As without modifying the file.");
+    }
+
+    // Name repairs are path-addressed because the invalid identities are
+    // intentionally ambiguous. Other independent errors must remain open.
+    if (!workspace.renameResourceAtPath("/Resources/Resource/1", "Duplicate2") ||
+        !workspace.renameResourceAtPath("/Resources/Resource/4", "Implicit") ||
+        !workspace.renameNamespaceAtPath("/Resources/Namespace/0", "BadNamespace") ||
+        !workspace.renameNamespaceAtPath("/Resources/Namespace/2", "Repeated2")) {
+      return fail("Duplicate and invalid names could not be repaired incrementally: " +
+                  workspace.operationDiagnostic());
+    }
+    if (workspace.renameResourceAtPath("/Resources/Resource/1", "Duplicate")) {
+      return fail("A name repair introduced a new duplicate identity.");
+    }
+
+    if (workspace.setResourceFile({}, "Missing", base / "image.png") ||
+        workspace.operationDiagnostic().find("extensions") == std::string::npos) {
+      return fail("An annotated file widget accepted a schema-incompatible target.");
+    }
+    if (!workspace.setResourceFile({}, "Missing", base / "fixed.txt") ||
+        !workspace.setResourceFile({}, "Escaping", base / "fixed2.txt")) {
+      return fail("Independent missing and escaping files could not be repaired.");
+    }
+
+    auto yamlBeforeBlockedBase = workspace.canonicalYaml();
+    if (workspace.changeBaseDirectory(root / "blocked-base") ||
+        workspace.baseDirectory() != fs::canonical(base) ||
+        workspace.canonicalYaml() != yamlBeforeBlockedBase) {
+      return fail("A base-directory change lost or escaped an annotated absolute target.");
+    }
+    std::map<std::string, fs::path> absoluteTargets;
+    for (auto const& resource : workspace.resources()) {
+      if (!resource.location.empty())
+        absoluteTargets[resource.name] =
+            fs::canonical(workspace.baseDirectory() / resource.location);
+    }
+    if (!workspace.changeBaseDirectory(root)) {
+      return fail("A containing base directory could not preserve annotated targets: " +
+                  workspace.operationDiagnostic());
+    }
+    for (auto const& resource : workspace.resources()) {
+      auto found = absoluteTargets.find(resource.name);
+      if (found != absoluteTargets.end() &&
+          fs::canonical(workspace.baseDirectory() / resource.location) !=
+              found->second) {
+        return fail("Base-directory migration changed an absolute file target.");
+      }
+    }
+    if (workspace.canSave())
+      return fail("Non-file semantic errors stopped gating Save after base migration.");
+
+    auto repairReference = [&](std::string const& owner) {
+      auto selectors = workspace.resourceReferences({}, owner);
+      if (selectors.size() != 1U) return false;
+      auto image = std::find_if(
+          selectors.front().choices.begin(), selectors.front().choices.end(),
+          [](auto const& choice) {
+            return choice.name == "ImageTarget" && !choice.disabled;
+          });
+      return image != selectors.front().choices.end() &&
+             workspace.setResourceReference(
+                 {}, owner, selectors.front().dependencyIndex,
+                 std::pair{image->resourceNamespace, image->name});
+    };
+    if (!repairReference("AtlasMissing") || !repairReference("AtlasWrong")) {
+      return fail("Known and annotated references could not be repaired through valid selectors.");
+    }
+    auto cycleSelectors = workspace.resourceReferences({}, "CycleB");
+    if (cycleSelectors.size() != 1U ||
+        std::none_of(cycleSelectors.front().choices.begin(),
+                     cycleSelectors.front().choices.end(), [](auto const& choice) {
+                       return choice.name == "CycleA" && choice.disabled;
+                     }) ||
+        !workspace.setResourceReference({}, "CycleB",
+                                        cycleSelectors.front().dependencyIndex,
+                                        {})) {
+      return fail("Cycle-producing reference targets were not rejected or repairable.");
+    }
+
+    if (hasSemanticErrors(workspace.semanticDiagnostics()) ||
+        !workspace.canSave() || !workspace.canSaveAs()) {
+      return fail("Final semantic repairs did not enable saving.");
+    }
+    if (std::none_of(workspace.semanticDiagnostics().begin(),
+                     workspace.semanticDiagnostics().end(), [](auto const& item) {
+                       return item.severity == SemanticDiagnosticSeverity::warning;
+                     })) {
+      return fail("The warning-only final document did not exercise non-blocking warnings.");
+    }
+    auto output = root / "final.yaml";
+    if (!workspace.saveAs(output) || workspace.dirty() ||
+        readBytes(output) != workspace.canonicalYaml()) {
+      return fail("Final canonical semantic repair output was not saved deterministically.");
+    }
+    auto saved = ResourceManifestDocument::load(output);
+    if (!saved.validate(ResourceSchemaCatalog::builtIn().snapshot()).valid() ||
+        saved.serializeCanonical() != readBytes(output) ||
+        readBytes(output).find("base/fixed.txt") == std::string::npos ||
+        readBytes(output).find("Duplicate2") == std::string::npos ||
+        readBytes(output).find("ImageTarget") == std::string::npos) {
+      return fail("Final canonical output did not contain the staged repairs.");
     }
     return true;
   } catch (std::exception const& exception) {

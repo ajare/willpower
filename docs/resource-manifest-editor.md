@@ -63,11 +63,17 @@ resource-manager --startup-check --ini /installed/bin/resource-manager.ini
   or `.yml` extension.
 
 Saves use `ResourceManifestDocument` canonical UTF-8 YAML and replace the destination
-with a completed sibling temporary file. Failed operations are retained in the
-persistent Diagnostics region and written to standard error and the rotating log; the
-editor does not display error dialogs.
+with a completed sibling temporary file. Save and Save As are disabled, and their
+workspace operations reject calls, whenever the current document has a structural or
+semantic error. Warnings never block saving and there is no Save Invalid override.
+Failed operations are retained in the persistent Diagnostics region and written to
+standard error and the rotating log; the editor does not display error dialogs.
 
 A manifest path can be supplied at launch. Its parent is the initial base directory.
+**File > Change Base Directory** migrates every annotated file value relative to the
+new canonical base while preserving its absolute target. The operation is atomic and
+is blocked if any annotated target is missing, outside the new base, or cannot be
+represented as a safe relative path.
 
 ## File-backed Resource authoring
 
@@ -193,6 +199,23 @@ bytes into an isolated candidate. Publication occurs only after annotation/form 
 and validation of the open Resource Manifest. Any failure retains the previous catalog,
 forms, document, and history and reports the reason in Diagnostics and the log.
 
+## Semantic diagnostics and repair
+
+A structurally valid Resource Manifest opens even when it has semantic errors. The
+persistent selectable diagnostics identify duplicate or invalid Namespace and Resource
+names, unresolved or ambiguous standard references, schema-annotated target-type
+mismatches, dependency cycles, and annotated file targets that are missing, outside the
+canonical base, or invalid for the schema's extension list. Unknown Resource Types add
+a warning because their unannotated values are deliberately preserved without guessing
+path or reference meaning.
+
+Each edit is structurally previewed and then compared with the current semantic error
+set. It may repair one error while preserving independent pre-existing errors, but is
+rejected if it introduces an unrelated semantic error. File and Resource-reference
+widgets additionally constrain new selections before preview. Selecting a diagnostic
+expands its namespace and Resource and focuses the named or nested property when its
+instance path identifies one.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -206,6 +229,7 @@ resource-manager --dependency-tests
 resource-manager --composite-tests
 resource-manager --advanced-tests
 resource-manager --schema-tests
+resource-manager --semantic-tests
 resource-manager --verify-schemas --ini /installed/bin/resource-manager.ini
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
@@ -227,7 +251,10 @@ specialized Definition factories, factory uniqueness, deletion validity, canonic
 output, and history. `--schema-tests` covers complete and extension bundles, relative
 ordered configuration, embedded fallback, duplicate keys, malformed annotations,
 application-owned and unsupported forms, unknown payload preservation, and failed and
-successful atomic reload. `--verify-schemas` checks deployment configuration and all
+successful atomic reload. `--semantic-tests` opens one document with independent name,
+reference, cycle, and file errors, repairs it in stages, rejects regressions, verifies
+base migration and warning-only save gating, and checks final canonical output.
+`--verify-schemas` checks deployment configuration and all
 bundle/catalog/annotation contracts without initializing SDL video and returns `3` for
 a configuration or bundle failure. `--smoke-test` executes schema reload, New, Save,
 and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,

@@ -106,14 +106,47 @@ struct DefinitionFactoryChoice {
   bool disabled = false;
 };
 
+enum class SemanticDiagnosticSeverity { warning, error };
+
+enum class SemanticDiagnosticKind {
+  duplicateName,
+  invalidName,
+  unresolvedReference,
+  referenceTypeMismatch,
+  dependencyCycle,
+  missingFile,
+  pathContainment,
+  invalidFileTarget,
+  unvalidatedData
+};
+
+struct SemanticDiagnostic {
+  SemanticDiagnosticSeverity severity = SemanticDiagnosticSeverity::error;
+  SemanticDiagnosticKind kind = SemanticDiagnosticKind::invalidName;
+  std::string resourceNamespace;
+  std::string resourceName;
+  std::string resourcePath;
+  std::string instancePath;
+  std::string message;
+  // Stable semantic subject used to distinguish a preserved error from an
+  // unrelated error introduced by an edit.
+  std::string subject;
+  bool inlineResource = false;
+  std::size_t dependencyIndex = 0;
+};
+
 struct DiagnosticNavigation {
   std::string resourceNamespace;
   std::string resourceName;
+  std::string resourcePath;
   std::string instancePath;
+  bool inlineResource = false;
+  std::size_t dependencyIndex = 0;
 };
 
 struct NamespaceSummary {
   std::string name;
+  std::string instancePath;
   std::size_t resourceCount = 0;
   bool isDefault = false;
   bool draft = false;
@@ -122,6 +155,7 @@ struct NamespaceSummary {
 struct ResourceSummary {
   std::string resourceNamespace;
   std::string name;
+  std::string instancePath;
   std::string resourceType;
   std::string location;
   std::vector<std::pair<std::string, std::string>> options;
@@ -203,6 +237,7 @@ class ManifestWorkspace {
   bool open(std::filesystem::path const& manifestPath);
   bool save();
   bool saveAs(std::filesystem::path const& manifestPath);
+  bool changeBaseDirectory(std::filesystem::path const& baseDirectory);
   // Rereads the deployment INI and every configured bundle. Publication is
   // atomic: malformed candidates and candidates that reject the open document
   // leave the current catalog, forms, document, and history untouched.
@@ -212,11 +247,15 @@ class ManifestWorkspace {
   [[nodiscard]] bool hasDocument() const noexcept;
   [[nodiscard]] bool hasPath() const noexcept;
   [[nodiscard]] bool dirty() const noexcept;
+  [[nodiscard]] bool canSave() const;
+  [[nodiscard]] bool canSaveAs() const;
   [[nodiscard]] std::filesystem::path const& path() const noexcept;
   [[nodiscard]] std::filesystem::path const& baseDirectory() const noexcept;
   [[nodiscard]] std::string const& operationDiagnostic() const noexcept;
   [[nodiscard]] std::vector<wp::application::resourcesystem::ResourceManifestDiagnostic>
       const& structuralDiagnostics() const noexcept;
+  [[nodiscard]] std::vector<SemanticDiagnostic> const& semanticDiagnostics()
+      const noexcept;
   [[nodiscard]] std::string canonicalYaml() const;
 
   [[nodiscard]] std::vector<ResourceForm> const& resourceForms() const noexcept;
@@ -238,6 +277,8 @@ class ManifestWorkspace {
   [[nodiscard]] std::vector<NestedFormItem> nestedFormItems(
       std::string const& resourceNamespace, std::string const& name) const;
   [[nodiscard]] std::optional<DiagnosticNavigation> diagnosticNavigation(
+      std::size_t diagnosticIndex) const;
+  [[nodiscard]] std::optional<DiagnosticNavigation> semanticDiagnosticNavigation(
       std::size_t diagnosticIndex) const;
 
   // A named namespace stays outside the document and command history until
@@ -264,10 +305,14 @@ class ManifestWorkspace {
 
   bool renameNamespace(std::string const& currentName, std::string newName,
                        bool continuous = false);
+  bool renameNamespaceAtPath(std::string const& namespacePath,
+                             std::string newName, bool continuous = false);
   bool deleteNamespace(std::string const& name);
   bool renameResource(std::string const& resourceNamespace,
                       std::string const& currentName, std::string newName,
                       bool continuous = false);
+  bool renameResourceAtPath(std::string const& resourcePath,
+                            std::string newName, bool continuous = false);
   bool reorderResource(std::string const& resourceNamespace,
                        std::string const& name, std::size_t newIndex,
                        bool continuous = false);
@@ -360,7 +405,8 @@ class ManifestWorkspace {
   bool executeYamlCommand(std::string name, std::string yaml,
                           std::string mergeKey = {}, bool continuous = false);
   std::optional<std::string> portableSelectedFile(
-      std::filesystem::path const& selectedFile);
+      std::filesystem::path const& selectedFile, ResourceForm const& form);
+  void refreshSemanticDiagnostics();
   void validateNamespaceDraft();
   void validateDraft();
 
@@ -371,6 +417,7 @@ class ManifestWorkspace {
   std::filesystem::path mBaseDirectory;
   std::vector<wp::application::resourcesystem::ResourceManifestDiagnostic>
       mStructuralDiagnostics;
+  std::vector<SemanticDiagnostic> mSemanticDiagnostics;
   std::string mOperationDiagnostic;
   std::vector<ResourceForm> mResourceForms;
   std::optional<NamespaceDraft> mNamespaceDraft;
@@ -386,5 +433,6 @@ bool runDependencyAuthoringTests(std::string* failure);
 bool runCompositeAuthoringTests(std::string* failure);
 bool runAdvancedAuthoringTests(std::string* failure);
 bool runSchemaIntegrationTests(std::string* failure);
+bool runSemanticRepairTests(std::string* failure);
 
 }  // namespace resource_manager
