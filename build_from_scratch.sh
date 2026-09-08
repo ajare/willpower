@@ -107,9 +107,10 @@ fi
 
 [[ -n "$BUILD_DIR" && "$BUILD_DIR" != / && "$BUILD_DIR" != "$ROOT_DIR" ]] || \
     fail "refusing to remove unsafe build directory: $BUILD_DIR"
+MPP_BUILD_DIR="$MPP_DIR/$(basename -- "$BUILD_DIR")"
 
 printf 'Removing previous build output...\n'
-rm -rf -- "$BUILD_DIR" "$MPP_DIR/build"
+rm -rf -- "$BUILD_DIR" "$MPP_BUILD_DIR"
 
 printf 'Configuring %s build in %s...\n' "$CONFIG" "$BUILD_DIR"
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CONFIG"

@@ -106,25 +106,25 @@ To perform the same process manually:
 3. Configure a fresh build tree and build from the repository root:
 
    ```bash
-   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-   cmake --build build --parallel
+   cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+   cmake --build build-linux --parallel
    ```
 
-   On the first build, CMake configures MassivePolyPusher in `build/_deps`. CMake's target dependencies then build yaml-cpp and Utils, GLEW, the required MassivePolyPusher libraries, and finally the Willpower modules. SplineLibrary and earcut.hpp are header-only; Assimp supplies the Poly2Tri sources used by Willpower. No manual dependency build or install step is required.
+   On the first build, CMake configures MassivePolyPusher in `ext/massive-poly-pusher/build-linux`, using the same build-directory name as Willpower. A custom Willpower directory such as `build-clang` likewise uses `ext/massive-poly-pusher/build-clang`. CMake's target dependencies then build yaml-cpp and Utils, GLEW, the required MassivePolyPusher libraries, and finally the Willpower modules. SplineLibrary and earcut.hpp are header-only; Assimp supplies the Poly2Tri sources used by Willpower. No manual dependency build or install step is required.
 
 For a completely clean rebuild of an existing checkout, remove the generated tree, refresh all submodules, and repeat configuration:
 
 ```bash
-rm -rf build
-# Remove ignored build output produced inside the MPP checkout, if present.
-rm -rf ext/massive-poly-pusher/build
+rm -rf build-linux
+# Remove the matching ignored build output inside the MPP checkout, if present.
+rm -rf ext/massive-poly-pusher/build-linux
 git submodule sync --recursive
 git submodule update --init --recursive
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux --parallel
 ```
 
-On PowerShell, use `Remove-Item -Recurse -Force build, ext/massive-poly-pusher/build` in place of the two `rm` commands (omit paths that do not exist).
+On PowerShell, use `Remove-Item -Recurse -Force build-windows, ext/massive-poly-pusher/build-windows` and configure with `-B build-windows` (omit paths that do not exist).
 
 ### Linux
 
