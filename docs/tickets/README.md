@@ -104,7 +104,7 @@ Static bundles are the interoperability contract; native schema plugins are opti
 | [WP-033](WP-033.md) | [#33](https://github.com/ajare/willpower/issues/33) | Build integration | P1 | hard | Compose downstream application schema bundles | WP-031 | open |
 | [WP-034](WP-034.md) | [#34](https://github.com/ajare/willpower/issues/34) | Runtime integration | P1 | hard | Validate custom Resource Types from the catalog | WP-032 | open |
 | [WP-035](WP-035.md) | [#35](https://github.com/ajare/willpower/issues/35) | Tooling | P1 | medium | Export and compose Resource Schema Bundles | WP-032, WP-033 | open |
-| [WP-036](WP-036.md) | [#36](https://github.com/ajare/willpower/issues/36) | Dynamic discovery | P2 | hard | Add an optional C ABI for schema plugins | WP-031, WP-032 | open |
+| [WP-036](WP-036.md) | [#36](https://github.com/ajare/willpower/issues/36) | Dynamic discovery | P2 | hard | Add an optional C ABI for schema plugins | WP-031, WP-032 | done |
 | [WP-037](WP-037.md) | [#37](https://github.com/ajare/willpower/issues/37) | Verification & docs | P1 | medium | Integration tests and documentation | WP-033–WP-035 | done |
 
 ### Suggested execution order

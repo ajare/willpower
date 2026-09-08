@@ -244,6 +244,13 @@ complete [application integration guide](docs/resource-schema-integration.md) co
 schema authoring, CMake and runtime registration, installed-package use, export,
 compatibility, and security boundaries.
 
+For schemas unavailable when an application bundle is generated, the tool and
+`ResourceSchemaCatalog::addPlugin()` optionally accept exact, explicitly supplied native
+Resource Type Plugin paths. The versioned C ABI copies a bundle from the plugin and
+unloads it before catalog merge; it never exposes runtime factories. Plugins execute
+trusted architecture-specific code, so portable bundle directories remain preferred.
+See the [plugin ABI specification](docs/specifications/resource-schema-plugin.md).
+
 Each `ResourceManager` owns a catalog initialized with those built-in schemas. Call
 `addResourceSchemaBundle()` with an in-memory bundle or bundle directory before the first
 `scanLocations()`/`rescanLocations()` call. Scanning freezes one immutable snapshot and

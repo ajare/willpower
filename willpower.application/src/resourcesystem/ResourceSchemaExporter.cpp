@@ -27,9 +27,16 @@ std::string kindName(ResourceSchemaKind kind) {
   return "dependency";
 }
 
+enum class InputKind { bundle, plugin };
+
+struct Input {
+  InputKind kind;
+  std::filesystem::path path;
+};
+
 struct Arguments {
   std::string command;
-  std::vector<std::filesystem::path> bundles;
+  std::vector<Input> inputs;
   std::filesystem::path output;
   std::filesystem::path rootSchema;
   std::string rootSchemaId =
@@ -40,8 +47,8 @@ Arguments parseArguments(int argc, char const* const* argv) {
   if (argc < 2) {
     throw std::invalid_argument(
         "usage: willpower-resource-schemas <list|verify|merge|export> "
-        "[--bundle DIR ...] [--output DIR] [--root-schema FILE] "
-        "[--root-schema-id URI]");
+        "[--bundle DIR ...] [--plugin FILE ...] [--output DIR] "
+        "[--root-schema FILE] [--root-schema-id URI]");
   }
   Arguments result;
   result.command = argv[1];
@@ -56,7 +63,9 @@ Arguments parseArguments(int argc, char const* const* argv) {
       return argv[index];
     };
     if (option == "--bundle")
-      result.bundles.emplace_back(value(option));
+      result.inputs.push_back({InputKind::bundle, value(option)});
+    else if (option == "--plugin")
+      result.inputs.push_back({InputKind::plugin, value(option)});
     else if (option == "--output")
       result.output = value(option);
     else if (option == "--root-schema")
@@ -66,8 +75,8 @@ Arguments parseArguments(int argc, char const* const* argv) {
     else if (option == "--help" || option == "-h")
       throw std::invalid_argument(
           "usage: willpower-resource-schemas <list|verify|merge|export> "
-          "[--bundle DIR ...] [--output DIR] [--root-schema FILE] "
-          "[--root-schema-id URI]");
+          "[--bundle DIR ...] [--plugin FILE ...] [--output DIR] "
+          "[--root-schema FILE] [--root-schema-id URI]");
     else
       throw std::invalid_argument("unknown option '" + std::string(option) + "'");
   }
@@ -79,9 +88,15 @@ Arguments parseArguments(int argc, char const* const* argv) {
 }
 
 int failureCode(std::string const& message) {
-  if (message.find("unsupported") != std::string::npos &&
-      message.find("Version") != std::string::npos)
-    return 3;
+  auto const incompatibility = message.find("unsupported") != std::string::npos ||
+                               message.find("incompatible") != std::string::npos ||
+                               message.find("does not support") != std::string::npos;
+  auto const versionSubject = message.find("Version") != std::string::npos ||
+                              message.find("version") != std::string::npos ||
+                              message.find("ABI") != std::string::npos ||
+                              message.find("bundle format") != std::string::npos ||
+                              message.find("Resource Manifest schema") != std::string::npos;
+  if (incompatibility && versionSubject) return 3;
   if (message.find("collision") != std::string::npos ||
       message.find("duplicate Resource Schema key") != std::string::npos)
     return 4;
@@ -101,10 +116,15 @@ std::optional<std::string> quotedAfter(std::string const& message, std::string c
   return message.substr(begin, end - begin);
 }
 
-void printFailure(std::string const& message, std::optional<std::filesystem::path> const& bundle,
+void printFailure(std::string const& message, std::optional<Input> const& input,
                   int code) {
   Json diagnostic{{"ok", false}, {"code", code}, {"message", message}};
-  diagnostic["bundle"] = bundle ? Json(bundle->generic_string()) : Json(nullptr);
+  diagnostic["bundle"] = input && input->kind == InputKind::bundle
+                             ? Json(input->path.generic_string())
+                             : Json(nullptr);
+  diagnostic["plugin"] = input && input->kind == InputKind::plugin
+                             ? Json(input->path.generic_string())
+                             : Json(nullptr);
   if (auto collisionId = quotedAfter(message, "schema ID collision for '"); collisionId)
     diagnostic["schemaId"] = *collisionId;
   else if (auto incomingId = quotedAfter(message, "incoming schema ID '"); incomingId)
@@ -130,12 +150,12 @@ void printFailure(std::string const& message, std::optional<std::filesystem::pat
   // lookup metadata even when validation stopped before a ResourceSchema was
   // constructed (for example, on a hash mismatch).
   auto const entryMarker = message.find("catalog schema entry ");
-  if (bundle && entryMarker != std::string::npos) {
+  if (input && input->kind == InputKind::bundle && entryMarker != std::string::npos) {
     try {
       auto const begin = entryMarker + std::string_view("catalog schema entry ").size();
       auto const index = static_cast<std::size_t>(std::stoull(message.substr(begin)));
-      std::ifstream input(*bundle / "catalog.json", std::ios::binary);
-      Json catalog = Json::parse(input);
+      std::ifstream catalogInput(input->path / "catalog.json", std::ios::binary);
+      Json catalog = Json::parse(catalogInput);
       auto const& entry = catalog.at("schemas").at(index);
       if (diagnostic["schemaId"].is_null() && entry.contains("schemaId"))
         diagnostic["schemaId"] = entry.at("schemaId");
@@ -180,12 +200,20 @@ int runResourceSchemaExporter(ResourceSchemaCatalog& catalog, int argc,
     return 2;
   }
 
-  for (auto const& bundle : arguments.bundles) {
+  std::size_t bundleCount = 0;
+  std::size_t pluginCount = 0;
+  for (auto const& input : arguments.inputs) {
     try {
-      catalog.addBundle(bundle);
+      if (input.kind == InputKind::bundle) {
+        catalog.addBundle(input.path);
+        ++bundleCount;
+      } else {
+        catalog.addPlugin(input.path);
+        ++pluginCount;
+      }
     } catch (std::exception const& error) {
       auto const code = failureCode(error.what());
-      printFailure(error.what(), bundle, code);
+      printFailure(error.what(), input, code);
       return code;
     }
   }
@@ -207,7 +235,8 @@ int runResourceSchemaExporter(ResourceSchemaCatalog& catalog, int argc,
       std::cout << Json{{"ok", true}, {"schemas", std::move(schemas)}}.dump(2) << '\n';
     } else if (arguments.command == "verify") {
       std::cout << Json{{"ok", true},
-                        {"bundles", arguments.bundles.size()},
+                        {"bundles", bundleCount},
+                        {"plugins", pluginCount},
                         {"schemas", snapshot.entries().size()}}
                        .dump()
                 << '\n';

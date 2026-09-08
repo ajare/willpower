@@ -71,6 +71,10 @@ install(DIRECTORY "${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_DIR}/"
     COMPONENT Willpower_Application
     PATTERN "generated.stamp" EXCLUDE)
 install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/willpower/application/resourcesystem/ResourceSchemaPlugin.h"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/willpower/application/resourcesystem"
+    COMPONENT Willpower_Application)
+install(FILES
     "${PROJECT_SOURCE_DIR}/cmake/ResourceSchemas.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/ComposeResourceSchemaBundle.cmake"
     "${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
@@ -129,6 +133,7 @@ add_library(Willpower.Application SHARED
     src/resourcesystem/ResourceManager.cpp
     src/resourcesystem/ResourceSchemaCatalog.cpp
     src/resourcesystem/ResourceSchemaExporter.cpp
+    src/resourcesystem/ResourceSchemaPlugin.cpp
     src/resourcesystem/ResourceManifestValidator.cpp
     src/resourcesystem/ResourceManifestValidator.h
     src/resourcesystem/ShaderDefaultDefinitionFactory.cpp
@@ -158,7 +163,7 @@ target_compile_definitions(Willpower.Application
 target_link_libraries(Willpower.Application
     PUBLIC  Willpower.Common
             ext::mpp ext::mpp-mesh ext::mpp-program
-    PRIVATE ext::Utils)
+    PRIVATE ext::Utils ${CMAKE_DL_LIBS})
 if(WILLPOWER_ENABLE_FMOD)
     target_link_libraries(Willpower.Application PRIVATE vendor::fmod vendor::fmodstudio)
 endif()
@@ -192,6 +197,65 @@ if(BUILD_TESTING)
             "-DGENERATOR=${PROJECT_SOURCE_DIR}/cmake/GenerateResourceSchemaBundle.cmake"
             "-DRECORDS_FILE=${WILLPOWER_RESOURCE_SCHEMA_BUNDLE_RECORDS_FILE}"
             -P "${PROJECT_SOURCE_DIR}/cmake/VerifyResourceSchemaBundle.cmake")
+
+    set(WILLPOWER_SCHEMA_PLUGIN_TARGETS
+        willpower_sample_schema_plugin
+        willpower_incompatible_schema_plugin
+        willpower_missing_symbol_schema_plugin
+        willpower_malformed_schema_plugin
+        willpower_duplicate_schema_plugin)
+    set(WILLPOWER_SCHEMA_PLUGIN_SOURCES
+        sample_schema_plugin.c
+        incompatible_schema_plugin.c
+        missing_symbol_schema_plugin.c
+        malformed_schema_plugin.c
+        duplicate_schema_plugin.c)
+    list(LENGTH WILLPOWER_SCHEMA_PLUGIN_TARGETS _plugin_target_count)
+    math(EXPR _plugin_target_last "${_plugin_target_count} - 1")
+    foreach(_plugin_index RANGE 0 ${_plugin_target_last})
+        list(GET WILLPOWER_SCHEMA_PLUGIN_TARGETS ${_plugin_index} _plugin_target)
+        list(GET WILLPOWER_SCHEMA_PLUGIN_SOURCES ${_plugin_index} _plugin_source)
+        add_library(${_plugin_target} MODULE "tests/plugins/${_plugin_source}")
+        target_compile_features(${_plugin_target} PRIVATE c_std_99)
+        target_include_directories(${_plugin_target} PRIVATE include)
+        target_compile_definitions(${_plugin_target} PRIVATE WP_RESOURCE_SCHEMA_PLUGIN_BUILD)
+        willpower_target_defaults(${_plugin_target})
+        willpower_output_dirs(${_plugin_target})
+        set_target_properties(${_plugin_target} PROPERTIES
+            PREFIX ""
+            FOLDER Willpower/Tests/Plugins)
+    endforeach()
+    unset(_plugin_index)
+    unset(_plugin_target)
+    unset(_plugin_source)
+    unset(_plugin_target_count)
+    unset(_plugin_target_last)
+
+    add_executable(willpower_application_schema_plugin_tests
+        tests/resource_schema_plugin_tests.cpp)
+    target_compile_features(willpower_application_schema_plugin_tests PRIVATE cxx_std_20)
+    target_link_libraries(willpower_application_schema_plugin_tests PRIVATE Willpower.Application)
+    willpower_target_defaults(willpower_application_schema_plugin_tests)
+    willpower_output_dirs(willpower_application_schema_plugin_tests)
+    set_target_properties(willpower_application_schema_plugin_tests PROPERTIES FOLDER Willpower)
+    willpower_deploy_runtime_dlls(willpower_application_schema_plugin_tests)
+    willpower_deploy_vendor_dlls(willpower_application_schema_plugin_tests)
+    add_dependencies(willpower_application_schema_plugin_tests ${WILLPOWER_SCHEMA_PLUGIN_TARGETS})
+    willpower_add_test(NAME willpower_application_schema_plugins
+        COMMAND willpower_application_schema_plugin_tests
+            "$<TARGET_FILE:willpower_sample_schema_plugin>"
+            "$<TARGET_FILE:willpower_incompatible_schema_plugin>"
+            "$<TARGET_FILE:willpower_missing_symbol_schema_plugin>"
+            "$<TARGET_FILE:willpower_malformed_schema_plugin>"
+            "$<TARGET_FILE:willpower_duplicate_schema_plugin>")
+
+    willpower_add_test(NAME willpower_resource_schema_plugin_cli
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTOOL=$<TARGET_FILE:willpower_resource_schemas>"
+            "-DSAMPLE_PLUGIN=$<TARGET_FILE:willpower_sample_schema_plugin>"
+            "-DINCOMPATIBLE_PLUGIN=$<TARGET_FILE:willpower_incompatible_schema_plugin>"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/schema-plugin-cli-test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/resource_schema_plugin_cli_tests.cmake")
 
     add_executable(willpower_application_schema_catalog_tests
         tests/schema_catalog_tests.cpp)

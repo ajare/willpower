@@ -7,7 +7,8 @@ workflow.
 `willpower-resource-schemas` inspects, verifies, merges, and exports Resource Schema
 Bundles without reading Willpower's schema source directory. It starts with the twelve
 schemas embedded in `Willpower.Application` (the manifest, two dependencies, and nine
-built-in Resource Types), then merges each `--bundle` in command-line order.
+built-in Resource Types), then merges each explicitly supplied `--bundle` or `--plugin`
+in command-line order. Plugins are never searched for or loaded implicitly.
 
 ```sh
 # Inventory the embedded catalog as JSON.
@@ -18,8 +19,12 @@ willpower-resource-schemas verify --bundle build/resource-schema-bundle
 
 # Merge into a complete bundle, replacing input manifest entries with one root
 # that dispatches every registered Resource Type and factory.
-willpower-resource-schemas merge --bundle vendor/plugin-bundle \
+willpower-resource-schemas merge --bundle vendor/resource-schema-bundle \
   --output build/merged-resource-schema-bundle
+
+# Optionally discover schemas by executing one trusted native plugin at an
+# exact user-supplied path (.dll on Windows, .so on Linux).
+willpower-resource-schemas list --plugin vendor/plugins/widget-schema.dll
 
 # Export does the same deterministic composition and also writes a convenient
 # standalone copy of the root schema.
@@ -36,12 +41,13 @@ catalog, document, and root-schema bytes on Windows and Linux.
 
 All successful commands write JSON to standard output. Failures write one JSON object to
 standard error with `ok`, numeric `code`, `message`, `bundle`, `key`, and `schemaId`
-fields. `bundle`, `key`, or `schemaId` is `null` when it cannot apply. Exit codes are:
+fields. Plugin-aware diagnostics additionally include `plugin`; `bundle`, `plugin`,
+`key`, or `schemaId` is `null` when it cannot apply. Exit codes are:
 
 | Code | Meaning |
 | ---: | --- |
 | 2 | command-line usage |
-| 3 | incompatible bundle or Resource Manifest schema version |
+| 3 | incompatible plugin ABI, bundle, or Resource Manifest schema version |
 | 4 | Resource Schema key or schema-ID collision |
 | 5 | malformed or mismatched document hash |
 | 6 | unresolved local `$ref` document or fragment |
@@ -98,3 +104,18 @@ Link this target to `Willpower.Application`. A complete working target is in
 `tests/downstream/resource-schema-bundle/schema_exporter.cpp`; its registration function
 adds the application bundle and delegates argument handling, deterministic composition,
 and machine-readable diagnostics to `runResourceSchemaExporter`.
+
+## Optional native plugins
+
+`--plugin FILE` may be repeated and may be mixed with `--bundle`. Each plugin is loaded
+only from that explicit path, invoked once, copied, released, and unloaded before its
+bundle is validated and merged. The sample C plugin in
+`willpower.application/tests/plugins/sample_schema_plugin.c` contributes the
+`PluginWidget` Resource Type and `GlowFactory` specialized schema without linking to
+`Willpower.Application` or initializing any runtime service.
+
+Plugins execute arbitrary native code and must match the host OS and architecture. Use
+only trusted artifacts and deploy all of their native dependencies. Prefer bundle
+directories when code execution and dynamic discovery are unnecessary. The normative
+ABI, ownership, negotiation, deployment, and trust contract is in
+[Resource Type schema plugin C ABI](specifications/resource-schema-plugin.md).

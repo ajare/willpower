@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(Willpower VERSION 0.1.0 LANGUAGES CXX)
+project(Willpower VERSION 0.1.0 LANGUAGES C CXX)
 
 # Shipping uses CMake's maximum-speed Release compiler and linker flags.
 # Defining every standard per-configuration flag also makes the configuration
 # work with single-config generators such as Ninja.
+set(CMAKE_C_FLAGS_SHIPPING
+    "${CMAKE_C_FLAGS_RELEASE}"
+    CACHE STRING "Flags used by the C compiler for Shipping builds" FORCE)
 set(CMAKE_CXX_FLAGS_SHIPPING
     "${CMAKE_CXX_FLAGS_RELEASE}"
     CACHE STRING "Flags used by the C++ compiler for Shipping builds" FORCE)
@@ -15,7 +18,7 @@ foreach(WILLPOWER_SHIPPING_LINKER EXE SHARED MODULE)
     mark_as_advanced(CMAKE_${WILLPOWER_SHIPPING_LINKER}_LINKER_FLAGS_SHIPPING)
 endforeach()
 unset(WILLPOWER_SHIPPING_LINKER)
-mark_as_advanced(CMAKE_CXX_FLAGS_SHIPPING)
+mark_as_advanced(CMAKE_C_FLAGS_SHIPPING CMAKE_CXX_FLAGS_SHIPPING)
 set(CMAKE_MAP_IMPORTED_CONFIG_SHIPPING Release)
 
 # Keep the documented no-options configure command usable with single-config
@@ -40,8 +43,11 @@ if(MSVC AND CMAKE_CONFIGURATION_TYPES)
     # per-target in willpower_target_defaults() (cmake/Helpers.cmake), only
     # to Willpower's own targets.
     # /RTC1 (runtime checks) cannot be combined with /fsanitize=address under MSVC.
+    string(REPLACE "/RTC1" "" WILLPOWER_MEMCHECK_C_FLAGS "${CMAKE_C_FLAGS_DEBUG}")
     string(REPLACE "/RTC1" "" WILLPOWER_MEMCHECK_CXX_FLAGS "${CMAKE_CXX_FLAGS_DEBUG}")
+    set(CMAKE_C_FLAGS_MEMCHECK "${WILLPOWER_MEMCHECK_C_FLAGS}" CACHE STRING "Flags used by the C compiler for MemCheck builds" FORCE)
     set(CMAKE_CXX_FLAGS_MEMCHECK "${WILLPOWER_MEMCHECK_CXX_FLAGS}" CACHE STRING "Flags used by the C++ compiler for MemCheck builds" FORCE)
+    unset(WILLPOWER_MEMCHECK_C_FLAGS)
     unset(WILLPOWER_MEMCHECK_CXX_FLAGS)
 
     # ASan is incompatible with incremental linking.
@@ -52,6 +58,7 @@ if(MSVC AND CMAKE_CONFIGURATION_TYPES)
     unset(WILLPOWER_MEMCHECK_EXE_LINKER_FLAGS)
     unset(WILLPOWER_MEMCHECK_SHARED_LINKER_FLAGS)
     mark_as_advanced(
+        CMAKE_C_FLAGS_MEMCHECK
         CMAKE_CXX_FLAGS_MEMCHECK
         CMAKE_EXE_LINKER_FLAGS_MEMCHECK
         CMAKE_SHARED_LINKER_FLAGS_MEMCHECK)
@@ -80,6 +87,8 @@ if(MSVC)
         "MSVC runtime library used by Willpower and its dependencies" FORCE)
 endif()
 
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)

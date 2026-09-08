@@ -106,9 +106,17 @@ class WP_APPLICATION_API ResourceSchemaCatalog {
   [[nodiscard]] static ResourceSchemaCatalog builtIn();
   [[nodiscard]] static ResourceSchemaBundle readBundle(
       std::filesystem::path const& bundleDirectory);
+  // Loads exactly the supplied shared-library path, negotiates C ABI version
+  // 1, copies its Plugin Bundle Container, releases plugin-owned storage, and
+  // unloads the library before returning the owned bundle.
+  [[nodiscard]] static ResourceSchemaBundle readPluginBundle(
+      std::filesystem::path const& pluginPath);
 
   void addBundle(ResourceSchemaBundle const& bundle);
   void addBundle(std::filesystem::path const& bundleDirectory);
+  // Plugin discovery is explicit and schema-only. It neither searches for
+  // libraries nor constructs Resource factories or application services.
+  void addPlugin(std::filesystem::path const& pluginPath);
   // A batch is one mutation: readers observe either all bundles or none.
   void addBundles(std::span<ResourceSchemaBundle const> bundles);
 

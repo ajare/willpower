@@ -39,6 +39,34 @@ keys, conflicting schema IDs, malformed documents, or missing local `$ref` targe
 The output is byte-for-byte deterministic for identical inputs and resolves entirely
 offline.
 
+## Optional dynamic schema discovery
+
+When a Resource Type is distributed independently and cannot be selected while composing
+the application bundle, a trusted native Resource Type Plugin may provide the same
+bundle content through the versioned C ABI:
+
+```sh
+willpower-resource-schemas export \
+  --plugin /opt/example/lib/widget-resource-schemas.so \
+  --output build/editor-schemas
+```
+
+C++ hosts can call `ResourceSchemaCatalog::addPlugin(path)` directly. The path is always
+explicit; Willpower has no plugin directories, scanning, manifest-triggered loading, or
+environment-based discovery. `addPlugin` copies the returned bytes, releases plugin-owned
+memory, unloads the library, and only then validates and atomically merges through the
+normal catalog path. Plugin registration remains entirely separate from runtime factory
+registration and application subsystem initialization.
+
+A plugin is architecture-specific executable code, unlike a bundle directory. It must
+match the host OS, CPU, and C ABI and be deployed with its native dependencies. Module
+initializers and the entry point run with full process privileges, so only trusted,
+authenticated plugin paths should be accepted. A plugin can have effects before schema
+validation and is not sandboxed by hash, JSON, or `$ref` checks. Prefer Resource Schema
+Bundle directories when dynamic discovery is unnecessary. See the normative
+[Resource Type schema plugin C ABI](specifications/resource-schema-plugin.md) for symbol,
+negotiation, byte-container, lifetime, error, dependency, and unload rules.
+
 ## Register runtime behavior
 
 Schema registration and factory registration are related but explicit operations. Do
