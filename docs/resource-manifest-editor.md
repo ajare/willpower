@@ -119,6 +119,24 @@ and replaces the owned declaration with a correctly qualified `ref` in one undoa
 command. Existing references to the inline identity continue to be represented before
 promotion and become ordinary selector targets afterwards.
 
+## ImageSet and AnimationSet Definitions
+
+`ImageSet` and `AnimationSet` are available from the same catalogued Add Resource menu.
+Their drafts require a selector-backed compatible Image dependency (`Image` for an
+ImageSet and `ImageSet` for an AnimationSet) and create a minimal valid default
+Definition. Their inspectors expose required and optional nested properties, integer and
+positive-number constraints, loop-style enums, and explicit-frame versus image-set-frame
+alternatives.
+
+Image, image-set, animation, frame, frame-override, and tag collections accept legacy
+singleton input and are presented as indexed collections. Items can be added, duplicated,
+removed, and reordered; output is normalized back to a singleton when one item remains.
+Every action validates a preview before committing one undoable command. Removing a
+required default Definition or final required collection item, supplying an invalid
+number, or entering an incomplete alternative is rejected without changing the current
+document. Rejected-edit diagnostics retain their complete instance paths and can be
+selected to return to the owning Resource's nested inspector.
+
 ## Validation seams
 
 The headless validation command remains documented in
@@ -129,6 +147,7 @@ resource-manager --document-tests
 resource-manager --authoring-tests
 resource-manager --organization-tests
 resource-manager --dependency-tests
+resource-manager --composite-tests
 resource-manager --smoke-test --ini /installed/bin/resource-manager.ini
 ```
 
@@ -140,7 +159,10 @@ relative output, and create/property/rename/delete undo and redo.
 protection, ordering, moves, standard-reference rewrites, deletion rules, and compound
 undo/redo. `--dependency-tests` covers allowed-type filtering, qualified identities,
 cycle prevention, missing and incoming references, inline editing, selector visibility,
-and atomic promotion. `--smoke-test` executes New,
+and atomic promotion. `--composite-tests` covers ImageSet and AnimationSet creation,
+explicit and image-set frames, compatible scalar input, nested collection boundaries,
+dependency selectors, rejected edits and transitions, diagnostics, canonical output,
+and undo/redo. `--smoke-test` executes New,
 Save, and Open in a temporary directory, initializes the real SDL3/ImGui/OpenGL stack,
 renders the menu, toolbar, and editor for several frames, resizes the native window,
 and verifies that the non-closable editor workspace continues to fill the viewport.

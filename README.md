@@ -257,7 +257,9 @@ shell. Its persistent SDL3/ImGui workspace can select a base directory for a val
 manifest, open one structurally valid YAML document, and save canonical YAML through
 atomic replacement. It authors the five source-backed built-in Resource Types through
 catalogued forms, native annotated file selectors, contained portable paths, and
-undoable create/edit/rename/delete commands. Its flat namespace tree supports draft
+undoable create/edit/rename/delete commands. It also authors complete `ImageSet` and
+`AnimationSet` Definitions through validated nested object, collection, numeric, enum,
+alternative, dependency-selector, and undo/redo controls. Its flat namespace tree supports draft
 namespaces, Resource reordering and drag moves, protected bulk deletion, and transactional
 standard dependency-reference rewrites. Standard dependency selectors filter compatible
 qualified targets, prevent cycles, preserve missing legacy selections, and diagnose

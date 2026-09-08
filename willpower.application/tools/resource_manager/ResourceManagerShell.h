@@ -33,6 +33,46 @@ struct ResourceForm {
   std::string fileKind;
   std::vector<std::string> fileExtensions;
   std::vector<ResourceOptionForm> options;
+  bool composite = false;
+};
+
+enum class NestedCollectionKind {
+  definition,
+  image,
+  imageSet,
+  animation,
+  frame,
+  overrideFrame,
+  tag
+};
+
+struct NestedPropertyForm {
+  std::string name;
+  std::string value;
+  bool required = false;
+  bool integer = false;
+  bool number = false;
+  bool optional = false;
+  double minimum = 0.0;
+  bool hasMinimum = false;
+  bool exclusiveMinimum = false;
+  std::vector<std::string> enumValues;
+};
+
+// Paths are Resource-relative JSON instance paths. Collection values are
+// normalized to indexed paths even when compatible YAML used a singleton.
+struct NestedFormItem {
+  NestedCollectionKind kind = NestedCollectionKind::image;
+  std::string path;
+  std::string label;
+  std::vector<NestedPropertyForm> properties;
+  std::string alternative;
+};
+
+struct DiagnosticNavigation {
+  std::string resourceNamespace;
+  std::string resourceName;
+  std::string instancePath;
 };
 
 struct NamespaceSummary {
@@ -100,6 +140,8 @@ struct ResourceDraft {
   std::string resourceType;
   std::string name;
   std::string location;
+  std::string dependencyNamespace;
+  std::string dependencyName;
   std::string validationMessage;
 };
 
@@ -135,6 +177,11 @@ class ManifestWorkspace {
   [[nodiscard]] std::vector<DependencyDiagnostic> dependencyDiagnostics() const;
   [[nodiscard]] std::vector<std::string> incomingReferences(
       std::string const& resourceNamespace, std::string const& name) const;
+  [[nodiscard]] std::vector<ResourceReferenceChoice> draftReferenceChoices() const;
+  [[nodiscard]] std::vector<NestedFormItem> nestedFormItems(
+      std::string const& resourceNamespace, std::string const& name) const;
+  [[nodiscard]] std::optional<DiagnosticNavigation> diagnosticNavigation(
+      std::size_t diagnosticIndex) const;
 
   // A named namespace stays outside the document and command history until
   // its first Resource is committed or moved into it.
@@ -150,6 +197,7 @@ class ManifestWorkspace {
                   std::string resourceNamespace = {});
   void setDraftName(std::string name);
   bool selectDraftFile(std::filesystem::path const& selectedFile);
+  bool setDraftReference(std::string resourceNamespace, std::string name);
   [[nodiscard]] ResourceDraft const* draft() const noexcept;
   [[nodiscard]] bool draftValid() const noexcept;
   bool commitDraft();
@@ -201,6 +249,30 @@ class ManifestWorkspace {
                              std::string const& ownerName,
                              std::size_t dependencyIndex,
                              std::string const& targetNamespace);
+  bool setNestedProperty(std::string const& resourceNamespace,
+                         std::string const& name,
+                         std::string const& itemPath,
+                         std::string const& property,
+                         std::optional<std::string> value,
+                         bool continuous = false);
+  bool addNestedItem(std::string const& resourceNamespace,
+                     std::string const& name,
+                     std::string const& collectionPath,
+                     NestedCollectionKind kind);
+  bool duplicateNestedItem(std::string const& resourceNamespace,
+                           std::string const& name,
+                           std::string const& itemPath);
+  bool removeNestedItem(std::string const& resourceNamespace,
+                        std::string const& name,
+                        std::string const& itemPath);
+  bool reorderNestedItem(std::string const& resourceNamespace,
+                         std::string const& name,
+                         std::string const& itemPath, std::size_t newIndex);
+  bool setFramesAlternative(std::string const& resourceNamespace,
+                            std::string const& name,
+                            std::string const& framesPath,
+                            bool imageSetFrames,
+                            std::string imageSet = {});
   bool deleteResource(std::string const& resourceNamespace,
                       std::string const& name);
 
@@ -242,5 +314,6 @@ bool runDocumentTests(std::string* failure);
 bool runAuthoringTests(std::string* failure);
 bool runOrganizationTests(std::string* failure);
 bool runDependencyAuthoringTests(std::string* failure);
+bool runCompositeAuthoringTests(std::string* failure);
 
 }  // namespace resource_manager

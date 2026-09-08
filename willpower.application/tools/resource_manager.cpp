@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -89,6 +90,7 @@ void printUsage(std::ostream& output) {
             "  resource-manager --authoring-tests\n"
             "  resource-manager --organization-tests\n"
             "  resource-manager --dependency-tests\n"
+            "  resource-manager --composite-tests\n"
             "  resource-manager --validate FILE --base-directory DIR "
             "[--canonical-output FILE|-]\n"
             "  resource-manager --help\n";
@@ -543,6 +545,8 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
   static std::array<char, 256> namespaceBuffer{};
   static std::array<char, 256> draftNameBuffer{};
   static std::array<char, 256> namespaceDraftNameBuffer{};
+  static std::map<std::string, std::array<char, 256>> nestedBuffers;
+  static std::string selectedNestedPath;
   auto setBuffer = [](auto& buffer, std::string const& value) {
     buffer.fill('\0');
     auto const length = (std::min)(value.size(), buffer.size() - 1U);
@@ -846,12 +850,35 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       if (ImGui::InputText("Name", draftNameBuffer.data(),
                            draftNameBuffer.size()))
         workspace.setDraftName(draftNameBuffer.data());
-      ImGui::Text("Source file: %s", draft->location.empty()
-                                          ? "Not selected"
-                                          : draft->location.c_str());
-      if (ImGui::Button("Select source file...") && !dialog.busy()) {
-        if (auto const* form = workspace.resourceForm(draft->resourceType))
-          dialog.beginResourceFile(*form, window, true);
+      auto const* draftForm = workspace.resourceForm(draft->resourceType);
+      if (draftForm && draftForm->composite) {
+        auto choices = workspace.draftReferenceChoices();
+        std::string preview = draft->dependencyName.empty()
+                                  ? "Select compatible Resource"
+                                  : (draft->dependencyNamespace.empty()
+                                         ? draft->dependencyName
+                                         : draft->dependencyNamespace + "/" +
+                                               draft->dependencyName);
+        if (ImGui::BeginCombo("Image dependency", preview.c_str())) {
+          for (auto const& choice : choices) {
+            ImGui::BeginDisabled(choice.disabled);
+            if (ImGui::Selectable(choice.qualifiedIdentity.c_str(),
+                                  choice.selected)) {
+              workspace.setDraftReference(choice.resourceNamespace, choice.name);
+            }
+            ImGui::EndDisabled();
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::TextDisabled(
+            "A valid starter Definition is created and can be extended after creation.");
+      } else {
+        ImGui::Text("Source file: %s", draft->location.empty()
+                                            ? "Not selected"
+                                            : draft->location.c_str());
+        if (ImGui::Button("Select source file...") && !dialog.busy()) {
+          if (draftForm) dialog.beginResourceFile(*draftForm, window, true);
+        }
       }
       if (!draft->validationMessage.empty())
         ImGui::TextWrapped("%s", draft->validationMessage.c_str());
@@ -1080,19 +1107,185 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
             setBuffer(nameBuffer, selected->name);
           }
         }
+        auto const* selectedForm = workspace.resourceForm(selected->resourceType);
         if (!selected->editable) {
           ImGui::TextDisabled(
               "Type-specific properties are read-only; common organization is available.");
+        } else if (selectedForm && selectedForm->composite) {
+          ImGui::Separator();
+          ImGui::TextUnformatted("Definition");
+          auto nestedItems = workspace.nestedFormItems(
+              selected->resourceNamespace, selected->name);
+          for (auto const& item : nestedItems) {
+            ImGui::PushID(item.path.c_str());
+            bool const open = ImGui::TreeNodeEx(
+                item.label.c_str(), ImGuiTreeNodeFlags_DefaultOpen |
+                                        ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (open) {
+              if (item.kind == resource_manager::NestedCollectionKind::animation) {
+                auto const imageSetMode = item.alternative == "image-set";
+                if (ImGui::BeginCombo("Frames", item.alternative.c_str())) {
+                  if (ImGui::Selectable("explicit", !imageSetMode)) {
+                    workspace.setFramesAlternative(
+                        selected->resourceNamespace, selected->name,
+                        item.path + "/Frames", false);
+                  }
+                  if (ImGui::Selectable("image-set", imageSetMode)) {
+                    workspace.setFramesAlternative(
+                        selected->resourceNamespace, selected->name,
+                        item.path + "/Frames", true, "ImageSet");
+                  }
+                  ImGui::EndCombo();
+                }
+              }
+              for (auto const& property : item.properties) {
+                auto propertyPath = item.path + "/" + property.name;
+                auto singletonPath = propertyPath;
+                for (std::size_t pathPosition = singletonPath.find("/0/");
+                     pathPosition != std::string::npos;
+                     pathPosition = singletonPath.find("/0/", pathPosition)) {
+                  singletonPath.erase(pathPosition, 2U);
+                }
+                bool const focusProperty =
+                    !selectedNestedPath.empty() &&
+                    (selectedNestedPath.ends_with(propertyPath) ||
+                     selectedNestedPath.ends_with(singletonPath));
+                auto key = selected->resourceNamespace + "\n" + selected->name +
+                           "\n" + item.path + "\n" + property.name;
+                auto [buffer, inserted] = nestedBuffers.try_emplace(key);
+                if (inserted || !ImGui::IsAnyItemActive())
+                  setBuffer(buffer->second, property.value);
+                if (!property.enumValues.empty()) {
+                  auto const* preview = property.value.empty()
+                                            ? "Not set"
+                                            : property.value.c_str();
+                  if (ImGui::BeginCombo(property.name.c_str(), preview)) {
+                    if (property.optional &&
+                        ImGui::Selectable("Not set", property.value.empty())) {
+                      workspace.setNestedProperty(
+                          selected->resourceNamespace, selected->name, item.path,
+                          property.name, {});
+                    }
+                    for (auto const& value : property.enumValues) {
+                      if (ImGui::Selectable(value.c_str(),
+                                            value == property.value)) {
+                        workspace.setNestedProperty(
+                            selected->resourceNamespace, selected->name,
+                            item.path, property.name, value);
+                      }
+                    }
+                    ImGui::EndCombo();
+                  }
+                } else {
+                  bool commit = ImGui::InputText(
+                      property.name.c_str(), buffer->second.data(),
+                      buffer->second.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+                  commit |= ImGui::IsItemDeactivatedAfterEdit();
+                  if (commit && std::string(buffer->second.data()) != property.value) {
+                    std::optional<std::string> value =
+                        buffer->second[0] == '\0' && property.optional
+                            ? std::optional<std::string>{}
+                            : std::optional<std::string>{buffer->second.data()};
+                    if (!workspace.setNestedProperty(
+                            selected->resourceNamespace, selected->name,
+                            item.path, property.name, value)) {
+                      setBuffer(buffer->second, property.value);
+                    }
+                  }
+                }
+                if (focusProperty) {
+                  ImGui::SetScrollHereY(0.5f);
+                  selectedNestedPath.clear();
+                }
+              }
+              bool const indexedItem =
+                  !item.path.empty() &&
+                  std::isdigit(static_cast<unsigned char>(item.path.back()));
+              if (indexedItem) {
+                if (ImGui::SmallButton("Duplicate")) {
+                  workspace.duplicateNestedItem(selected->resourceNamespace,
+                                                selected->name, item.path);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) {
+                  workspace.removeNestedItem(selected->resourceNamespace,
+                                             selected->name, item.path);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Up")) {
+                  auto separator = item.path.rfind('/');
+                  auto index = static_cast<std::size_t>(std::stoull(
+                      item.path.substr(separator + 1U)));
+                  if (index > 0U)
+                    workspace.reorderNestedItem(selected->resourceNamespace,
+                                                selected->name, item.path,
+                                                index - 1U);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Down")) {
+                  auto separator = item.path.rfind('/');
+                  auto index = static_cast<std::size_t>(std::stoull(
+                      item.path.substr(separator + 1U)));
+                  workspace.reorderNestedItem(selected->resourceNamespace,
+                                              selected->name, item.path,
+                                              index + 1U);
+                }
+              }
+              if (item.kind == resource_manager::NestedCollectionKind::definition) {
+                auto base = item.path;
+                if (selected->resourceType == "ImageSet") {
+                  if (ImGui::SmallButton("Add image"))
+                    workspace.addNestedItem(selected->resourceNamespace,
+                                            selected->name,
+                                            base + "/Images/Image",
+                                            resource_manager::NestedCollectionKind::image);
+                  ImGui::SameLine();
+                  if (ImGui::SmallButton("Add image set"))
+                    workspace.addNestedItem(
+                        selected->resourceNamespace, selected->name,
+                        base + "/Images/ImageSet",
+                        resource_manager::NestedCollectionKind::imageSet);
+                } else if (ImGui::SmallButton("Add animation")) {
+                  workspace.addNestedItem(
+                      selected->resourceNamespace, selected->name,
+                      base + "/Animations/Animation",
+                      resource_manager::NestedCollectionKind::animation);
+                }
+              } else if (item.kind == resource_manager::NestedCollectionKind::animation) {
+                if (ImGui::SmallButton(item.alternative == "image-set"
+                                           ? "Add override"
+                                           : "Add frame")) {
+                  workspace.addNestedItem(
+                      selected->resourceNamespace, selected->name,
+                      item.path + "/Frames/Frame",
+                      item.alternative == "image-set"
+                          ? resource_manager::NestedCollectionKind::overrideFrame
+                          : resource_manager::NestedCollectionKind::frame);
+                }
+              } else if ((item.kind == resource_manager::NestedCollectionKind::frame ||
+                          item.kind == resource_manager::NestedCollectionKind::overrideFrame) &&
+                         item.path.find("/Frame/") != std::string::npos) {
+                if (ImGui::SmallButton("Add tag")) {
+                  workspace.addNestedItem(
+                      selected->resourceNamespace, selected->name,
+                      item.path + "/Tags/Tag",
+                      resource_manager::NestedCollectionKind::tag);
+                }
+              }
+              ImGui::TreePop();
+            }
+            ImGui::PopID();
+          }
         } else {
           ImGui::Text("Source file: %s", selected->location.c_str());
           if (ImGui::Button("Select source file...") && !dialog.busy()) {
-            if (auto const* form = workspace.resourceForm(selected->resourceType))
-              dialog.beginResourceFile(*form, window, false,
+            if (selectedForm)
+              dialog.beginResourceFile(*selectedForm, window, false,
                                        selected->resourceNamespace,
                                        selected->name);
           }
-          if (auto const* form = workspace.resourceForm(selected->resourceType)) {
-            for (auto const& option : form->options) {
+          if (selectedForm) {
+            for (auto const& option : selectedForm->options) {
               auto value = std::find_if(
                   selected->options.begin(), selected->options.end(),
                   [&](auto const& optionValue) {
@@ -1232,8 +1425,22 @@ WorkspaceFrameResult drawWorkspace(ManifestWorkspace& workspace,
       ImGui::TextWrapped("%s", workspace.operationDiagnostic().c_str());
       hasDiagnostics = true;
     }
+    std::size_t diagnosticIndex = 0;
     for (auto const& diagnostic : workspace.structuralDiagnostics()) {
-      ImGui::BulletText("%s", diagnostic.message.c_str());
+      auto label = diagnostic.instancePath.empty()
+                       ? diagnostic.message
+                       : diagnostic.instancePath + ": " + diagnostic.message;
+      if (ImGui::Selectable(label.c_str())) {
+        if (auto navigation = workspace.diagnosticNavigation(diagnosticIndex)) {
+          selectedNamespace = navigation->resourceNamespace;
+          selectedName = navigation->resourceName;
+          selectedNamespaceNode = false;
+          selectedInline = false;
+          editingIdentity.clear();
+          selectedNestedPath = navigation->instancePath;
+        }
+      }
+      ++diagnosticIndex;
       hasDiagnostics = true;
     }
     for (auto const& diagnostic : workspace.dependencyDiagnostics()) {
@@ -1540,6 +1747,16 @@ int main(int argc, char const* const* argv) {
         return internalFailure;
       }
       std::cout << "Resource Manifest Editor dependency tests passed.\n";
+      return success;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--composite-tests") {
+      std::string failure;
+      if (!resource_manager::runCompositeAuthoringTests(&failure)) {
+        std::cerr << "Resource Manifest Editor composite tests failed: "
+                  << failure << '\n';
+        return internalFailure;
+      }
+      std::cout << "Resource Manifest Editor composite tests passed.\n";
       return success;
     }
 

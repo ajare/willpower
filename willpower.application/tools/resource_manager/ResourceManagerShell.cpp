@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -471,6 +472,156 @@ std::size_t resourceCount(ResourceCollection const& collection,
       }));
 }
 
+std::vector<std::string> pathParts(std::string const& path) {
+  std::vector<std::string> result;
+  std::size_t begin = 0;
+  while (begin < path.size()) {
+    while (begin < path.size() && path[begin] == '/') ++begin;
+    if (begin == path.size()) break;
+    auto const end = path.find('/', begin);
+    result.push_back(path.substr(begin, end - begin));
+    begin = end == std::string::npos ? path.size() : end + 1U;
+  }
+  return result;
+}
+
+bool indexPart(std::string const& value, std::size_t& index) {
+  if (value.empty() ||
+      std::any_of(value.begin(), value.end(), [](unsigned char character) {
+        return !std::isdigit(character);
+      })) {
+    return false;
+  }
+  try {
+    index = static_cast<std::size_t>(std::stoull(value));
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+YAML::Node nodeAtPath(YAML::Node root, std::vector<std::string> const& parts,
+                      std::size_t count) {
+  YAML::Node current;
+  current.reset(root);
+  for (std::size_t partIndex = 0; partIndex < count; ++partIndex) {
+    std::size_t index = 0;
+    if (indexPart(parts[partIndex], index)) {
+      if (current.IsSequence()) {
+        if (index >= current.size()) return {};
+        YAML::Node child = current[index];
+        current.reset(child);
+      } else if (index != 0U || !current) {
+        return {};
+      }
+    } else {
+      if (!current.IsMap() || !current[parts[partIndex]]) return {};
+      YAML::Node child = current[parts[partIndex]];
+      current.reset(child);
+    }
+  }
+  return current;
+}
+
+std::optional<std::pair<YAML::Node, std::string>> collectionAtPath(
+    YAML::Node resource, std::string const& path) {
+  auto parts = pathParts(path);
+  if (parts.empty()) return {};
+  auto parent = nodeAtPath(resource, parts, parts.size() - 1U);
+  if (!parent || !parent.IsMap()) return {};
+  return std::pair{parent, parts.back()};
+}
+
+std::string collectionName(NestedCollectionKind kind) {
+  switch (kind) {
+    case NestedCollectionKind::definition:
+      return "Definition";
+    case NestedCollectionKind::image:
+      return "Image";
+    case NestedCollectionKind::imageSet:
+      return "ImageSet";
+    case NestedCollectionKind::animation:
+      return "Animation";
+    case NestedCollectionKind::frame:
+    case NestedCollectionKind::overrideFrame:
+      return "Frame";
+    case NestedCollectionKind::tag:
+      return "Tag";
+  }
+  return {};
+}
+
+YAML::Node defaultNestedItem(NestedCollectionKind kind) {
+  YAML::Node item(YAML::NodeType::Map);
+  switch (kind) {
+    case NestedCollectionKind::definition:
+      item["Images"]["Image"] = defaultNestedItem(NestedCollectionKind::image);
+      break;
+    case NestedCollectionKind::image:
+      item["name"] = "Image";
+      item["x"] = 0;
+      item["y"] = 0;
+      item["width"] = 1;
+      item["height"] = 1;
+      break;
+    case NestedCollectionKind::imageSet:
+      item["name"] = "ImageSet";
+      item["x"] = 0;
+      item["y"] = 0;
+      item["width"] = 1;
+      item["height"] = 1;
+      item["count"] = 1;
+      item["dx"] = 0;
+      item["dy"] = 0;
+      break;
+    case NestedCollectionKind::animation:
+      item["name"] = "Animation";
+      item["Frames"]["Frame"] = defaultNestedItem(NestedCollectionKind::frame);
+      break;
+    case NestedCollectionKind::frame:
+      item["image"] = "Image";
+      item["time"] = 1.0;
+      break;
+    case NestedCollectionKind::overrideFrame:
+      item["frame"] = 0;
+      break;
+    case NestedCollectionKind::tag:
+      item["key"] = "Tag";
+      item["value"] = "";
+      break;
+  }
+  return item;
+}
+
+NestedPropertyForm propertyForm(YAML::Node const& item, std::string name,
+                                bool required, bool integer = false,
+                                bool number = false) {
+  NestedPropertyForm result;
+  result.name = std::move(name);
+  result.value = scalar(item, result.name.c_str());
+  result.required = required;
+  result.optional = !required;
+  result.integer = integer;
+  result.number = number;
+  return result;
+}
+
+void appendTags(std::vector<NestedFormItem>& result, YAML::Node const& owner,
+                std::string const& ownerPath) {
+  auto tags = owner["Tags"];
+  if (!tags || !tags.IsMap()) return;
+  auto items = collectionItems(tags["Tag"]);
+  for (std::size_t index = 0; index < items.size(); ++index) {
+    NestedFormItem tag;
+    tag.kind = NestedCollectionKind::tag;
+    tag.path = ownerPath + "/Tags/Tag/" + std::to_string(index);
+    tag.label = "Tag " + std::to_string(index + 1U);
+    tag.properties = {propertyForm(items[index], "key", true),
+                      propertyForm(items[index], "value", true)};
+    result.push_back(std::move(tag));
+  }
+}
+
 bool equalPathComponent(fs::path const& left, fs::path const& right) {
 #if defined(_WIN32)
   auto l = left.native();
@@ -498,7 +649,8 @@ bool containedBy(fs::path const& base, fs::path const& target) {
 std::vector<ResourceForm> loadResourceForms(
     ResourceSchemaCatalogSnapshot const& catalog) {
   static std::set<std::string> const authoredTypes{
-      "TextFile", "XmlFile", "Shader", "AudioBank", "Image"};
+      "TextFile", "XmlFile", "Shader", "AudioBank", "Image", "ImageSet",
+      "AnimationSet"};
   std::vector<ResourceForm> result;
   for (auto const& entry : catalog.entries()) {
     if (entry.kind != ResourceSchemaKind::resourceType ||
@@ -510,28 +662,48 @@ std::vector<ResourceForm> loadResourceForms(
       schema = Json::parse(entry.contents);
       auto const& resource = schema.at("definitions").at("resource");
       auto const& ownProperties = resource.at("allOf").at(1).at("properties");
-      auto const& location = ownProperties.at("location");
-      if (location.at("x-willpower-editor-version") != "1.0" ||
-          location.at("x-willpower-widget") != "file" ||
-          !location.at("x-willpower-file-kind").is_string() ||
-          !location.at("x-willpower-file-extensions").is_array()) {
-        throw std::runtime_error("malformed file editor annotation");
-      }
       ResourceForm form;
       form.resourceType = entry.resourceType;
       form.title = schema.value("title", entry.resourceType);
-      form.fileProperty = "location";
-      form.fileKind = location.at("x-willpower-file-kind").get<std::string>();
-      form.fileExtensions =
-          location.at("x-willpower-file-extensions").get<std::vector<std::string>>();
-      if (form.fileKind.empty() || form.fileExtensions.empty() ||
-          std::any_of(form.fileExtensions.begin(), form.fileExtensions.end(),
-                      [](std::string const& extension) {
-                        return extension.empty() || extension.front() == '.' ||
-                               extension.find_first_of(";*\\/") !=
-                                   std::string::npos;
-                      })) {
-        throw std::runtime_error("invalid file selector metadata");
+      form.composite = entry.resourceType == "ImageSet" ||
+                       entry.resourceType == "AnimationSet";
+      if (form.composite) {
+        // Require the catalogued shapes used by the nested renderer. This keeps
+        // malformed or incompatible bundles from silently producing controls.
+        auto const& definitions = schema.at("definitions");
+        static_cast<void>(definitions.at("defaultDefinition"));
+        static_cast<void>(definitions.at("definitionCollection"));
+        static_cast<void>(definitions.at("imageDependency"));
+        if (entry.resourceType == "ImageSet") {
+          static_cast<void>(definitions.at("image"));
+          static_cast<void>(definitions.at("imageSet"));
+        } else {
+          static_cast<void>(definitions.at("animation"));
+          static_cast<void>(definitions.at("explicitFrame"));
+          static_cast<void>(definitions.at("imageSetFrameOverride"));
+          static_cast<void>(definitions.at("tag"));
+        }
+      } else {
+        auto const& location = ownProperties.at("location");
+        if (location.at("x-willpower-editor-version") != "1.0" ||
+            location.at("x-willpower-widget") != "file" ||
+            !location.at("x-willpower-file-kind").is_string() ||
+            !location.at("x-willpower-file-extensions").is_array()) {
+          throw std::runtime_error("malformed file editor annotation");
+        }
+        form.fileProperty = "location";
+        form.fileKind = location.at("x-willpower-file-kind").get<std::string>();
+        form.fileExtensions = location.at("x-willpower-file-extensions")
+                                  .get<std::vector<std::string>>();
+        if (form.fileKind.empty() || form.fileExtensions.empty() ||
+            std::any_of(form.fileExtensions.begin(), form.fileExtensions.end(),
+                        [](std::string const& extension) {
+                          return extension.empty() || extension.front() == '.' ||
+                                 extension.find_first_of(";*\\/") !=
+                                     std::string::npos;
+                        })) {
+          throw std::runtime_error("invalid file selector metadata");
+        }
       }
 
       if (schema.at("definitions").contains("option")) {
@@ -559,7 +731,7 @@ std::vector<ResourceForm> loadResourceForms(
   }
   if (result.size() != authoredTypes.size()) {
     throw std::runtime_error(
-        "The built-in catalog does not contain all five file-backed Resource forms.");
+        "The built-in catalog does not contain all seven authored Resource forms.");
   }
   return result;
 }
@@ -1073,6 +1245,195 @@ std::vector<std::string> ManifestWorkspace::incomingReferences(
   return result;
 }
 
+std::vector<ResourceReferenceChoice> ManifestWorkspace::draftReferenceChoices() const {
+  std::vector<ResourceReferenceChoice> result;
+  if (!mDraft || !mDocument) return result;
+  auto const allowed = mDraft->resourceType == "ImageSet"
+                           ? std::vector<std::string>{"Image"}
+                           : mDraft->resourceType == "AnimationSet"
+                                 ? std::vector<std::string>{"ImageSet"}
+                                 : std::vector<std::string>{};
+  if (allowed.empty()) return result;
+  auto root = YAML::Load(canonicalYaml());
+  for (auto const& declaration : resourceDeclarations(root)) {
+    if (declaration.inlineResource ||
+        !allowedResourceType(allowed, declaration.resourceType) ||
+        !validResourceName(declaration.identity.name)) {
+      continue;
+    }
+    ResourceReferenceChoice choice;
+    choice.resourceNamespace = declaration.identity.resourceNamespace;
+    choice.name = declaration.identity.name;
+    choice.resourceType = declaration.resourceType;
+    choice.qualifiedIdentity = qualifiedIdentity(declaration.identity);
+    choice.selected = choice.resourceNamespace == mDraft->dependencyNamespace &&
+                      choice.name == mDraft->dependencyName;
+    auto matches = matchingDeclarations(resourceDeclarations(root),
+                                        declaration.identity);
+    choice.disabled = matches.size() != 1U;
+    if (choice.disabled) choice.reason = "ambiguous Resource identity";
+    if (std::none_of(result.begin(), result.end(), [&](auto const& existing) {
+          return existing.resourceNamespace == choice.resourceNamespace &&
+                 existing.name == choice.name;
+        })) {
+      result.push_back(std::move(choice));
+    }
+  }
+  return result;
+}
+
+std::vector<NestedFormItem> ManifestWorkspace::nestedFormItems(
+    std::string const& resourceNamespace, std::string const& name) const {
+  std::vector<NestedFormItem> result;
+  if (!mDocument) return result;
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) return result;
+  auto resource = collection->resources[*findResourceIndex(*collection, name)];
+  auto const type = scalar(resource, "type");
+  if (type != "ImageSet" && type != "AnimationSet") return result;
+
+  auto definitions = collectionItems(resource["Definitions"]["Definition"]);
+  for (std::size_t definitionIndex = 0; definitionIndex < definitions.size();
+       ++definitionIndex) {
+    auto const& definition = definitions[definitionIndex];
+    auto definitionPath = "/Definitions/Definition/" +
+                          std::to_string(definitionIndex);
+    NestedFormItem definitionItem;
+    definitionItem.kind = NestedCollectionKind::definition;
+    definitionItem.path = definitionPath;
+    definitionItem.label = scalar(definition, "factory").empty()
+                               ? "Default Definition"
+                               : "Definition: " + scalar(definition, "factory");
+    if (!scalar(definition, "factory").empty()) {
+      definitionItem.properties.push_back(
+          propertyForm(definition, "factory", true));
+    }
+    result.push_back(std::move(definitionItem));
+
+    if (type == "ImageSet") {
+      auto images = definition["Images"];
+      for (auto const kind : {NestedCollectionKind::image,
+                              NestedCollectionKind::imageSet}) {
+        auto const key = collectionName(kind);
+        auto items = collectionItems(images[key]);
+        for (std::size_t index = 0; index < items.size(); ++index) {
+          NestedFormItem item;
+          item.kind = kind;
+          item.path = definitionPath + "/Images/" + key + "/" +
+                      std::to_string(index);
+          item.label = key + " " + std::to_string(index + 1U);
+          item.properties = {
+              propertyForm(items[index], "name", true),
+              propertyForm(items[index], "x", true, true),
+              propertyForm(items[index], "y", true, true),
+              propertyForm(items[index], "width", true, true),
+              propertyForm(items[index], "height", true, true)};
+          item.properties[1].hasMinimum = true;
+          item.properties[2].hasMinimum = true;
+          item.properties[3].hasMinimum = true;
+          item.properties[3].minimum = 1.0;
+          item.properties[4].hasMinimum = true;
+          item.properties[4].minimum = 1.0;
+          if (kind == NestedCollectionKind::imageSet) {
+            item.properties.push_back(
+                propertyForm(items[index], "count", true, true));
+            item.properties.back().hasMinimum = true;
+            item.properties.back().minimum = 1.0;
+            item.properties.push_back(
+                propertyForm(items[index], "dx", true, true));
+            item.properties.push_back(
+                propertyForm(items[index], "dy", true, true));
+          }
+          result.push_back(std::move(item));
+        }
+      }
+      continue;
+    }
+
+    auto animations = collectionItems(definition["Animations"]["Animation"]);
+    for (std::size_t animationIndex = 0; animationIndex < animations.size();
+         ++animationIndex) {
+      auto const& animation = animations[animationIndex];
+      auto animationPath = definitionPath + "/Animations/Animation/" +
+                           std::to_string(animationIndex);
+      NestedFormItem animationItem;
+      animationItem.kind = NestedCollectionKind::animation;
+      animationItem.path = animationPath;
+      animationItem.label = "Animation " + std::to_string(animationIndex + 1U);
+      animationItem.properties = {propertyForm(animation, "name", true),
+                                  propertyForm(animation, "loopStyle", false)};
+      animationItem.properties.back().enumValues = {"forwards", "once",
+                                                     "pingpong"};
+      auto frames = animation["Frames"];
+      bool const imageSetFrames = !scalar(frames, "imageset").empty();
+      animationItem.alternative = imageSetFrames ? "image-set" : "explicit";
+      result.push_back(std::move(animationItem));
+
+      NestedFormItem frameSet;
+      frameSet.kind = imageSetFrames ? NestedCollectionKind::overrideFrame
+                                     : NestedCollectionKind::frame;
+      frameSet.path = animationPath + "/Frames";
+      frameSet.label = imageSetFrames ? "Image-set frames"
+                                      : "Explicit frame defaults";
+      frameSet.alternative = imageSetFrames ? "image-set" : "explicit";
+      if (imageSetFrames) {
+        frameSet.properties.push_back(propertyForm(frames, "imageset", true));
+        frameSet.properties.push_back(propertyForm(frames, "count", false, true));
+        frameSet.properties.back().hasMinimum = true;
+        frameSet.properties.back().minimum = 1.0;
+      }
+      frameSet.properties.push_back(
+          propertyForm(frames, "time", false, false, true));
+      frameSet.properties.back().hasMinimum = true;
+      frameSet.properties.back().exclusiveMinimum = true;
+      frameSet.properties.push_back(propertyForm(frames, "xoff", false, true));
+      frameSet.properties.push_back(propertyForm(frames, "yoff", false, true));
+      result.push_back(std::move(frameSet));
+      auto framesItems = collectionItems(frames["Frame"]);
+      for (std::size_t frameIndex = 0; frameIndex < framesItems.size();
+           ++frameIndex) {
+        auto const& frame = framesItems[frameIndex];
+        NestedFormItem frameItem;
+        frameItem.kind = imageSetFrames ? NestedCollectionKind::overrideFrame
+                                        : NestedCollectionKind::frame;
+        frameItem.path = animationPath + "/Frames/Frame/" +
+                         std::to_string(frameIndex);
+        frameItem.label = imageSetFrames
+                              ? "Frame override " + std::to_string(frameIndex + 1U)
+                              : "Frame " + std::to_string(frameIndex + 1U);
+        if (imageSetFrames) {
+          frameItem.properties.push_back(propertyForm(frame, "frame", true, true));
+          frameItem.properties.back().hasMinimum = true;
+        } else {
+          frameItem.properties.push_back(propertyForm(frame, "image", true));
+          frameItem.properties.push_back(propertyForm(frame, "frame", false, true));
+          frameItem.properties.back().hasMinimum = true;
+        }
+        frameItem.properties.push_back(
+            propertyForm(frame, "time", false, false, true));
+        frameItem.properties.back().hasMinimum = true;
+        frameItem.properties.back().exclusiveMinimum = true;
+        frameItem.properties.push_back(propertyForm(frame, "xoff", false, true));
+        frameItem.properties.push_back(propertyForm(frame, "yoff", false, true));
+        result.push_back(std::move(frameItem));
+        appendTags(result, frame, animationPath + "/Frames/Frame/" +
+                                      std::to_string(frameIndex));
+      }
+    }
+  }
+  return result;
+}
+
+std::optional<DiagnosticNavigation> ManifestWorkspace::diagnosticNavigation(
+    std::size_t diagnosticIndex) const {
+  if (diagnosticIndex >= mStructuralDiagnostics.size()) return {};
+  auto const& diagnostic = mStructuralDiagnostics[diagnosticIndex];
+  return DiagnosticNavigation{diagnostic.resourceNamespace,
+                              diagnostic.resourceName,
+                              diagnostic.instancePath};
+}
+
 bool ManifestWorkspace::beginNamespaceDraft() {
   if (!mDocument) {
     setFailure("No Resource Manifest is open.");
@@ -1173,12 +1534,40 @@ bool ManifestWorkspace::selectDraftFile(fs::path const& selectedFile) {
     setFailure("No Resource draft is active.");
     return false;
   }
+  auto const* form = resourceForm(mDraft->resourceType);
+  if (!form || form->fileProperty.empty()) {
+    setFailure("This Resource draft has no source-file property.");
+    return false;
+  }
   auto relative = portableSelectedFile(selectedFile);
   if (!relative) {
     validateDraft();
     return false;
   }
   mDraft->location = std::move(*relative);
+  validateDraft();
+  mOperationDiagnostic.clear();
+  return true;
+}
+
+bool ManifestWorkspace::setDraftReference(std::string resourceNamespace,
+                                          std::string name) {
+  if (!mDraft) {
+    setFailure("No Resource draft is active.");
+    return false;
+  }
+  auto choices = draftReferenceChoices();
+  auto found = std::find_if(choices.begin(), choices.end(),
+                            [&](auto const& choice) {
+                              return choice.resourceNamespace == resourceNamespace &&
+                                     choice.name == name && !choice.disabled;
+                            });
+  if (found == choices.end()) {
+    setFailure("The selected Resource is not a compatible dependency.");
+    return false;
+  }
+  mDraft->dependencyNamespace = std::move(resourceNamespace);
+  mDraft->dependencyName = std::move(name);
   validateDraft();
   mOperationDiagnostic.clear();
   return true;
@@ -1209,7 +1598,24 @@ void ManifestWorkspace::validateDraft() {
         "Resource names must be unique within their namespace.";
     return;
   }
-  if (mDraft->location.empty()) {
+  auto const* form = resourceForm(mDraft->resourceType);
+  if (!form) {
+    mDraft->validationMessage = "The Resource Type form is no longer available.";
+    return;
+  }
+  if (form->composite) {
+    if (mDraft->dependencyName.empty()) {
+      mDraft->validationMessage = "Select the required compatible Image dependency.";
+      return;
+    }
+    auto choices = draftReferenceChoices();
+    if (std::none_of(choices.begin(), choices.end(), [](auto const& choice) {
+          return choice.selected && !choice.disabled;
+        })) {
+      mDraft->validationMessage = "The selected Image dependency is no longer available.";
+      return;
+    }
+  } else if (mDraft->location.empty()) {
     mDraft->validationMessage = "Select the required source file.";
     return;
   }
@@ -1235,7 +1641,26 @@ bool ManifestWorkspace::commitDraft() {
   YAML::Node resource(YAML::NodeType::Map);
   resource["type"] = mDraft->resourceType;
   resource["name"] = mDraft->name;
-  resource["location"] = mDraft->location;
+  auto const* form = resourceForm(mDraft->resourceType);
+  if (form && form->composite) {
+    YAML::Node dependency(YAML::NodeType::Map);
+    dependency["id"] = "Image";
+    dependency["ref"] = formatReference(
+        {mDraft->dependencyNamespace, mDraft->dependencyName},
+        mDraft->resourceNamespace);
+    resource["DependentResources"]["DependentResource"] = dependency;
+    YAML::Node definition(YAML::NodeType::Map);
+    if (mDraft->resourceType == "ImageSet") {
+      definition["Images"]["Image"] =
+          defaultNestedItem(NestedCollectionKind::image);
+    } else {
+      definition["Animations"]["Animation"] =
+          defaultNestedItem(NestedCollectionKind::animation);
+    }
+    resource["Definitions"]["Definition"] = definition;
+  } else {
+    resource["location"] = mDraft->location;
+  }
   if (createsNamespace) {
     auto resourcesRoot = root["Resources"];
     auto namespaces = collectionItems(resourcesRoot["Namespace"]);
@@ -1959,6 +2384,286 @@ bool ManifestWorkspace::promoteInlineResource(
   return executeYamlCommand("Promote inline Resource", emitYaml(root));
 }
 
+bool ManifestWorkspace::setNestedProperty(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& itemPath, std::string const& property,
+    std::optional<std::string> value, bool continuous) {
+  auto forms = nestedFormItems(resourceNamespace, name);
+  auto itemForm = std::find_if(forms.begin(), forms.end(), [&](auto const& item) {
+    return item.path == itemPath;
+  });
+  if (itemForm == forms.end()) {
+    setFailure("The nested form item was not found.");
+    return false;
+  }
+  auto propertyForm = std::find_if(
+      itemForm->properties.begin(), itemForm->properties.end(),
+      [&](auto const& candidate) { return candidate.name == property; });
+  if (propertyForm == itemForm->properties.end()) {
+    setFailure("Property '" + property + "' is not defined by this nested form.");
+    return false;
+  }
+  if (!value && propertyForm->required) {
+    setFailure("Required property '" + property + "' cannot be removed.");
+    return false;
+  }
+  if (value && !propertyForm->enumValues.empty() &&
+      std::find(propertyForm->enumValues.begin(), propertyForm->enumValues.end(),
+                *value) == propertyForm->enumValues.end()) {
+    setFailure("Property '" + property + "' is not one of the permitted values.");
+    return false;
+  }
+
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto parts = pathParts(itemPath);
+  auto item = nodeAtPath(resource, parts, parts.size());
+  if (!item || !item.IsMap()) {
+    setFailure("The nested property owner was not found.");
+    return false;
+  }
+  if (!value) {
+    item.remove(property);
+  } else if (propertyForm->integer) {
+    try {
+      std::size_t consumed = 0;
+      auto parsed = std::stoll(*value, &consumed);
+      if (consumed != value->size() ||
+          (propertyForm->hasMinimum &&
+           static_cast<double>(parsed) < propertyForm->minimum)) {
+        throw std::invalid_argument("constraint");
+      }
+      item[property] = parsed;
+    } catch (...) {
+      setFailure("Property '" + property + "' requires an integer within its schema constraints.");
+      return false;
+    }
+  } else if (propertyForm->number) {
+    try {
+      std::size_t consumed = 0;
+      auto parsed = std::stod(*value, &consumed);
+      bool const belowMinimum =
+          propertyForm->hasMinimum &&
+          (propertyForm->exclusiveMinimum ? parsed <= propertyForm->minimum
+                                          : parsed < propertyForm->minimum);
+      if (consumed != value->size() || !std::isfinite(parsed) || belowMinimum) {
+        throw std::invalid_argument("constraint");
+      }
+      item[property] = parsed;
+    } catch (...) {
+      setFailure("Property '" + property + "' requires a number within its schema constraints.");
+      return false;
+    }
+  } else {
+    item[property] = *value;
+  }
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand(
+      "Edit nested " + property, emitYaml(root),
+      "nested:" + resourceNamespace + ":" + name + ":" + itemPath + ":" + property,
+      continuous);
+}
+
+bool ManifestWorkspace::addNestedItem(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& collectionPath, NestedCollectionKind kind) {
+  if (collectionName(kind).empty() ||
+      !collectionPath.ends_with("/" + collectionName(kind))) {
+    setFailure("The nested collection kind does not match its instance path.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto target = collectionAtPath(resource, collectionPath);
+  if (!target && kind == NestedCollectionKind::tag &&
+      collectionPath.ends_with("/Tags/Tag")) {
+    auto ownerPath = collectionPath.substr(0, collectionPath.size() - 9U);
+    auto ownerParts = pathParts(ownerPath);
+    auto owner = nodeAtPath(resource, ownerParts, ownerParts.size());
+    if (owner && owner.IsMap()) {
+      owner["Tags"] = YAML::Node(YAML::NodeType::Map);
+      target = collectionAtPath(resource, collectionPath);
+    }
+  }
+  if (!target) {
+    setFailure("The nested collection parent was not found.");
+    return false;
+  }
+  auto items = collectionItems(target->first[target->second]);
+  items.push_back(defaultNestedItem(kind));
+  setCollection(target->first, target->second.c_str(), items);
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Add nested " + collectionName(kind), emitYaml(root));
+}
+
+bool ManifestWorkspace::duplicateNestedItem(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& itemPath) {
+  auto parts = pathParts(itemPath);
+  std::size_t index = 0;
+  if (parts.size() < 2U || !indexPart(parts.back(), index)) {
+    setFailure("A nested collection item path must end with an index.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto collectionPath = itemPath.substr(0, itemPath.rfind('/'));
+  auto target = collectionAtPath(resource, collectionPath);
+  if (!target) {
+    setFailure("The nested collection was not found.");
+    return false;
+  }
+  auto items = collectionItems(target->first[target->second]);
+  if (index >= items.size()) {
+    setFailure("The nested collection item was not found.");
+    return false;
+  }
+  insertCollectionItem(items, index + 1U, items[index]);
+  setCollection(target->first, target->second.c_str(), items);
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Duplicate nested collection item", emitYaml(root));
+}
+
+bool ManifestWorkspace::removeNestedItem(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& itemPath) {
+  auto parts = pathParts(itemPath);
+  std::size_t index = 0;
+  if (parts.size() < 2U || !indexPart(parts.back(), index)) {
+    setFailure("A nested collection item path must end with an index.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto collectionPath = itemPath.substr(0, itemPath.rfind('/'));
+  auto target = collectionAtPath(resource, collectionPath);
+  if (!target) {
+    setFailure("The nested collection was not found.");
+    return false;
+  }
+  auto items = collectionItems(target->first[target->second]);
+  if (index >= items.size()) {
+    setFailure("The nested collection item was not found.");
+    return false;
+  }
+  eraseCollectionItem(items, index);
+  setCollection(target->first, target->second.c_str(), items);
+  if (items.empty() && target->second == "Tag" &&
+      collectionPath.ends_with("/Tags/Tag")) {
+    auto ownerPath = collectionPath.substr(0, collectionPath.size() - 9U);
+    auto ownerParts = pathParts(ownerPath);
+    auto owner = nodeAtPath(resource, ownerParts, ownerParts.size());
+    if (owner && owner.IsMap()) owner.remove("Tags");
+  }
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Remove nested collection item", emitYaml(root));
+}
+
+bool ManifestWorkspace::reorderNestedItem(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& itemPath, std::size_t newIndex) {
+  auto parts = pathParts(itemPath);
+  std::size_t index = 0;
+  if (parts.size() < 2U || !indexPart(parts.back(), index)) {
+    setFailure("A nested collection item path must end with an index.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto collectionPath = itemPath.substr(0, itemPath.rfind('/'));
+  auto target = collectionAtPath(resource, collectionPath);
+  if (!target) {
+    setFailure("The nested collection was not found.");
+    return false;
+  }
+  auto items = collectionItems(target->first[target->second]);
+  if (index >= items.size() || newIndex >= items.size()) {
+    setFailure("Nested reorder position is outside its collection.");
+    return false;
+  }
+  if (index == newIndex) return true;
+  auto moved = YAML::Clone(items[index]);
+  eraseCollectionItem(items, index);
+  insertCollectionItem(items, newIndex, moved);
+  setCollection(target->first, target->second.c_str(), items);
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Reorder nested collection item", emitYaml(root));
+}
+
+bool ManifestWorkspace::setFramesAlternative(
+    std::string const& resourceNamespace, std::string const& name,
+    std::string const& framesPath, bool imageSetFrames,
+    std::string imageSet) {
+  if (imageSetFrames && imageSet.empty()) {
+    setFailure("Image-set frames require a non-empty image-set name.");
+    return false;
+  }
+  auto root = YAML::Load(canonicalYaml());
+  auto collection = findResourceCollection(root, resourceNamespace);
+  if (!collection || resourceCount(*collection, name) != 1U) {
+    setFailure("Nested form Resource was not found uniquely.");
+    return false;
+  }
+  auto resourceIndex = *findResourceIndex(*collection, name);
+  auto resource = collection->resources[resourceIndex];
+  auto parts = pathParts(framesPath);
+  auto frames = nodeAtPath(resource, parts, parts.size());
+  if (!frames || !frames.IsMap()) {
+    setFailure("The Frames alternative was not found.");
+    return false;
+  }
+  YAML::Node replacement(YAML::NodeType::Map);
+  if (imageSetFrames) {
+    replacement["imageset"] = std::move(imageSet);
+  } else {
+    replacement["Frame"] = defaultNestedItem(NestedCollectionKind::frame);
+  }
+  auto parent = nodeAtPath(resource, parts, parts.size() - 1U);
+  if (!parent || !parent.IsMap()) {
+    setFailure("The Frames alternative parent was not found.");
+    return false;
+  }
+  parent[parts.back()] = replacement;
+  collection->resources[resourceIndex] = resource;
+  publishCollection(root, *collection);
+  return executeYamlCommand("Change Frames alternative", emitYaml(root));
+}
+
 bool ManifestWorkspace::deleteResource(std::string const& resourceNamespace,
                                        std::string const& name) {
   auto root = YAML::Load(canonicalYaml());
@@ -2249,12 +2954,13 @@ bool runAuthoringTests(std::string* failure) {
     std::ofstream(outside) << "outside";
 
     ManifestWorkspace workspace;
-    if (!workspace.createNew(base) || workspace.resourceForms().size() != 5U) {
-      return fail("The five built-in schema-generated forms were not available.");
+    if (!workspace.createNew(base) || workspace.resourceForms().size() != 7U) {
+      return fail("The seven built-in authored forms were not available.");
     }
     for (auto const& form : workspace.resourceForms()) {
-      if (form.fileProperty != "location" || form.fileKind.empty() ||
-          form.fileExtensions.empty()) {
+      if (!form.composite &&
+          (form.fileProperty != "location" || form.fileKind.empty() ||
+           form.fileExtensions.empty())) {
         return fail("A built-in file property did not expose selector annotations.");
       }
     }
@@ -2908,6 +3614,303 @@ bool runDependencyAuthoringTests(std::string* failure) {
                      })) {
       return fail("A promoted Resource did not become a normal selector target.");
     }
+    return true;
+  } catch (std::exception const& exception) {
+    return fail(exception.what());
+  }
+}
+
+bool runCompositeAuthoringTests(std::string* failure) {
+  auto fail = [&](std::string message) {
+    if (failure) *failure = std::move(message);
+    return false;
+  };
+  auto const unique = std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto root = fs::temp_directory_path() /
+              ("willpower-resource-manager-composite-tests-" + unique);
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove_all(path, ignored);
+    }
+  } cleanup{root};
+
+  try {
+    fs::create_directories(root / "base");
+    std::ofstream(root / "base" / "image.png", std::ios::binary) << "image";
+    auto manifest = root / "composites.yaml";
+    std::ofstream(manifest) << R"(Resources:
+  Resource:
+    - {type: Image, name: Texture, location: image.png}
+    - type: ImageSet
+      name: Atlas
+      DependentResources:
+        DependentResource: {id: Image, ref: Texture}
+      Definitions:
+        Definition:
+          Images:
+            Image: {name: Pixel, x: "0", y: 0, width: "1", height: 1}
+    - type: AnimationSet
+      name: Motion
+      DependentResources:
+        DependentResource: {id: Image, ref: Atlas}
+      Definitions:
+        Definition:
+          Animations:
+            Animation:
+              name: Idle
+              loopStyle: forwards
+              Frames:
+                time: "1.0"
+                Frame:
+                  image: Pixel
+                  time: 1
+)";
+    ManifestWorkspace workspace;
+    if (!workspace.open(manifest)) {
+      return fail("Could not open scalar-compatible composite fixture: " +
+                  workspace.operationDiagnostic());
+    }
+    auto forms = workspace.resourceForms();
+    auto imageSetForm = std::find_if(forms.begin(), forms.end(), [](auto const& form) {
+      return form.resourceType == "ImageSet" && form.composite;
+    });
+    auto animationSetForm =
+        std::find_if(forms.begin(), forms.end(), [](auto const& form) {
+          return form.resourceType == "AnimationSet" && form.composite;
+        });
+    if (imageSetForm == forms.end() || animationSetForm == forms.end()) {
+      return fail("Catalogued ImageSet and AnimationSet forms were not generated.");
+    }
+    auto scalarCanonical = workspace.canonicalYaml();
+    if (scalarCanonical.find("x: \"0\"") == std::string::npos ||
+        scalarCanonical.find("time: \"1.0\"") == std::string::npos) {
+      return fail("Compatible scalar input types were not preserved canonically.");
+    }
+    auto atlasSelectors = workspace.resourceReferences({}, "Atlas");
+    auto motionSelectors = workspace.resourceReferences({}, "Motion");
+    if (atlasSelectors.size() != 1U || motionSelectors.size() != 1U ||
+        atlasSelectors.front().allowedResourceTypes !=
+            std::vector<std::string>{"Image"} ||
+        motionSelectors.front().allowedResourceTypes !=
+            std::vector<std::string>{"ImageSet"} ||
+        std::any_of(motionSelectors.front().choices.begin(),
+                    motionSelectors.front().choices.end(), [](auto const& choice) {
+                      return choice.resourceType == "Image";
+                    })) {
+      return fail("Composite Image dependencies did not use compatible Resource selectors.");
+    }
+
+    auto imageItems = workspace.nestedFormItems({}, "Atlas");
+    auto image = std::find_if(imageItems.begin(), imageItems.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::image;
+    });
+    if (image == imageItems.end() ||
+        image->path != "/Definitions/Definition/0/Images/Image/0") {
+      return fail("Singleton Image input was not normalized to an indexed form path.");
+    }
+    auto beforeInvalid = workspace.canonicalYaml();
+    if (workspace.setNestedProperty({}, "Atlas", image->path, "width", "0") ||
+        workspace.canonicalYaml() != beforeInvalid) {
+      return fail("A numeric constraint violation mutated the committed document.");
+    }
+    if (workspace.setNestedProperty({}, "Atlas", image->path, "name", "") ||
+        workspace.canonicalYaml() != beforeInvalid ||
+        workspace.structuralDiagnostics().empty()) {
+      return fail("A required invalid property edit did not report and reject atomically.");
+    }
+    bool navigableNestedDiagnostic = false;
+    for (std::size_t index = 0; index < workspace.structuralDiagnostics().size();
+         ++index) {
+      auto navigation = workspace.diagnosticNavigation(index);
+      if (navigation && navigation->resourceName == "Atlas" &&
+          navigation->instancePath.find("/Images/Image") != std::string::npos) {
+        navigableNestedDiagnostic = true;
+        break;
+      }
+    }
+    if (!navigableNestedDiagnostic) {
+      return fail("A nested structural diagnostic did not retain a navigable instance path.");
+    }
+
+    if (!workspace.addNestedItem({}, "Atlas",
+                                 "/Definitions/Definition/0/Images/ImageSet",
+                                 NestedCollectionKind::imageSet)) {
+      return fail("Could not add an image-set definition: " +
+                  workspace.operationDiagnostic());
+    }
+    auto withImageSet = workspace.canonicalYaml();
+    auto updatedImages = workspace.nestedFormItems({}, "Atlas");
+    auto imageSet = std::find_if(updatedImages.begin(), updatedImages.end(),
+                                [](auto const& item) {
+                                  return item.kind == NestedCollectionKind::imageSet;
+                                });
+    if (imageSet == updatedImages.end() ||
+        !workspace.duplicateNestedItem({}, "Atlas", imageSet->path)) {
+      return fail("Image-set collection duplication failed.");
+    }
+    auto duplicatedImageSets = workspace.nestedFormItems({}, "Atlas");
+    auto imageSetCount = static_cast<std::size_t>(std::count_if(
+        duplicatedImageSets.begin(), duplicatedImageSets.end(), [](auto const& item) {
+          return item.kind == NestedCollectionKind::imageSet;
+        }));
+    if (imageSetCount != 2U ||
+        !workspace.reorderNestedItem({}, "Atlas",
+                                     "/Definitions/Definition/0/Images/ImageSet/1",
+                                     0U) ||
+        !workspace.removeNestedItem({}, "Atlas",
+                                    "/Definitions/Definition/0/Images/ImageSet/1")) {
+      return fail("Image-set collection reorder or removal failed.");
+    }
+    if (!workspace.removeNestedItem({}, "Atlas", image->path)) {
+      return fail("An Image could not be removed while an ImageSet remained.");
+    }
+    auto onlyImageSet = workspace.canonicalYaml();
+    if (workspace.removeNestedItem(
+            {}, "Atlas", "/Definitions/Definition/0/Images/ImageSet/0") ||
+        workspace.canonicalYaml() != onlyImageSet) {
+      return fail("The final Images alternative was removed or mutated the document.");
+    }
+    auto beforeDefinitionRemoval = workspace.canonicalYaml();
+    if (workspace.removeNestedItem({}, "Atlas", "/Definitions/Definition/0") ||
+        workspace.canonicalYaml() != beforeDefinitionRemoval) {
+      return fail("Required default Definition removal was not rejected atomically.");
+    }
+
+    auto animationItems = workspace.nestedFormItems({}, "Motion");
+    auto animation = std::find_if(animationItems.begin(), animationItems.end(),
+                                  [](auto const& item) {
+                                    return item.kind == NestedCollectionKind::animation;
+                                  });
+    auto frame = std::find_if(animationItems.begin(), animationItems.end(),
+                              [](auto const& item) {
+                                return item.kind == NestedCollectionKind::frame &&
+                                       item.path.find("/Frame/") != std::string::npos;
+                              });
+    if (animation == animationItems.end() || frame == animationItems.end()) {
+      return fail("Explicit animation frames were not rendered.");
+    }
+    if (!workspace.addNestedItem({}, "Motion", animation->path + "/Frames/Frame",
+                                 NestedCollectionKind::frame) ||
+        !workspace.duplicateNestedItem(
+            {}, "Motion", animation->path + "/Frames/Frame/1") ||
+        !workspace.reorderNestedItem(
+            {}, "Motion", animation->path + "/Frames/Frame/2", 0U) ||
+        !workspace.removeNestedItem(
+            {}, "Motion", animation->path + "/Frames/Frame/2")) {
+      return fail("Explicit frame add, duplicate, reorder, or remove failed.");
+    }
+    if (!workspace.addNestedItem({}, "Motion", frame->path + "/Tags/Tag",
+                                 NestedCollectionKind::tag)) {
+      return fail("Could not add a frame tag.");
+    }
+    auto tagged = workspace.nestedFormItems({}, "Motion");
+    auto tag = std::find_if(tagged.begin(), tagged.end(), [](auto const& item) {
+      return item.kind == NestedCollectionKind::tag;
+    });
+    if (tag == tagged.end() ||
+        !workspace.duplicateNestedItem({}, "Motion", tag->path) ||
+        !workspace.reorderNestedItem(
+            {}, "Motion", tag->path.substr(0, tag->path.rfind('/') + 1U) + "1",
+            0U) ||
+        !workspace.removeNestedItem(
+            {}, "Motion", tag->path.substr(0, tag->path.rfind('/') + 1U) + "1")) {
+      return fail("Tag collection operations failed.");
+    }
+
+    auto beforeInvalidTransition = workspace.canonicalYaml();
+    if (workspace.setFramesAlternative({}, "Motion", animation->path + "/Frames",
+                                       true, {}) ||
+        workspace.canonicalYaml() != beforeInvalidTransition) {
+      return fail("An invalid Frames alternative transition mutated the document.");
+    }
+    if (!workspace.setFramesAlternative({}, "Motion", animation->path + "/Frames",
+                                        true, "Strip")) {
+      return fail("Could not transition to image-set frames.");
+    }
+    if (!workspace.addNestedItem({}, "Motion", animation->path + "/Frames/Frame",
+                                 NestedCollectionKind::overrideFrame)) {
+      return fail("Could not add an image-set frame override.");
+    }
+    auto overrides = workspace.nestedFormItems({}, "Motion");
+    auto overrideItem = std::find_if(overrides.begin(), overrides.end(),
+                                    [](auto const& item) {
+                                      return item.kind == NestedCollectionKind::overrideFrame &&
+                                             item.path.find("/Frame/") != std::string::npos;
+                                    });
+    if (overrideItem == overrides.end() ||
+        !workspace.setNestedProperty({}, "Motion", overrideItem->path, "time",
+                                     "0.5") ||
+        !workspace.addNestedItem({}, "Motion", overrideItem->path + "/Tags/Tag",
+                                 NestedCollectionKind::tag)) {
+      return fail("Image-set override properties or tags could not be authored.");
+    }
+    auto imageSetFramesYaml = workspace.canonicalYaml();
+    if (!workspace.setFramesAlternative({}, "Motion", animation->path + "/Frames",
+                                        false) ||
+        !workspace.undo() || workspace.canonicalYaml() != imageSetFramesYaml ||
+        !workspace.redo()) {
+      return fail("Frames alternative transition did not support undo and redo.");
+    }
+
+    auto beforeAnimationAdd = workspace.canonicalYaml();
+    if (!workspace.addNestedItem({}, "Motion",
+                                 "/Definitions/Definition/0/Animations/Animation",
+                                 NestedCollectionKind::animation) ||
+        !workspace.undo() || workspace.canonicalYaml() != beforeAnimationAdd ||
+        !workspace.redo()) {
+      return fail("Animation collection editing was not undoable.");
+    }
+
+    auto beforeDrafts = workspace.canonicalYaml();
+    if (!workspace.beginDraft("ImageSet"))
+      return fail("Could not begin an ImageSet draft.");
+    workspace.setDraftName("NewAtlas");
+    auto imageChoices = workspace.draftReferenceChoices();
+    auto texture = std::find_if(imageChoices.begin(), imageChoices.end(),
+                                [](auto const& choice) {
+                                  return choice.name == "Texture" && !choice.disabled;
+                                });
+    if (texture == imageChoices.end() ||
+        !workspace.setDraftReference(texture->resourceNamespace, texture->name) ||
+        !workspace.commitDraft()) {
+      return fail("A complete ImageSet draft could not select and commit its Image dependency.");
+    }
+    if (!workspace.beginDraft("AnimationSet"))
+      return fail("Could not begin an AnimationSet draft.");
+    workspace.setDraftName("NewMotion");
+    auto atlasChoices = workspace.draftReferenceChoices();
+    auto atlas = std::find_if(atlasChoices.begin(), atlasChoices.end(),
+                              [](auto const& choice) {
+                                return choice.name == "NewAtlas" && !choice.disabled;
+                              });
+    if (atlas == atlasChoices.end() ||
+        !workspace.setDraftReference(atlas->resourceNamespace, atlas->name) ||
+        !workspace.commitDraft()) {
+      return fail("A complete AnimationSet draft could not select and commit its ImageSet dependency.");
+    }
+    auto authored = workspace.canonicalYaml();
+    if (!workspace.undo() || !workspace.undo() ||
+        workspace.canonicalYaml() != beforeDrafts || !workspace.redo() ||
+        !workspace.redo() || workspace.canonicalYaml() != authored) {
+      return fail("Composite Resource creation did not support command-level undo and redo.");
+    }
+
+    auto output = root / "canonical.yaml";
+    if (!workspace.saveAs(output)) {
+      return fail("Could not save composite canonical output: " +
+                  workspace.operationDiagnostic());
+    }
+    auto saved = ResourceManifestDocument::load(output);
+    if (!saved.validate(ResourceSchemaCatalog::builtIn().snapshot()).valid() ||
+        saved.serializeCanonical() != workspace.canonicalYaml() ||
+        readBytes(output) != workspace.canonicalYaml()) {
+      return fail("Composite canonical output was not valid and deterministic.");
+    }
+    static_cast<void>(withImageSet);
+    static_cast<void>(scalarCanonical);
     return true;
   } catch (std::exception const& exception) {
     return fail(exception.what());
