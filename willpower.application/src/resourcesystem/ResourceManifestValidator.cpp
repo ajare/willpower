@@ -2,14 +2,24 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
+#include <map>
 #include <set>
 #include <string_view>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace wp::application::resourcesystem {
 namespace {
+using Json = nlohmann::json;
+
 ResourceManifestValidator::SchemaKey const manifestSchemaKey{"ResourceManifest", ""};
 constexpr std::size_t maximumValidationFailures = 100;
+constexpr std::string_view commonSchemaId =
+    "https://schemas.willpower.dev/resource-manifest/common.schema.json";
+constexpr std::string_view resourceSchemaId =
+    "https://schemas.willpower.dev/resource-manifest/resource.schema.json";
 
 ResourceSchemaCatalogSnapshot builtInCatalog() {
   static auto const catalog = ResourceSchemaCatalog::builtIn().snapshot();
@@ -26,6 +36,164 @@ ResourceSchema const* findSchema(ResourceSchemaCatalogSnapshot const& catalog,
     return found == catalog.entries().end() ? nullptr : &*found;
   }
   return catalog.find(key);
+}
+
+Json reference(std::string const& schemaId) { return Json{{"$ref", schemaId}}; }
+
+Json collection(Json const& item) {
+  return Json{{"oneOf", Json::array({item, Json{{"type", "array"},
+                                                {"minItems", 1},
+                                                {"items", item}}})}};
+}
+
+Json commonManifestSchema() {
+  auto const resourceReference =
+      reference(std::string(resourceSchemaId) + "#/definitions/resource");
+  auto const resourceCollection = collection(resourceReference);
+  auto const namespaceSchema = Json{
+      {"type", "object"},
+      {"additionalProperties", false},
+      {"required", Json::array({"name", "Resource"})},
+      {"properties",
+       {{"name", reference(std::string(commonSchemaId) + "#/definitions/nonEmptyString")},
+        {"Resource", resourceCollection}}}};
+
+  return Json{
+      {"$schema", "http://json-schema.org/draft-07/schema#"},
+      {"type", "object"},
+      {"additionalProperties", false},
+      {"required", Json::array({"Resources"})},
+      {"properties",
+       {{"Resources",
+         {{"type", "object"},
+          {"additionalProperties", false},
+          {"properties",
+           {{"Resource", resourceCollection},
+            {"Namespace", collection(namespaceSchema)}}}}}}}};
+}
+
+Json definitionDispatch(std::map<std::string, ResourceSchema const*> const& schemas) {
+  Json dispatches = Json::array();
+  for (auto const& [factoryType, schema] : schemas) {
+    if (factoryType.empty()) continue;
+    dispatches.push_back(
+        {{"if",
+          {{"required", Json::array({"factory"})},
+           {"properties", {{"factory", {{"const", factoryType}}}}}}},
+         {"then", reference(schema->schemaId)}});
+  }
+
+  if (dispatches.empty()) return Json();
+  return Json{{"properties",
+               {{"Definitions",
+                 {{"properties",
+                   {{"Definition", collection(Json{{"allOf", dispatches}})}}}}}}}};
+}
+
+Json dispatchManifestSchema(ResourceSchemaCatalogSnapshot const& catalog,
+                            std::vector<std::string> const& preferredTypes) {
+  std::map<std::string, std::map<std::string, ResourceSchema const*>> schemasByType;
+  for (auto const& schema : catalog.entries()) {
+    if (schema.kind == ResourceSchemaKind::resourceType) {
+      schemasByType[schema.resourceType][schema.factoryType] = &schema;
+    }
+  }
+
+  std::vector<std::string> orderedTypes;
+  for (auto const& type : preferredTypes) {
+    if (schemasByType.contains(type) &&
+        std::find(orderedTypes.begin(), orderedTypes.end(), type) == orderedTypes.end()) {
+      orderedTypes.push_back(type);
+    }
+  }
+  for (auto const& [type, schemas] : schemasByType) {
+    (void)schemas;
+    if (std::find(orderedTypes.begin(), orderedTypes.end(), type) == orderedTypes.end()) {
+      orderedTypes.push_back(type);
+    }
+  }
+
+  auto const genericResource =
+      reference(std::string(resourceSchemaId) + "#/definitions/resource");
+  Json registeredTypes = Json::array();
+  for (auto const& type : orderedTypes) registeredTypes.push_back(type);
+
+  Json resourceBranches = Json::array();
+  resourceBranches.push_back(
+      {{"allOf",
+        Json::array(
+            {genericResource,
+             Json{{"required", Json::array({"type"})},
+                  {"properties", {{"type", {{"not", {{"enum", registeredTypes}}}}}}}}})}});
+
+  for (auto const& resourceType : orderedTypes) {
+    auto const& schemas = schemasByType.at(resourceType);
+    Json constraints = Json::array();
+    auto const defaultSchema = schemas.find("");
+    constraints.push_back(defaultSchema == schemas.end()
+                              ? genericResource
+                              : reference(defaultSchema->second->schemaId));
+    constraints.push_back(
+        {{"required", Json::array({"type"})},
+         {"properties", {{"type", {{"enum", Json::array({resourceType})}}}}}});
+    auto specializedDispatch = definitionDispatch(schemas);
+    if (!specializedDispatch.is_null()) constraints.push_back(std::move(specializedDispatch));
+    resourceBranches.push_back({{"allOf", std::move(constraints)}});
+  }
+
+  auto const resourceCollection = collection(Json{{"oneOf", resourceBranches}});
+  auto const namespaceDispatch =
+      Json{{"properties", {{"Resource", resourceCollection}}}};
+  return Json{
+      {"$schema", "http://json-schema.org/draft-07/schema#"},
+      {"type", "object"},
+      {"properties",
+       {{"Resources",
+         {{"properties",
+           {{"Resource", resourceCollection},
+            {"Namespace", collection(namespaceDispatch)}}}}}}}};
+}
+
+void appendResourceTypes(utils::YamlReader const& reader, std::string const& collectionPointer,
+                         std::vector<std::string>& result) {
+  if (auto type = reader.scalarAtJsonPointer(collectionPointer + "/type")) {
+    result.push_back(*type);
+    return;
+  }
+  for (std::size_t index = 0;; ++index) {
+    auto type = reader.scalarAtJsonPointer(collectionPointer + "/" +
+                                           std::to_string(index) + "/type");
+    if (!type) return;
+    result.push_back(*type);
+  }
+}
+
+std::vector<std::string> resourceTypesInDocument(utils::YamlReader const& reader) {
+  std::vector<std::string> result;
+  appendResourceTypes(reader, "/Resources/Resource", result);
+  if (reader.scalarAtJsonPointer("/Resources/Namespace/name")) {
+    appendResourceTypes(reader, "/Resources/Namespace/Resource", result);
+  } else {
+    for (std::size_t index = 0;; ++index) {
+      auto const namespacePointer =
+          "/Resources/Namespace/" + std::to_string(index);
+      if (!reader.scalarAtJsonPointer(namespacePointer + "/name")) break;
+      appendResourceTypes(reader, namespacePointer + "/Resource", result);
+    }
+  }
+  return result;
+}
+
+std::vector<utils::JsonSchemaDocument> schemaDocuments(
+    ResourceSchemaCatalogSnapshot const& catalog) {
+  std::vector<utils::JsonSchemaDocument> result;
+  std::set<std::string> addedIds;
+  for (auto const& schema : catalog.entries()) {
+    if (addedIds.insert(schema.schemaId).second) {
+      result.push_back({schema.schemaId, schema.contents});
+    }
+  }
+  return result;
 }
 
 std::vector<std::string> pointerTokens(std::string const& pointer) {
@@ -82,6 +250,31 @@ void addResourceIdentity(utils::YamlReader const& reader,
     failure.resourceType = *type;
   }
 }
+
+std::vector<ResourceManifestValidator::Failure> validateSchema(
+    utils::YamlReader const& reader, std::string const& manifestPath,
+    ResourceManifestValidator::SchemaKey const& key, std::string const& rootSchema,
+    std::vector<utils::JsonSchemaDocument> const& catalog, std::size_t maximumFailures) {
+  std::vector<ResourceManifestValidator::Failure> failures;
+  for (auto const& failure :
+       reader.validateJsonSchema(rootSchema, catalog, maximumFailures)) {
+    ResourceManifestValidator::Failure result{
+        manifestPath, key.resourceType, key.factoryType, "", "", failure.instancePath,
+        failure.message, failure.line, failure.column};
+    addResourceIdentity(reader, result);
+    failures.push_back(std::move(result));
+  }
+  return failures;
+}
+
+void sortFailures(std::vector<ResourceManifestValidator::Failure>& failures) {
+  std::stable_sort(failures.begin(), failures.end(), [](auto const& left, auto const& right) {
+    if (left.line != right.line) return left.line < right.line;
+    if (left.column != right.column) return left.column < right.column;
+    if (left.instancePath != right.instancePath) return left.instancePath < right.instancePath;
+    return left.message < right.message;
+  });
+}
 }  // namespace
 
 ResourceManifestValidator::ResourceManifestValidator() : mCatalog(builtInCatalog()) {}
@@ -95,7 +288,38 @@ bool ResourceManifestValidator::contains(SchemaKey const& key) const {
 
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
     utils::YamlReader const& reader, std::string const& manifestPath) const {
-  return validate(reader, manifestPath, manifestSchemaKey);
+  auto const catalog = schemaDocuments(mCatalog);
+  auto failures = validateSchema(reader, manifestPath, manifestSchemaKey,
+                                 commonManifestSchema().dump(), catalog,
+                                 maximumValidationFailures);
+
+  // Dispatch is a distinct second pass. Running it even when common validation
+  // found errors preserves aggregate diagnostics for other declarations in the
+  // same manifest; no conversion or publication occurs between the passes.
+  // oneOf reports branch bookkeeping as well as the useful leaf failures. Give
+  // the dispatch pass room for every catalog branch, then de-duplicate and
+  // enforce the public diagnostic bound below.
+  auto dispatched = validateSchema(reader, manifestPath, manifestSchemaKey,
+                                   dispatchManifestSchema(mCatalog,
+                                                          resourceTypesInDocument(reader))
+                                       .dump(),
+                                   catalog,
+                                   maximumValidationFailures *
+                                       (mCatalog.entries().size() + 1U));
+  failures.insert(failures.end(), std::make_move_iterator(dispatched.begin()),
+                  std::make_move_iterator(dispatched.end()));
+  sortFailures(failures);
+  failures.erase(std::unique(failures.begin(), failures.end(), [](auto const& left,
+                                                                  auto const& right) {
+                   return left.line == right.line && left.column == right.column &&
+                          left.instancePath == right.instancePath &&
+                          left.message == right.message;
+                 }),
+                 failures.end());
+  if (failures.size() > maximumValidationFailures) {
+    failures.resize(maximumValidationFailures);
+  }
+  return failures;
 }
 
 std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::validate(
@@ -104,30 +328,9 @@ std::vector<ResourceManifestValidator::Failure> ResourceManifestValidator::valid
   auto const* root = findSchema(mCatalog, key);
   if (!root) return {};
 
-  std::vector<utils::JsonSchemaDocument> catalog;
-  std::set<std::string> addedIds;
-  for (auto const& schema : mCatalog.entries()) {
-    if (addedIds.insert(schema.schemaId).second) {
-      catalog.push_back({schema.schemaId, schema.contents});
-    }
-  }
-
-  std::vector<Failure> failures;
-  // Bound diagnostics defensively so hostile manifests cannot produce an
-  // unbounded exception while still aggregating ordinary authoring errors.
-  for (auto const& failure : reader.validateJsonSchema(
-           root->contents, catalog, maximumValidationFailures)) {
-    Failure result{manifestPath, key.resourceType, key.factoryType, "", "",
-                   failure.instancePath, failure.message, failure.line, failure.column};
-    addResourceIdentity(reader, result);
-    failures.push_back(std::move(result));
-  }
-  std::stable_sort(failures.begin(), failures.end(), [](auto const& left, auto const& right) {
-    if (left.line != right.line) return left.line < right.line;
-    if (left.column != right.column) return left.column < right.column;
-    if (left.instancePath != right.instancePath) return left.instancePath < right.instancePath;
-    return left.message < right.message;
-  });
+  auto failures = validateSchema(reader, manifestPath, key, root->contents,
+                                 schemaDocuments(mCatalog), maximumValidationFailures);
+  sortFailures(failures);
   return failures;
 }
 

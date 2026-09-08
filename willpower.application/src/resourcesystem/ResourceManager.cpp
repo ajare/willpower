@@ -33,9 +33,12 @@ namespace resourcesystem {
 using namespace std;
 
 ResourceManager::ResourceManager(mpp::RenderSystem* renderSystem, mpp::ResourceManager* renderResourceMgr, AudioSystem* audioSystem, Logger* logger)
-    : mwLogger(logger), mwRenderResourceMgr(renderResourceMgr), mwRenderSystem(renderSystem), mwAudioSystem(audioSystem)
-
-{
+    : mwLogger(logger),
+      mwRenderResourceMgr(renderResourceMgr),
+      mwRenderSystem(renderSystem),
+      mwAudioSystem(audioSystem),
+      mResourceSchemaCatalog(ResourceSchemaCatalog::builtIn()),
+      mResourceSchemaCatalogFrozen(false) {
   addResourceFactory(new TextFileResourceFactory);
   addResourceFactory(new XmlFileResourceFactory);
   addResourceFactory(new ImageResourceFactory);
@@ -203,6 +206,16 @@ void ResourceManager::validateResourceDependencies() const {
         }
       }
     }
+  }
+}
+
+void ResourceManager::freezeResourceSchemaCatalog() {
+  if (mResourceSchemaCatalogFrozen) return;
+
+  mResourceSchemaCatalogFrozen = true;
+  mResourceSchemaCatalogSnapshot = mResourceSchemaCatalog.snapshot();
+  for (auto& record : mLocations) {
+    record.location->setResourceSchemaCatalog(mResourceSchemaCatalogSnapshot);
   }
 }
 
@@ -375,6 +388,22 @@ void ResourceManager::addResourceDefinitionFactory(ResourceDefinitionFactory* fa
   ownedFactory.release();
 }
 
+void ResourceManager::addResourceSchemaBundle(ResourceSchemaBundle const& bundle) {
+  if (mResourceSchemaCatalogFrozen) {
+    throw ResourceSystemException(
+        "Cannot register a Resource Schema Bundle after Resource Location scanning has started.");
+  }
+  mResourceSchemaCatalog.addBundle(bundle);
+}
+
+void ResourceManager::addResourceSchemaBundle(filesystem::path const& bundleDirectory) {
+  if (mResourceSchemaCatalogFrozen) {
+    throw ResourceSystemException(
+        "Cannot register a Resource Schema Bundle after Resource Location scanning has started.");
+  }
+  mResourceSchemaCatalog.addBundle(bundleDirectory);
+}
+
 void ResourceManager::addResourceLocation(string const& type, string const& location, string const& definitionFile) {
   auto it = mLocationFactories.find(type);
 
@@ -385,6 +414,9 @@ void ResourceManager::addResourceLocation(string const& type, string const& loca
   ResourceLocationRecord record;
   record.location = it->second(location, definitionFile);
   record.scanned = false;
+  if (mResourceSchemaCatalogFrozen) {
+    record.location->setResourceSchemaCatalog(mResourceSchemaCatalogSnapshot);
+  }
 
   mLocations.push_back(record);
 }
@@ -396,6 +428,8 @@ void ResourceManager::addResources(string const& file) {
 }
 
 void ResourceManager::scanLocations(ResourceLocationCallback callback) {
+  freezeResourceSchemaCatalog();
+
   bool scannedLocation = false;
   for (auto& record : mLocations) {
     if (record.scanned) {
@@ -437,6 +471,8 @@ void ResourceManager::scanLocations(ResourceLocationCallback callback) {
 }
 
 void ResourceManager::rescanLocations(ResourceLocationCallback callback) {
+  freezeResourceSchemaCatalog();
+
   bool foundNewResource = false;
   for (auto& locationRecord : mLocations) {
     mwLogger->info(

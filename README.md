@@ -233,6 +233,15 @@ or default-factory lookup, and export a deterministic merged bundle. Catalog mut
 explicit; `snapshot()` returns immutable owned data, so validation or export can proceed
 while other code prepares a later catalog update.
 
+Each `ResourceManager` owns a catalog initialized with those built-in schemas. Call
+`addResourceSchemaBundle()` with an in-memory bundle or bundle directory before the first
+`scanLocations()`/`rescanLocations()` call. Scanning freezes one immutable snapshot and
+passes it to every Resource Location; registration after scanning starts is rejected.
+Runtime validation first checks the common Resource Manifest structure, then dispatches
+registered declaration and specialized Definition schemas by Resource Type and factory.
+All `$ref` resolution uses only documents in the snapshot, including for `https` schema
+IDs; runtime validation never performs network access.
+
 ### Application-specific Resource Schema Bundles
 
 Downstream CMake projects can compose their own schemas with the complete built-in

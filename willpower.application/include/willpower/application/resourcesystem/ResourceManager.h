@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <vector>
 #include <map>
@@ -12,6 +13,7 @@
 #include "willpower/application/Platform.h"
 #include "willpower/application/resourcesystem/ResourceRecord.h"
 #include "willpower/application/resourcesystem/ResourceLocation.h"
+#include "willpower/application/resourcesystem/ResourceSchemaCatalog.h"
 #include "willpower/application/resourcesystem/ResourceFactory.h"
 #include "willpower/application/resourcesystem/ResourceDefinitionFactory.h"
 #include "willpower/application/resourcesystem/ResourceCallback.h"
@@ -70,6 +72,14 @@ private:
 
   std::vector<ResourceLocationRecord> mLocations;
 
+  // The mutable application catalog starts with Willpower's built-in schemas.
+  // It is frozen into one immutable snapshot when scanning first starts.
+  ResourceSchemaCatalog mResourceSchemaCatalog;
+
+  ResourceSchemaCatalogSnapshot mResourceSchemaCatalogSnapshot;
+
+  bool mResourceSchemaCatalogFrozen;
+
   // Resource records
   std::map<std::string, ResourceRecordMap> mNamespaces;
 
@@ -83,6 +93,8 @@ private:
   std::map<std::string, ResourceMap> mResources;
 
 private:
+  void freezeResourceSchemaCatalog();
+
   void addResourceRecord(ResourceRecord const& record);
 
   void validateResourceDependencies() const;
@@ -114,6 +126,13 @@ public:
   void addResourceLocationFactory(std::string const& type, ResourceLocationFactory factory);
 
   void addResourceDefinitionFactory(ResourceDefinitionFactory* factory);
+
+  // Adds application Resource Type schemas. Equivalent duplicate entries are
+  // idempotent; conflicting entries throw ResourceSchemaCatalogException.
+  // Registration is rejected after scanLocations()/rescanLocations() starts.
+  void addResourceSchemaBundle(ResourceSchemaBundle const& bundle);
+
+  void addResourceSchemaBundle(std::filesystem::path const& bundleDirectory);
 
   void addResourceLocation(std::string const& type, std::string const& location, std::string const& definitionFile);
 

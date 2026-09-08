@@ -10,11 +10,14 @@
 
 #include "willpower/application/Platform.h"
 #include "willpower/application/resourcesystem/ResourceRecord.h"
+#include "willpower/application/resourcesystem/ResourceSchemaCatalog.h"
 #include "willpower/application/resourcesystem/DataStream.h"
 
 namespace WP_NAMESPACE {
 namespace application {
 namespace resourcesystem {
+class ResourceManager;
+
 class WP_APPLICATION_API ResourceLocation {
 protected:
   typedef std::function<void(DataStreamPtr)> DataStreamFetchedCallback;
@@ -40,6 +43,18 @@ private:
   std::map<std::string, NamespaceRecord> mNamespaces;
 
   bool mScanDirty;
+
+  bool mScanStarted;
+
+  bool mHasResourceSchemaCatalog;
+
+  ResourceSchemaCatalogSnapshot mResourceSchemaCatalog;
+
+  // ResourceManager freezes its application catalog at the first scan and
+  // gives every location the same immutable snapshot.
+  void setResourceSchemaCatalog(ResourceSchemaCatalogSnapshot catalog);
+
+  friend class ResourceManager;
 
 protected:
   std::string mDefinitionFile;

@@ -59,7 +59,13 @@ namespace resourcesystem {
 using namespace std;
 
 ResourceLocation::ResourceLocation(Logger* logger, string const& name, string const& type, string const& definitionFile)
-    : mwLogger(logger), mName(name), mType(type), mScanDirty(true), mDefinitionFile(definitionFile) {
+    : mwLogger(logger),
+      mName(name),
+      mType(type),
+      mScanDirty(true),
+      mScanStarted(false),
+      mHasResourceSchemaCatalog(false),
+      mDefinitionFile(definitionFile) {
 }
 
 string const& ResourceLocation::getName() const {
@@ -74,10 +80,20 @@ string const& ResourceLocation::getDefinitionFile() const {
   return mDefinitionFile;
 }
 
+void ResourceLocation::setResourceSchemaCatalog(ResourceSchemaCatalogSnapshot catalog) {
+  if (mScanStarted) {
+    throw ResourceSystemException(
+        "Cannot replace a Resource Location schema catalog after scanning has started.");
+  }
+  mResourceSchemaCatalog = std::move(catalog);
+  mHasResourceSchemaCatalog = true;
+}
+
 void ResourceLocation::scan() {
   if (!mScanDirty) {
     return;
   }
+  mScanStarted = true;
 
   auto const manifestPath = getDefinitionFile();
   if (!manifestPath.ends_with(".yaml") && !manifestPath.ends_with(".yml")) {
@@ -99,7 +115,9 @@ void ResourceLocation::scan() {
         "Invalid Resource Manifest '" + manifestPath + "':\n  YAML syntax: " + error.what());
   }
 
-  ResourceManifestValidator validator;
+  ResourceManifestValidator validator = mHasResourceSchemaCatalog
+                                            ? ResourceManifestValidator(mResourceSchemaCatalog)
+                                            : ResourceManifestValidator();
   auto const failures = validator.validate(*reader, manifestPath);
   if (!failures.empty()) {
     throw ResourceManifestValidationException(validationMessage(manifestPath, failures));
