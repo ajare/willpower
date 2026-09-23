@@ -340,6 +340,13 @@ void Simulation::getLineIndices(
   mStaticLinesGrid->getCandidateItemsInBoundingArea(bounds, indices);
 }
 
+bool Simulation::sweepAgainstStaticLine(
+    Collider const* collider, Vector2 const& desiredPosition,
+    StaticLine const& line, float* time) const {
+  return collider->sweepAgainstLine(
+      desiredPosition, line.getVertex(0), line.getVertex(1), time);
+}
+
 bool Simulation::projectCollider(Collider const* collider, Vector2 const& desiredMovement, SweepResult* result) {
   Vector2 colliderCentre = collider->getCentre();
   Vector2 desiredPosition = colliderCentre + desiredMovement;
@@ -379,7 +386,7 @@ bool Simulation::projectCollider(Collider const* collider, Vector2 const& desire
       float t;
       bool hit;
 
-      hit = collider->sweepAgainstLine(desiredPosition, v0, v1, &t);
+      hit = sweepAgainstStaticLine(collider, desiredPosition, line, &t);
 
       if (hit) {
         hitLines.push_back(make_pair(lineIndex, t));

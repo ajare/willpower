@@ -50,6 +50,12 @@ private:
       std::vector<uint32_t>& indices) const;
 
 protected:
+  // Applications may add swept events (for example a centre-plane crossing)
+  // in addition to the collider's ordinary shape contact.
+  virtual bool sweepAgainstStaticLine(
+      Collider const* collider, Vector2 const& desiredPosition,
+      StaticLine const& line, float* time) const;
+
   explicit Simulation(void* userObj);
 
 public:
