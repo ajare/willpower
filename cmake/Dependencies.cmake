@@ -93,6 +93,10 @@ ExternalProject_Add(willpower_mpp_external
         "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG> --parallel
         --target MassivePolyPusher MppMesh MppHelper MppProgram MppData Utils glew
                  MppAppSupport ImGui SDL3-shared
+    # MPP's headers come straight from SOURCE_DIR. Always invoke its incremental
+    # build so a changed declaration cannot be paired with an already-stamped,
+    # stale shared library in a long-lived parent build tree.
+    BUILD_ALWAYS TRUE
     # MPP is consumed directly from its build tree; make the no-op explicit
     # rather than having ExternalProject print a misleading "No install step".
     INSTALL_COMMAND "${CMAKE_COMMAND}" -E true
@@ -139,8 +143,12 @@ function(willpower_import_mpp target stem)
         if(NOT CMAKE_BUILD_TYPE)
             message(FATAL_ERROR "Linux builds require CMAKE_BUILD_TYPE (for example, Release or Debug).")
         endif()
+        set(_mpp_debug_postfix "")
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(_mpp_debug_postfix "d")
+        endif()
         set_target_properties(${target} PROPERTIES
-            IMPORTED_LOCATION "${_mpp_bin}/${CMAKE_BUILD_TYPE}/lib${_mpp_stem}.so"
+            IMPORTED_LOCATION "${_mpp_bin}/${CMAKE_BUILD_TYPE}/lib${_mpp_stem}${_mpp_debug_postfix}.so"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     endif()
     add_dependencies(${target} willpower_mpp_external)
@@ -172,8 +180,12 @@ function(willpower_import_mpp_static target stem)
             IMPORTED_LOCATION_MEMCHECK "${_mpp_lib}/MemCheck/${stem}.lib"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     else()
+        set(_mpp_debug_postfix "")
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            set(_mpp_debug_postfix "d")
+        endif()
         set_target_properties(${target} PROPERTIES
-            IMPORTED_LOCATION "${_mpp_lib}/${CMAKE_BUILD_TYPE}/lib${stem}.a"
+            IMPORTED_LOCATION "${_mpp_lib}/${CMAKE_BUILD_TYPE}/lib${stem}${_mpp_debug_postfix}.a"
             INTERFACE_INCLUDE_DIRECTORIES "${ARG_INCLUDE}")
     endif()
     add_dependencies(${target} willpower_mpp_external)
