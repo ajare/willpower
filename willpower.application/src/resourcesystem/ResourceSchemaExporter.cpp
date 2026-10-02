@@ -176,7 +176,8 @@ void printFailure(std::string const& message, std::optional<Input> const& input,
 
 void writeRootCopy(ResourceSchemaBundle const& bundle, std::filesystem::path const& path) {
   ResourceSchemaCatalog verified(bundle);
-  auto const& entries = verified.snapshot().entries();
+  auto const snapshot = verified.snapshot();
+  auto const& entries = snapshot.entries();
   auto const manifest = std::find_if(entries.begin(), entries.end(), [](auto const& entry) {
     return entry.kind == ResourceSchemaKind::manifest;
   });

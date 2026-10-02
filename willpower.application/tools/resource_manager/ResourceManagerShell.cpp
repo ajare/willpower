@@ -329,7 +329,7 @@ std::vector<ResourceDeclaration> resourceDeclarations(YAML::Node const& root) {
                     YAML::Node const& collection) {
     for (auto const& resource : collectionItems(collection)) {
       ResourceIdentity const owner{resourceNamespace, resourceIdentity(resource)};
-      result.push_back({owner, scalar(resource, "type")});
+      result.push_back({owner, scalar(resource, "type"), false, {}, 0});
       auto dependencies = standardDependencyItems(resource);
       for (std::size_t index = 0; index < dependencies.size(); ++index) {
         auto const& dependency = dependencies[index];
@@ -1858,7 +1858,8 @@ ResourceSchemaCatalogSnapshot loadEditorSchemaCatalog(
 
   std::set<std::pair<std::string, std::string>> lookupKeys;
   if (!configuration.baseBundle) {
-    for (auto const& entry : catalog.snapshot().entries()) {
+    auto const catalogSnapshot = catalog.snapshot();
+    for (auto const& entry : catalogSnapshot.entries()) {
       if (entry.kind == ResourceSchemaKind::resourceType) {
         lookupKeys.emplace(entry.resourceType, entry.factoryType);
       }
@@ -3459,12 +3460,13 @@ bool ManifestWorkspace::beginDraft(std::string resourceType,
     setFailure("Namespace '" + resourceNamespace + "' does not exist.");
     return false;
   }
-  mDraft = ResourceDraft{std::move(resourceNamespace), std::move(resourceType)};
+  mDraft = ResourceDraft{std::move(resourceNamespace), std::move(resourceType),
+                         {}, {}, {}, {}, {}, {}};
   auto const* form = resourceForm(mDraft->resourceType);
   if (form) {
     for (auto const& dependency : form->requiredDependencies) {
       mDraft->references.push_back(
-          {dependency.id, dependency.allowedResourceTypes});
+          {dependency.id, dependency.allowedResourceTypes, {}, {}});
     }
   }
   validateDraft();
