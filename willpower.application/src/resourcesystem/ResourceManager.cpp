@@ -618,6 +618,10 @@ ResourcePtr ResourceManager::acquireResource(string const& name, string const& n
 }
 
 void ResourceManager::acquireResource(ResourcePtr resource) {
+  if (!resource->mDependenciesAcquired) {
+    resource->mDependenciesAcquired = true;
+    for (auto child : resource->mDependentResourceList) acquireResource(child);
+  }
   resource->mRefCount++;
 }
 
@@ -645,9 +649,11 @@ void ResourceManager::releaseResource(ResourcePtr resource, ResourceCallback cal
   }
 
   if (loadedButNeverAcquired || readyForUnload) {
-    // Children
-    for (auto childRes : resource->mDependentResourceList) {
-      releaseResource(childRes, callback, false);
+    if (resource->mDependenciesAcquired) {
+      resource->mDependenciesAcquired = false;
+      for (auto childRes : resource->mDependentResourceList) {
+        releaseResource(childRes, callback, false);
+      }
     }
 
     _unloadResource(resource, callback, rootResource);
@@ -745,6 +751,12 @@ void ResourceManager::_loadResource(ResourcePtr resource, ResourceCallback callb
 }
 
 void ResourceManager::loadResource(ResourcePtr resource, ResourceCallback callback, bool rootResource) {
+  // Loading without acquiring the root is supported too. Renew dependency
+  // ownership after a prior release, just as acquireResource does.
+  if (!resource->mDependenciesAcquired) {
+    resource->mDependenciesAcquired = true;
+    for (auto child : resource->mDependentResourceList) acquireResource(child);
+  }
   // Load dependent resources
   for (auto res : resource->mDependentResourceList) {
     loadResource(res, callback, false);

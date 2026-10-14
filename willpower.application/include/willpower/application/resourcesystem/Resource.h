@@ -26,6 +26,9 @@ private:
 
 private:
   int mRefCount;
+  // Instantiation acquires dependencies once; release gives those acquisitions
+  // back at the last-owner boundary. Reload must renew them before reuse.
+  bool mDependenciesAcquired{true};
 
   std::string mName;
 

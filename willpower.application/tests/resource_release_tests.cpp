@@ -109,6 +109,18 @@ public:
     writeFile(mRoot / "Resources.yaml", R"(Resources:
   Resource:
     - type: "TestResource"
+      name: "SharedChild"
+    - type: "TestResource"
+      name: "RetainedOwner"
+      DependentResources:
+        DependentResource:
+          ref: "SharedChild"
+    - type: "TestResource"
+      name: "ReloadingOwner"
+      DependentResources:
+        DependentResource:
+          ref: "SharedChild"
+    - type: "TestResource"
       name: "InstantiatedWithoutCallback"
     - type: "TestResource"
       name: "InstantiatedWithCallback"
@@ -310,6 +322,28 @@ void testDependentReleaseAtUnloadBoundary(TestEnvironment& environment) {
   require(childReleasing == 1 && childUnloading == 1,
           "Dependent resource was released more than once at its owner's unload boundary.");
 }
+void testSharedDependencyAcrossReloads(TestEnvironment& environment) {
+  auto& manager = environment.manager;
+  auto retained = manager.acquireResource("RetainedOwner");
+  manager.createResource(retained); manager.loadResource(retained);
+  auto child = manager.getResource("SharedChild");
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    auto reloaded = manager.acquireResource("ReloadingOwner");
+    manager.createResource(reloaded); manager.loadResource(reloaded);
+    manager.releaseResource(reloaded);
+    require(manager.isResourceLoaded(retained) && manager.isResourceLoaded(child),
+            "Reloading one owner unloaded a dependency still used by another owner.");
+  }
+  manager.releaseResource(retained);
+  require(!manager.isResourceLoaded(child), "Shared dependency leaked after its last owner was released.");
+  // Loading without an explicit acquisition is also a supported lifecycle.
+  for (int cycle = 0; cycle < 2; ++cycle) {
+    auto unowned = manager.getResource("ReloadingOwner");
+    manager.loadResource(unowned);
+    manager.releaseResource(unowned);
+    require(!manager.isResourceLoaded(child), "Unacquired reload leaked its dependency.");
+  }
+}
 }  // namespace
 
 int main() {
@@ -334,6 +368,7 @@ int main() {
          ResourceState::Released},
         "Loaded");
     testDependentReleaseAtUnloadBoundary(environment);
+    testSharedDependencyAcrossReloads(environment);
 
     std::cout << "Resource release tests passed\n";
     return 0;
